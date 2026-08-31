@@ -1,0 +1,28 @@
+{% extends "base.html" %} {% block title %}Administrator login | Windowkeeper{%
+endblock %} {% block body_class %}login-body{% endblock %} {% block shell %}{%
+endblock %} {% block content %}
+<section class="login-shell" aria-labelledby="login-title">
+  <div class="login-identity">
+    <span class="brand-mark large">WK</span>
+    <p>Evidence-driven Codex window supervision</p>
+  </div>
+  <form class="login-form" method="post" action="/login">
+    <p class="kicker">Administrator access</p>
+    <h1 id="login-title">Return to the watch.</h1>
+    <p>Sign in to inspect account evidence, schedules, and incidents.</p>
+    {% if error %}
+    <p class="form-error" role="alert">{{ error }}</p>
+    {% endif %}
+    <label for="password">Password</label>
+    <input
+      id="password"
+      name="password"
+      type="password"
+      required
+      autocomplete="current-password"
+      autofocus
+    />
+    <button class="primary-button" type="submit">Sign in</button>
+  </form>
+</section>
+{% endblock %}

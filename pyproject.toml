@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "codex-windowkeeper"
+version = "0.1.0"
+description = "Evidence-driven Codex usage-window activation supervisor"
+requires-python = ">=3.12"
+dependencies = [
+  "argon2-cffi>=23.1,<26",
+  "click>=8.1,<9",
+  "cryptography>=50,<51",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "jinja2>=3.1,<4",
+  "pydantic-settings>=2.10,<3",
+  "python-multipart>=0.0.20,<1",
+  "structlog>=25.4,<26",
+  "uvicorn>=0.35,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "mypy>=1.17,<2",
+  "pip-audit>=2.9,<3",
+  "pyright>=1.1.405,<2",
+  "pytest>=9.0.3,<10",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+]
+
+[project.scripts]
+windowkeeper = "windowkeeper.cli.main:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/windowkeeper"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["src"]
+asyncio_mode = "auto"
+filterwarnings = [
+  "error",
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated.*:starlette.exceptions.StarletteDeprecationWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+ignore = ["E501", "S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+packages = ["windowkeeper"]

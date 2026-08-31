@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block title %}Logs | Windowkeeper{% endblock %}{%
+block content %}
+<section class="page-heading">
+  <p class="kicker">Sanitized JSONL</p>
+  <h1>Service logs</h1>
+  <p>
+    Secret-bearing keys, known values, token shapes, and URL queries are
+    redacted before enqueue.
+  </p>
+</section>
+<form class="filter-bar" method="get">
+  <label
+    ><span>Search</span><input type="search" name="q" value="{{ q }}" /></label
+  ><label
+    ><span>Level</span
+    ><select name="level">
+      <option value="">All</option>
+      {% for item in ['DEBUG','INFO','WARNING','ERROR'] %} {% if level == item
+      %}
+      <option value="{{ item }}" selected>{{ item }}</option>
+      {% else %}
+      <option value="{{ item }}">{{ item }}</option>
+      {% endif %} {% endfor %}
+    </select></label
+  ><button class="quiet-button">Apply</button
+  ><a
+    class="quiet-button"
+    href="/logs/export?level={{ level|urlencode }}&q={{ q|urlencode }}"
+    >Download JSONL</a
+  >
+</form>
+<section class="log-list">
+  {% for event in logs %}
+  <article>
+    <header>
+      <span class="log-level">{{ event.level }}</span><time>{{ event.ts }}</time
+      ><strong>{{ event.event }}</strong>
+    </header>
+    <pre>{{ event|tojson(indent=2) }}</pre>
+  </article>
+  {% else %}
+  <div class="empty-state">
+    <h2>No matching log events</h2>
+    <p>Change the filters or perform an operation.</p>
+  </div>
+  {% endfor %}
+</section>
+{% endblock %}

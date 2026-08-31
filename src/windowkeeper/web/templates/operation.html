@@ -1,0 +1,49 @@
+{% extends "base.html" %}{% block title %}Operation | Windowkeeper{% endblock
+%}{% block content %}
+<section class="page-heading">
+  <a href="/">Back to accounts</a>
+  <p class="kicker">Durable operation</p>
+  <h1>{{ operation.kind|replace('.',' ')|title }}</h1>
+  <p>This page reports committed state and never waits on Codex.</p>
+</section>
+<section class="operation-view" data-operation="{{ operation.operation_id }}">
+  <span class="status-label">{{ operation.state|replace('_',' ')|title }}</span>
+  <h2>
+    {{ operation.progress_summary or operation.error_summary or 'Waiting to
+    start' }}
+  </h2>
+  <dl>
+    <div>
+      <dt>Operation ID</dt>
+      <dd>{{ operation.operation_id }}</dd>
+    </div>
+    <div>
+      <dt>Progress code</dt>
+      <dd>{{ operation.progress_code or 'None' }}</dd>
+    </div>
+    <div>
+      <dt>Created</dt>
+      <dd>{{ operation.created_at_ms }}</dd>
+    </div>
+    <div>
+      <dt>Completed</dt>
+      <dd>{{ operation.completed_at_ms or 'Not complete' }}</dd>
+    </div>
+    {% if operation.result.model %}
+    <div>
+      <dt>Model</dt>
+      <dd>{{ operation.result.model }}</dd>
+    </div>
+    <div>
+      <dt>Reasoning</dt>
+      <dd>{{ operation.result.reasoning_effort|title }} · Standard tier</dd>
+    </div>
+    {% endif %}
+  </dl>
+  {% if operation.error_code %}
+  <p class="form-error" role="alert">
+    <strong>{{ operation.error_code }}</strong>: {{ operation.error_summary }}
+  </p>
+  {% endif %}
+</section>
+{% endblock %}

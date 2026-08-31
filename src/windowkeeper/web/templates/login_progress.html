@@ -1,0 +1,81 @@
+{% extends "base.html" %} {% block title %}Complete sign-in | Windowkeeper{%
+endblock %} {% block content %}
+<section
+  class="login-progress"
+  data-login-progress
+  data-attempt="{{ started.login_attempt_id }}"
+  data-account="{{ account.public_token }}"
+  data-nonce="{{ started.interaction_nonce }}"
+  data-csrf="{{ csrf }}"
+>
+  <div class="progress-step">
+    <span>1</span>
+    <p>Runtime isolated</p>
+  </div>
+  <div class="progress-step current">
+    <span>2</span>
+    <p>One authorization</p>
+  </div>
+  <div class="progress-step">
+    <span>3</span>
+    <p>Checkpoint credentials</p>
+  </div>
+  <div class="progress-step">
+    <span>4</span>
+    <p>Verify and encrypt</p>
+  </div>
+  <p class="kicker">{{ account.display_name }}</p>
+  <h1>Complete ChatGPT sign-in once</h1>
+  <p class="interaction-status" aria-live="polite">
+    One approval creates the managed credential and, when needed, one export
+    snapshot.
+  </p>
+  <div class="interaction-loading" data-loading>
+    <span></span><span></span><span></span>
+    <p>Waiting for a secure interaction</p>
+  </div>
+  <section class="interaction-panel" data-device hidden>
+    <h2>Sign in with a code</h2>
+    <p>Open this OpenAI page on any device, then enter the code.</p>
+    <a class="primary-button" data-verification target="_blank" rel="noreferrer"
+      >Open verification page</a
+    ><button class="code-copy" type="button" data-copy-code>
+      <span data-code></span><small>Copy code</small>
+    </button>
+  </section>
+  <section class="interaction-panel" data-browser hidden>
+    <h2>Sign in with browser</h2>
+    <p>
+      Open ChatGPT sign-in. If localhost cannot connect afterward, copy the
+      complete URL from the browser address bar.
+    </p>
+    <a
+      class="primary-button"
+      data-authorization
+      target="_blank"
+      rel="noreferrer"
+      >Open ChatGPT sign-in</a
+    >
+    <div class="callback-field">
+      <label for="callback_url">Full localhost callback URL</label
+      ><textarea
+        id="callback_url"
+        rows="3"
+        autocomplete="off"
+        spellcheck="false"
+      ></textarea>
+      <p class="field-help">
+        This value is forwarded once to Codex and never stored.
+      </p>
+      <button class="quiet-button" type="button" data-forward>
+        Forward callback
+      </button>
+    </div>
+  </section>
+  <div class="interaction-actions">
+    <button class="danger-button" type="button" data-cancel-login>
+      Cancel sign-in
+    </button>
+  </div>
+</section>
+{% endblock %}

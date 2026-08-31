@@ -1,0 +1,105 @@
+{% extends "base.html" %} {% block title %}Add account | Windowkeeper{% endblock
+%} {% block content %}
+<section class="page-heading">
+  <a href="/">Back to accounts</a>
+  <p class="kicker">New credential lineage</p>
+  <h1>Add an authorized account</h1>
+  <p>
+    One ChatGPT authorization creates a managed credential and, when none
+    exists, one externally owned <code>auth.json</code> export snapshot.
+  </p>
+</section>
+{% if not vault_configured %}
+<section class="service-alert" role="alert">
+  <strong>Vault key required.</strong> Set WINDOWKEEPER_VAULT_KEY_FILE and
+  restart before enrollment.
+</section>
+{% endif %}
+<form class="account-form" action="/accounts" method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+  <fieldset>
+    <legend>Account identity</legend>
+    <label for="display_name">Display name</label
+    ><input
+      id="display_name"
+      name="display_name"
+      required
+      maxlength="80"
+      autocomplete="off"
+    />
+    <p class="field-help">Used only inside Windowkeeper.</p>
+    <label for="labels">Labels</label
+    ><input
+      id="labels"
+      name="labels"
+      placeholder="team, priority"
+      autocomplete="off"
+    />
+    <p class="field-help">
+      Comma-separated. Labels may overlap between accounts.
+    </p>
+    <label for="workspace">Workspace ID <span>optional</span></label
+    ><input id="workspace" name="workspace" autocomplete="off" />
+    <p class="field-help">
+      When supplied, Windowkeeper configures Codex to restrict sign-in to this
+      workspace.
+    </p>
+  </fieldset>
+  <fieldset>
+    <legend>ChatGPT sign-in method</legend>
+    <label class="method-option"
+      ><input
+        type="radio"
+        name="login_method"
+        value="CHATGPT_DEVICE_CODE"
+        checked
+      /><span
+        ><strong>Sign in with a code <small>Recommended</small></strong
+        ><em
+          >Open the displayed OpenAI page on any device and enter a one-time
+          code. Best for Docker, NAS, SSH, and remote servers.</em
+        ></span
+      ></label
+    ><label class="method-option"
+      ><input type="radio" name="login_method" value="CHATGPT_BROWSER" /><span
+        ><strong>Sign in with browser</strong
+        ><em
+          >Open normal ChatGPT sign-in. In bridge mode, paste the localhost
+          callback URL back into Windowkeeper.</em
+        ></span
+      ></label
+    >
+  </fieldset>
+  <fieldset>
+    <legend>Administrator confirmation</legend>
+    <label for="admin_password">Administrator password</label
+    ><input
+      id="admin_password"
+      name="admin_password"
+      type="password"
+      required
+      autocomplete="current-password"
+    />
+    <p class="field-help">
+      Credential enrollment requires administrator reauthentication. OAuth
+      methods require one ChatGPT approval.
+    </p>
+  </fieldset>
+  <div class="form-actions">
+    <a class="quiet-button" href="/">Cancel</a
+    ><button
+      class="primary-button"
+      type="submit"
+      {%
+      if
+      not
+      vault_configured
+      %}disabled{%
+      endif
+      %}
+    >
+      Create and sign in
+    </button>
+  </div>
+</form>
+{% endblock %}

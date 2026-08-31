@@ -1,0 +1,13 @@
+.git
+.env
+.venv
+.pytest_cache
+.mypy_cache
+.ruff_cache
+__pycache__
+*.pyc
+.windowkeeper
+PRODUCT.md
+WINDOWKEEPER_*.md
+post-prompt-README-AGENT.md
+tests

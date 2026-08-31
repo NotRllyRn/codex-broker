@@ -1,0 +1,155 @@
+{% extends "base.html" %}{% block title %}Settings | Windowkeeper{% endblock
+%}{% block content %}
+<section class="page-heading">
+  <p class="kicker">Runtime configuration</p>
+  <h1>Settings</h1>
+  <p>Environment-backed configuration is immutable until restart.</p>
+</section>
+<section class="settings-list">
+  <article>
+    <h2>Vault</h2>
+    <strong>{{ 'Configured' if vault_configured else 'Key required' }}</strong>
+    <p>The key source is never displayed or stored in SQLite.</p>
+  </article>
+  <article>
+    <h2>Usage polling</h2>
+    <strong>{{ settings.usage_poll_seconds }} seconds</strong>
+    <p>Dashboard requests coalesce with background refreshes.</p>
+  </article>
+  <article>
+    <h2>Browser OAuth</h2>
+    <strong>{{ settings.browser_oauth_mode|replace('-',' ')|title }}</strong>
+    <p>Device code remains the recommended default for remote deployments.</p>
+  </article>
+  <article>
+    <h2>Activation safety</h2>
+    <strong>{{ settings.activation_safety_delay_seconds }} second delay</strong>
+    <p>
+      Maximum deterministic jitter: {{ settings.activation_jitter_max_seconds }}
+      seconds.
+    </p>
+  </article>
+  <article>
+    <h2>Managed Codex</h2>
+    <strong
+      >{{ 'Available' if compatibility.compatible else 'Unavailable' }}</strong
+    >
+    <p>
+      {{ compatibility.code|replace('_',' ')|title }}. {{ compatibility.detail
+      }}
+    </p>
+  </article>
+</section>
+<section class="detail-section settings-webhooks">
+  <h2>Webhook destinations</h2>
+  <p class="subtle">
+    Incident lifecycle events use immutable signed JSON bodies. Destination URLs
+    and signing secrets are encrypted.
+  </p>
+  {% if destinations %}
+  <div class="data-list">
+    {% for destination in destinations %}
+    <article>
+      <strong>{{ destination.display_name }}</strong
+      ><span
+        >{{ destination.kind|title }} | {{ 'Enabled' if destination.enabled else
+        'Disabled' }}</span
+      ><small>Created {{ destination.created_at_ms }}</small>
+      <div class="inline-actions">
+        <form
+          method="post"
+          action="/settings/webhooks/{{ destination.destination_id }}/test"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+            class="quiet-button"
+            type="submit"
+          >
+            Send test
+          </button>
+        </form>
+        <form
+          method="post"
+          action="/settings/webhooks/{{ destination.destination_id }}/enabled"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><input
+            type="hidden"
+            name="enabled"
+            value="{{ 'false' if destination.enabled else 'true' }}"
+          /><input
+            name="admin_password"
+            type="password"
+            required
+            autocomplete="current-password"
+            placeholder="Admin password"
+          /><button class="quiet-button" type="submit">
+            {{ 'Disable' if destination.enabled else 'Enable' }}
+          </button>
+        </form>
+        <form
+          method="post"
+          action="/settings/webhooks/{{ destination.destination_id }}/delete"
+          data-confirm="Delete this webhook destination?"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><input
+            name="admin_password"
+            type="password"
+            required
+            autocomplete="current-password"
+            placeholder="Admin password"
+          /><button class="danger-button" type="submit">Delete</button>
+        </form>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">No webhook destinations are configured.</p>
+  {% endif %}
+  <form
+    class="account-form webhook-form"
+    method="post"
+    action="/settings/webhooks"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <fieldset>
+      <legend>Add destination</legend>
+      <label for="webhook_name">Display name</label
+      ><input
+        id="webhook_name"
+        name="display_name"
+        required
+        maxlength="80"
+      /><label for="webhook_kind">Destination type</label
+      ><select id="webhook_kind" name="kind">
+        <option value="generic">Generic JSON</option>
+        <option value="slack">Slack</option>
+        <option value="discord">Discord</option></select
+      ><label for="webhook_url">HTTPS endpoint</label
+      ><input
+        id="webhook_url"
+        name="url"
+        type="url"
+        required
+        placeholder="https://hooks.example.test/windowkeeper"
+      /><label for="webhook_secret">Signing secret <span>optional</span></label
+      ><input
+        id="webhook_secret"
+        name="signing_secret"
+        type="password"
+        autocomplete="new-password"
+      />
+      <p class="field-help">
+        Sent as X-Windowkeeper-Signature using HMAC-SHA256.
+      </p>
+      <label for="webhook_admin_password">Administrator password</label
+      ><input
+        id="webhook_admin_password"
+        name="admin_password"
+        type="password"
+        required
+        autocomplete="current-password"
+      /><button class="primary-button" type="submit">Add destination</button>
+    </fieldset>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,84 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          enable-cache: true
+      - run: uv sync --all-extras --locked
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+      - run: node --check src/windowkeeper/web/static/app.js
+      - run: uv run mypy src tests
+      - run: uv run pyright
+      - run: uv run pytest
+      - run: uv run pip-audit
+      - run: uv build
+      - name: Verify wheel contents
+        run: unzip -l dist/*.whl | grep 'windowkeeper/migrations/001_initial.sql'
+  image:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: windowkeeper:smoke
+      - name: Smoke-test release image
+        run: |
+          set -euo pipefail
+          key="wk1_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+          docker run --detach --name windowkeeper-smoke \
+            --read-only --tmpfs /data:uid=10001,gid=10001,mode=0700 \
+            --tmpfs /run/windowkeeper:uid=10001,gid=10001,mode=0700 \
+            --publish 127.0.0.1:18787:8787 \
+            --env WINDOWKEEPER_VAULT_KEY="$key" \
+            --env WINDOWKEEPER_ADMIN_PASSWORD='release smoke password' \
+            windowkeeper:smoke
+          trap 'docker logs windowkeeper-smoke; docker rm --force windowkeeper-smoke' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18787/health/live; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true

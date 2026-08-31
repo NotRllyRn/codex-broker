@@ -1,0 +1,278 @@
+{% extends "base.html" %} {% block title %}{{ detail.account.display_name }} |
+Windowkeeper{% endblock %} {% block content %}
+<section class="page-heading">
+  <a href="/">Back to accounts</a>
+  <p class="kicker">Account evidence</p>
+  <h1>{{ detail.account.display_name }}</h1>
+  <p>
+    {{ detail.account.upstream_email or 'Upstream identity not verified' }}{% if
+    detail.account.upstream_plan %} | {{ detail.account.upstream_plan }}{% endif
+    %}
+  </p>
+</section>
+{% if detail.account.activation_state in ['AMBIGUOUS', 'SAFETY_BLOCKED'] %}
+<section class="danger-zone">
+  <h2>
+    {{ 'Safety block' if detail.account.activation_state == 'SAFETY_BLOCKED'
+    else 'Ambiguous activation' }} requires review
+  </h2>
+  <p>
+    Windowkeeper will never resend this window. After checking upstream
+    evidence, acknowledge the block to allow future windows to be scheduled.
+  </p>
+  <form
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/ambiguity/acknowledge"
+    data-confirm="Acknowledge this ambiguous activation without retrying it?"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
+      >Administrator password<input
+        name="admin_password"
+        type="password"
+        required
+        autocomplete="current-password" /></label
+    ><button class="danger-button" type="submit">
+      Acknowledge without retry
+    </button>
+  </form>
+</section>
+{% endif %}
+<section class="account-evidence-grid">
+  <article>
+    <h2>Authentication</h2>
+    <dl>
+      <div>
+        <dt>State</dt>
+        <dd>{{ detail.account.auth_state|replace('_',' ')|title }}</dd>
+      </div>
+      <div>
+        <dt>Method</dt>
+        <dd>
+          {{ detail.account.last_successful_login_method or
+          detail.account.preferred_login_method }}
+        </dd>
+      </div>
+      <div>
+        <dt>Workspace</dt>
+        <dd>{{ detail.account.workspace_constraint or 'Not constrained' }}</dd>
+      </div>
+      <div>
+        <dt>Verified</dt>
+        <dd>{{ detail.account.last_auth_verified_at_ms or 'Never' }}</dd>
+      </div>
+    </dl>
+  </article>
+  <article>
+    <h2>Short window</h2>
+    <strong class="evidence-number"
+      >{{ detail.usage.short_used_percent_raw if
+      detail.usage.short_used_percent_raw is not none else '?' }}%</strong
+    >
+    <p>
+      Duration: {{ detail.usage.short_duration_minutes or 'unknown' }} minutes
+    </p>
+    <p>Reset: {{ detail.usage.short_resets_at_s or 'unknown' }}</p>
+  </article>
+  <article>
+    <h2>Weekly window</h2>
+    <strong class="evidence-number"
+      >{{ detail.usage.weekly_used_percent_raw if
+      detail.usage.weekly_used_percent_raw is not none else '?' }}%</strong
+    >
+    <p>
+      Duration: {{ detail.usage.weekly_duration_minutes or 'unknown' }} minutes
+    </p>
+    <p>Reset: {{ detail.usage.weekly_resets_at_s or 'unknown' }}</p>
+  </article>
+</section>
+<section class="detail-section reauth-panel">
+  <h2>Downloadable credential snapshot</h2>
+  {% if detail.auth_export.available %}
+  <p class="subtle">
+    This enrollment <code>auth.json</code> is externally owned and never used,
+    refreshed, or replaced by Windowkeeper. It may stop renewing after the
+    managed credential rotates. Do not use one copy in multiple independent
+    services.
+  </p>
+  <form
+    class="account-form"
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/auth-export"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <label for="export_password">Confirm administrator password</label
+    ><input
+      id="export_password"
+      name="admin_password"
+      type="password"
+      required
+      autocomplete="current-password"
+    /><button class="primary-button" type="submit">
+      Download export snapshot
+    </button>
+  </form>
+  {% else %}
+  <p class="subtle">
+    No downloadable credential is available. Complete one ChatGPT sign-in to
+    create it.
+  </p>
+  {% endif %}
+</section>
+<section class="action-row">
+  <form
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/refresh"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+      class="quiet-button"
+      type="submit"
+    >
+      Refresh usage
+    </button>
+  </form>
+  <form
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/activate"
+    data-confirm="Manual activation consumes usage. Continue?"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+      class="primary-button"
+      type="submit"
+    >
+      Activate once
+    </button>
+  </form>
+  <form
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/enabled"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><input
+      type="hidden"
+      name="enabled"
+      value="{{ 'false' if detail.account.enabled else 'true' }}"
+    /><button class="quiet-button" type="submit">
+      {{ 'Disable' if detail.account.enabled else 'Enable' }}
+    </button>
+  </form>
+</section>
+<section class="detail-section">
+  <h2>Labels</h2>
+  <form
+    class="account-form"
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/labels"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
+      for="account_labels"
+      >Comma-separated labels</label
+    ><input
+      id="account_labels"
+      name="labels"
+      value="{{ detail.account.labels|join(', ') }}"
+      maxlength="820"
+    /><button class="quiet-button" type="submit">Save labels</button>
+  </form>
+</section>
+<section class="detail-section reauth-panel">
+  <h2>Replace or repair credentials</h2>
+  <p class="subtle">
+    A replacement is promoted only after Codex verifies the same account and
+    configured workspace.
+  </p>
+  <form
+    class="account-form"
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/reauthenticate"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <fieldset>
+      <legend>Sign in again</legend>
+      <label class="method-option"
+        ><input
+          type="radio"
+          name="login_method"
+          value="CHATGPT_DEVICE_CODE"
+          checked
+        /><span
+          ><strong>Sign in with a code</strong
+          ><em>Recommended for remote and container deployments.</em></span
+        ></label
+      ><label class="method-option"
+        ><input type="radio" name="login_method" value="CHATGPT_BROWSER" /><span
+          ><strong>Sign in with browser</strong
+          ><em
+            >Uses the configured loopback or secure manual callback mode.</em
+          ></span
+        ></label
+      >
+      <label for="reauth_password">Confirm admin password</label
+      ><input
+        id="reauth_password"
+        name="admin_password"
+        type="password"
+        required
+        autocomplete="current-password"
+      /><button class="primary-button" type="submit">Continue</button>
+    </fieldset>
+  </form>
+</section>
+<section class="detail-section">
+  <h2>Recent activations</h2>
+  {% if detail.activations %}
+  <div class="data-list">
+    {% for item in detail.activations %}
+    <article>
+      <strong>{{ item.state|replace('_',' ')|title }}</strong
+      ><span>{{ item.window_key }}</span
+      ><small
+        >{{ item.schedule_confidence|title }} via {{
+        item.schedule_source|replace('_',' ')|lower }}</small
+      >
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">No activation attempts are recorded.</p>
+  {% endif %}
+</section>
+<section class="detail-section">
+  <h2>Recent operations</h2>
+  {% if detail.operations %}
+  <div class="data-list">
+    {% for item in detail.operations %}<a
+      href="/operations/{{ item.operation_id }}"
+      ><strong>{{ item.kind|replace('.',' ')|title }}</strong
+      ><span>{{ item.state|replace('_',' ')|title }}</span
+      ><small
+        >{{ item.progress_summary or item.error_summary or 'Queued' }}</small
+      ></a
+    >{% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">No operations are recorded.</p>
+  {% endif %}
+</section>
+<section class="danger-zone">
+  <h2>Delete account</h2>
+  <p>
+    Stops scheduling and removes the active encrypted credential. Operational
+    history remains anonymized.
+  </p>
+  <form
+    method="post"
+    action="/accounts/{{ detail.account.public_token }}/delete"
+    data-confirm="Delete this account and its credential bundle?"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
+      >Type <strong>{{ detail.account.display_name }}</strong
+      ><input name="confirmation" required autocomplete="off" /></label
+    ><label
+      >Administrator password<input
+        name="admin_password"
+        type="password"
+        required
+        autocomplete="current-password" /></label
+    ><button class="danger-button" type="submit">Delete account</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-theme="system" data-root-path="{{ root_path }}">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{% block title %}Windowkeeper{% endblock %}</title>
+    <link rel="stylesheet" href="{{ root_path }}/static/app.css" />
+    <script type="module" src="{{ root_path }}/static/app.js"></script>
+  </head>
+  <body class="{% block body_class %}{% endblock %}">
+    <a class="skip-link" href="#main">Skip to content</a>
+    {% block shell %}
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Windowkeeper dashboard"
+        ><span class="brand-mark">WK</span><span>Windowkeeper</span></a
+      >
+      <nav aria-label="Primary">
+        <a href="/">Accounts</a>
+        <a href="/incidents">Incidents</a>
+        <a href="/logs">Logs</a>
+        <a href="/settings">Settings</a>
+      </nav>
+      <div class="top-actions">
+        <button
+          class="theme-toggle"
+          type="button"
+          data-theme-toggle
+          aria-label="Change color theme"
+        >
+          Theme: system
+        </button>
+        <form action="/logout" method="post">
+          <input
+            type="hidden"
+            name="csrf_token"
+            value="{{ csrf|default('') }}"
+          />
+          <button class="quiet-button" type="submit">Log out</button>
+        </form>
+      </div>
+    </header>
+    {% endblock %}
+    <main id="main">{% block content %}{% endblock %}</main>
+    <div class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

@@ -1,0 +1,43 @@
+services:
+  windowkeeper:
+    build: .
+    init: true
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    ports:
+      - "${WINDOWKEEPER_BIND_ADDRESS:-127.0.0.1}:${WINDOWKEEPER_PORT:-8787}:8787"
+    environment:
+      WINDOWKEEPER_ROOT_PATH: ${WINDOWKEEPER_ROOT_PATH:-}
+      WINDOWKEEPER_COOKIE_SECURE: ${WINDOWKEEPER_COOKIE_SECURE:-auto}
+      WINDOWKEEPER_BROWSER_OAUTH_MODE: ${WINDOWKEEPER_BROWSER_OAUTH_MODE:-manual}
+      WINDOWKEEPER_VAULT_KEY: ${WINDOWKEEPER_VAULT_KEY:?Set WINDOWKEEPER_VAULT_KEY in .env}
+      WINDOWKEEPER_ADMIN_PASSWORD: ${WINDOWKEEPER_ADMIN_PASSWORD:?Set WINDOWKEEPER_ADMIN_PASSWORD in .env}
+    volumes:
+      - windowkeeper-data:/data
+    tmpfs:
+      - /run/windowkeeper:uid=10001,gid=10001,mode=0700,size=512m
+      - /tmp:uid=10001,gid=10001,mode=0700,size=128m
+    healthcheck:
+      test:
+        [
+          CMD,
+          python,
+          -c,
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health/ready', timeout=2)",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: "2.0"
+
+volumes:
+  windowkeeper-data: {}

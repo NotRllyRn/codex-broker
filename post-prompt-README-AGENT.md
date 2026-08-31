@@ -1,0 +1,1 @@
+hello, this is a post prompt prompt. I want you to also write docs as comments in the code to understand what the program does at a high level. Also make sure to write a minimal but useful read me file.

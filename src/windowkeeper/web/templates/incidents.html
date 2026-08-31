@@ -1,0 +1,33 @@
+{% extends "base.html" %}{% block title %}Incidents | Windowkeeper{% endblock
+%}{% block content %}
+<section class="page-heading">
+  <p class="kicker">Action evidence</p>
+  <h1>Incidents</h1>
+  <p>
+    Repeated observations update one durable incident instead of sending
+    duplicate alerts.
+  </p>
+</section>
+{% if incidents %}
+<section class="incident-list">
+  {% for incident in incidents %}
+  <article class="severity-{{ incident.severity|lower }}">
+    <header>
+      <span class="status-label">{{ incident.state|title }}</span
+      ><strong>{{ incident.problem_type|replace('_',' ')|title }}</strong
+      ><time>{{ incident.last_seen_at_ms }}</time>
+    </header>
+    <p>{{ incident.summary }}</p>
+    <footer>
+      {{ incident.occurrence_count }} occurrence{% if incident.occurrence_count
+      != 1 %}s{% endif %}
+    </footer>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="empty-state">
+  <h2>No incidents</h2>
+  <p>Warnings may still appear on accounts without opening an incident.</p>
+</section>
+{% endif %}{% endblock %}
