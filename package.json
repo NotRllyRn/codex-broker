@@ -1,0 +1,9 @@
+{
+  "name": "codex-broker-monorepo",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "check:pi": "npm --workspace @codex-broker/pi-extension run check",
+    "test:pi": "npm --workspace @codex-broker/pi-extension test"
+  }
+}
