@@ -167,8 +167,9 @@ venv.bak/
 # mkdocs documentation
 /site
 
-# Windowkeeper local state
+# Codex Broker local state and generated deployment secrets
 .windowkeeper/
+deployment/
 
 # mypy
 .mypy_cache/
