@@ -12,7 +12,7 @@ class Clock(Protocol):
 
 class SystemClock:
     def now_ms(self) -> int:
-        return int(time.time() * 1000)
+        return time.time_ns() // 1_000_000
 
     def monotonic(self) -> float:
         return time.monotonic()
@@ -22,4 +22,8 @@ class SystemClock:
 
 
 def iso_time(value_ms: int | None) -> str | None:
-    return datetime.fromtimestamp(value_ms / 1000, UTC).isoformat() if value_ms else None
+    return (
+        datetime.fromtimestamp(value_ms / 1000, UTC).isoformat().replace("+00:00", "Z")
+        if value_ms
+        else None
+    )

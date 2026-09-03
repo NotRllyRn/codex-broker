@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     codex_idle_seconds: int = Field(default=30, ge=0)  # Deprecated; runtimes are always fresh.
     activation_safety_delay_seconds: int = Field(default=60, ge=1)
     activation_jitter_max_seconds: int = Field(default=30, ge=0, le=300)
+    reset_padding_seconds: int = Field(default=10, ge=0, le=300)
     estimated_schedule_enabled: bool = True
     default_chatgpt_login_method: Literal["device-code", "browser"] = "device-code"
     # pi-lens-ignore: python-hardcoded-secrets

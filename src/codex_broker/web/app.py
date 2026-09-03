@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import FastAPI, Form, Header, Request
 from fastapi.exceptions import HTTPException
@@ -22,14 +22,19 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from codex_broker.client_auth import ClientKeyService
+from codex_broker.clock import iso_time
 from codex_broker.compatibility import Compatibility, inspect_codex
 from codex_broker.config import Settings, get_settings
+from codex_broker.credential_authority import CredentialAuthority
 from codex_broker.database import Database
 from codex_broker.domain.models import LoginMethod
 from codex_broker.errors import WindowkeeperError
 from codex_broker.events import Broadcaster
 from codex_broker.logbook import LogBook, configure_logging
+from codex_broker.router import PoolWait, Router, RouteRequest
 from codex_broker.runtime import RuntimeManager
 from codex_broker.security import AdminSecurity, digest
 from codex_broker.services import ApplicationServices
@@ -82,7 +87,25 @@ class AppState:
     logbook: LogBook
     vault_configured: bool
     compatibility: Compatibility
+    client_keys: ClientKeyService
+    router: Router
     ready: bool = False
+
+
+class RouteBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(min_length=1, max_length=200)
+    turn_id: str = Field(min_length=1, max_length=200)
+    preferred_account_id: str | None = Field(None, max_length=100)
+    failed_account_id: str | None = Field(None, max_length=100)
+    failure_kind: Literal["quota", "auth", "rate_limit"] | None = None
+
+    @model_validator(mode="after")
+    def consistent_failure(self) -> "RouteBody":
+        if bool(self.failed_account_id) != bool(self.failure_kind):
+            raise ValueError("failed_account_id and failure_kind must be supplied together")
+        return self
 
 
 def _read_secret(path: Path | None, value: str | None) -> str | None:
@@ -193,6 +216,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         webhooks = WebhookDispatcher(database, vault)
         services = ApplicationServices(database, settings, vault, runtime, events, webhooks)
         security = AdminSecurity(database, settings)
+        client_keys = ClientKeyService(database)
+        authority = CredentialAuthority(services, vault)
+        router = Router(database, services, authority, settings.reset_padding_seconds)
         admin_password = _read_secret(settings.admin_password_file, settings.admin_password)
         if admin_password:
             await security.bootstrap(admin_password)
@@ -212,6 +238,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             logbook,
             vault_configured,
             compatibility,
+            client_keys,
+            router,
         )
         app.state.windowkeeper = state
         await services.reconcile_startup()
@@ -246,6 +274,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     login_throttle = LoginThrottle()
     reauth_throttle = LoginThrottle()
+    client_auth_throttle = LoginThrottle()
     app = FastAPI(
         title="Windowkeeper",
         docs_url=None,
@@ -269,7 +298,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             and not location.startswith(f"{resolved.root_path}/")
         ):
             response.headers["location"] = f"{resolved.root_path}{location}"
-        return _security_headers(response)
+        return _security_headers(response, no_store=request.url.path.startswith("/api/v1/"))
 
     @app.exception_handler(WindowkeeperError)
     async def handle_problem(request: Request, error: WindowkeeperError) -> JSONResponse:
@@ -294,6 +323,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await state(request).security.require_csrf(token, csrf)
         return token
 
+    async def require_client(
+        request: Request, authorization: str | None = Header(None)
+    ) -> dict[str, object]:
+        client = request.client.host if request.client else "unknown"
+        if not client_auth_throttle.allow(client):
+            raise WindowkeeperError(
+                "CLIENT_AUTH_THROTTLED", "Client authentication is temporarily unavailable", 429
+            )
+        scheme, _, token = (authorization or "").partition(" ")
+        if scheme.lower() != "bearer" or not token.startswith("cbk_"):
+            raise WindowkeeperError("CLIENT_KEY_INVALID", "Client authentication failed", 401)
+        key = await state(request).client_keys.authenticate(token)
+        client_auth_throttle.clear(client)
+        return key
+
     async def require_reauthentication(request: Request, token: str, password: str) -> None:
         key = digest(token).hex()
         if not reauth_throttle.allow(key):
@@ -312,6 +356,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         current = state(request)
         status = "ok" if current.ready else "unavailable"
         return JSONResponse({"status": status}, status_code=200 if current.ready else 503)
+
+    @app.get("/api/v1/health")
+    async def api_health(
+        request: Request, authorization: str | None = Header(None)
+    ) -> dict[str, str]:
+        await require_client(request, authorization)
+        return {"status": "ok" if state(request).ready else "unavailable"}
+
+    @app.post("/api/v1/route")
+    async def api_route(
+        request: Request,
+        body: RouteBody,
+        authorization: str | None = Header(None),
+    ) -> Response:
+        key = await require_client(request, authorization)
+        result = await state(request).router.route(
+            str(key["key_id"]),
+            RouteRequest(
+                body.session_id,
+                body.turn_id,
+                body.preferred_account_id,
+                body.failed_account_id,
+                body.failure_kind,
+            ),
+        )
+        if isinstance(result, PoolWait):
+            return JSONResponse(
+                {
+                    "status": "wait",
+                    "code": "POOL_EXHAUSTED",
+                    "next_retry_at": iso_time(result.next_retry_at_ms),
+                    "retry_after_seconds": result.retry_after_seconds,
+                },
+                status_code=429,
+                headers={"Retry-After": str(result.retry_after_seconds)},
+            )
+        return JSONResponse(
+            {
+                "status": "ok",
+                "account_id": result.account_id,
+                "access_token": result.access_token,
+                "chatgpt_account_id": result.chatgpt_account_id,
+                "expires_at": iso_time(result.expires_at_ms),
+            }
+        )
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request) -> Response:

@@ -1348,6 +1348,21 @@ class ApplicationServices:
             raise Conflict("AUTH_REQUIRED", "The account must be authenticated first")
         return payload
 
+    async def credential_payload_for_lease(
+        self, account: dict[str, Any], needs_refresh: Callable[[dict[str, Any]], bool]
+    ) -> dict[str, Any]:
+        """Return ACTIVE while serializing any refresh through the checkpoint protocol."""
+        account_id = str(account["account_id"])
+        async with self._credential_lock(account_id):
+            payload = await self._credential_payload(account_id)
+            if needs_refresh(payload):
+                await self._run_managed_locked(
+                    account,
+                    lambda runtime: runtime.adapter.account(refresh_token=False),
+                )
+                payload = await self._credential_payload(account_id)
+            return payload
+
     def _credential_lock(self, account_id: str) -> asyncio.Lock:
         return self._credential_locks.setdefault(account_id, asyncio.Lock())
 

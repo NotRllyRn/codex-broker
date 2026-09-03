@@ -1,4 +1,4 @@
-# pyright: reportMissingImports=false
+# pyright: reportMissingImports=false, reportFunctionMemberAccess=false
 
 import asyncio
 import ipaddress
