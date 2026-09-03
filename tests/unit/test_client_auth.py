@@ -27,4 +27,3 @@ async def test_client_keys_are_hashed_authenticated_and_revoked(tmp_path: Path) 
             await service.authenticate(issued.token)
     finally:
         await database.close()
-

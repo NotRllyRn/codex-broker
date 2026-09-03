@@ -40,7 +40,9 @@ class Services:
         self.refreshed = refreshed
         self.refreshes = 0
 
-    async def credential_payload_for_lease(self, account: dict[str, Any], needs_refresh: Any) -> dict[str, Any]:
+    async def credential_payload_for_lease(
+        self, account: dict[str, Any], needs_refresh: Any
+    ) -> dict[str, Any]:
         del account
         if needs_refresh(self.value):
             self.refreshes += 1
@@ -53,7 +55,9 @@ class Services:
 async def test_authority_refreshes_stale_token_and_returns_only_lease_fields() -> None:
     vault = Vault(b"x" * 32, "instance")
     stale = payload(vault, token({"exp": 100, ACCOUNT_CLAIM: {"chatgpt_account_id": "old"}}))
-    fresh = payload(vault, token({"exp": 10_000, ACCOUNT_CLAIM: {"chatgpt_account_id": "account-1"}}))
+    fresh = payload(
+        vault, token({"exp": 10_000, ACCOUNT_CLAIM: {"chatgpt_account_id": "account-1"}})
+    )
     services = Services(stale, fresh)
     lease = await CredentialAuthority(services, vault).lease({"account_id": "internal"}, 1_000_000)
     assert services.refreshes == 1

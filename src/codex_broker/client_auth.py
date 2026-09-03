@@ -62,7 +62,11 @@ class ClientKeyService:
                 "SELECT * FROM client_api_keys WHERE revoked_at_ms IS NULL"
             ).fetchall()
             row = next(
-                (item for item in rows if hmac.compare_digest(bytes(item["secret_hash"]), supplied)),
+                (
+                    item
+                    for item in rows
+                    if hmac.compare_digest(bytes(item["secret_hash"]), supplied)
+                ),
                 None,
             )
             if row:
@@ -85,6 +89,16 @@ class ClientKeyService:
                 connection.execute(
                     "UPDATE client_api_keys SET revoked_at_ms=? WHERE key_id=? AND revoked_at_ms IS NULL",
                     (now, key_id),
+                ).rowcount
+            )
+        )
+
+    async def delete_revoked(self, key_id: str) -> bool:
+        return await self.database.transaction(
+            lambda connection: bool(
+                connection.execute(
+                    "DELETE FROM client_api_keys WHERE key_id=? AND revoked_at_ms IS NOT NULL",
+                    (key_id,),
                 ).rowcount
             )
         )

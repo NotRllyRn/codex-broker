@@ -1,12 +1,5 @@
-{% extends "base.html" %} {% block title %}Accounts | Windowkeeper{% endblock %}
-{% block body_class %}variant-{{ variant }}{% endblock %} {% block content %}
-<!--
-THESIS: Account evidence is the interface; generic equal-card dashboards are refused.
-OWN-WORLD: Neutral operational surfaces, one cobalt accent, square data planes, pill controls only.
-STORY: Scan service health, locate the account needing attention, inspect proof, then act once.
-FIRST VIEWPORT: A compact status header and the selected account topology fill the working area; Add account remains visible.
-FORM: Five throwaway operate prototypes share one view model. Orbit cockpit is the assigned command-center structure; ledger, rail, timeline, and focus test different task hierarchies.
--->
+{% extends "base.html" %} {% block title %}Accounts | Codex Broker{% endblock %}
+{% block content %}
 {% if not vault_configured %}
 <section class="service-alert" role="alert">
   <strong>Vault key required.</strong> Monitoring remains visible, but account
@@ -18,7 +11,7 @@ FORM: Five throwaway operate prototypes share one view model. Orbit cockpit is t
     <p class="kicker">Account watch</p>
     <h1>Every window, with evidence.</h1>
     <p class="intro-copy">
-      Monitor short and weekly limits. Windowkeeper skips uncertain activation
+      Monitor short and weekly limits. Codex Broker skips uncertain activation
       instead of submitting twice.
     </p>
   </div>
@@ -39,7 +32,6 @@ FORM: Five throwaway operate prototypes share one view model. Orbit cockpit is t
   </div>
 </section>
 <form class="filter-bar" method="get" action="/">
-  <input type="hidden" name="variant" value="{{ variant }}" />
   <label
     ><span>Find account</span
     ><input type="search" name="q" value="{{ q }}" placeholder="Name or label"
@@ -74,7 +66,7 @@ FORM: Five throwaway operate prototypes share one view model. Orbit cockpit is t
   <p>Add an authorized ChatGPT account or clear the active filters.</p>
   <a class="primary-button" href="/accounts/new">Add account</a>
 </section>
-{% elif variant == 'orbit' %}
+{% else %}
 <section class="orbit-layout" aria-label="Orbit cockpit layout">
   <aside class="orbit-queue">
     <h2>Attention queue</h2>
@@ -139,242 +131,4 @@ FORM: Five throwaway operate prototypes share one view model. Orbit cockpit is t
     {% endfor %}
   </div>
 </section>
-{% elif variant == 'ledger' %}
-<section class="ledger-layout" aria-label="Evidence ledger layout">
-  <div class="ledger-heading">
-    <h2>Account evidence ledger</h2>
-    <p>
-      All timestamps are committed server state. Upstream reads never block this
-      page.
-    </p>
-  </div>
-  <div class="table-scroll">
-    <table>
-      <thead>
-        <tr>
-          <th scope="col">Account</th>
-          <th scope="col">State</th>
-          <th scope="col">Short</th>
-          <th scope="col">Weekly</th>
-          <th scope="col">Schedule</th>
-          <th scope="col">Last complete read</th>
-          <th scope="col"><span class="visually-hidden">Actions</span></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for account in accounts %}
-        <tr>
-          <th scope="row">
-            <a href="/accounts/{{ account.public_token }}"
-              >{{ account.display_name }}</a
-            ><small>{{ account.labels|join(', ') or 'Unlabelled' }}</small>
-          </th>
-          <td>
-            <span class="status-label state-{{ account.overall_state|lower }}"
-              >{{ account.overall_state|replace('_',' ')|title }}</span
-            ><small>{{ account.auth_state|replace('_',' ')|title }}</small>
-          </td>
-          <td>
-            <strong
-              >{{ account.short_percent if account.short_percent is not none
-              else '?' }}%</strong
-            ><small>{{ account.short_reset or 'Unknown reset' }}</small>
-          </td>
-          <td>
-            <strong
-              >{{ account.weekly_percent if account.weekly_percent is not none
-              else '?' }}%</strong
-            ><small>{{ account.weekly_reset or 'Unknown reset' }}</small>
-          </td>
-          <td>
-            {{ account.schedule_confidence|title }}<small
-              >{{ account.next_activation or 'No deadline' }}</small
-            >
-          </td>
-          <td>{{ account.last_refresh or 'Never' }}</td>
-          <td>
-            <a class="row-action" href="/accounts/{{ account.public_token }}"
-              >Open</a
-            >
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-{% elif variant == 'rail' %}
-<section class="rail-layout" aria-label="Command rail layout">
-  <aside class="command-rail">
-    <h2>Commands</h2>
-    <a href="/accounts/new">Add account</a
-    ><a href="/incidents">Review incidents</a><a href="/logs">Search logs</a>
-    <p>Manual activation consumes usage and never bypasses deduplication.</p>
-  </aside>
-  <div class="state-lanes">
-    {% for lane in ['ACTION_REQUIRED','WARNING','HEALTHY','DISABLED'] %}
-    <section class="state-lane">
-      <header>
-        <h2>{{ lane|replace('_',' ')|title }}</h2>
-        <span
-          >{{ accounts|selectattr('overall_state','equalto',lane)|list|length
-          }}</span
-        >
-      </header>
-      {% for account in accounts if account.overall_state == lane %}
-      <article>
-        <h3>
-          <a href="/accounts/{{ account.public_token }}"
-            >{{ account.display_name }}</a
-          >
-        </h3>
-        <p>{{ account.evidence }}</p>
-        <dl>
-          <div>
-            <dt>Short</dt>
-            <dd>
-              {{ account.short_percent if account.short_percent is not none else
-              '?' }}%
-            </dd>
-          </div>
-          <div>
-            <dt>Weekly</dt>
-            <dd>
-              {{ account.weekly_percent if account.weekly_percent is not none
-              else '?' }}%
-            </dd>
-          </div>
-          <div>
-            <dt>Next</dt>
-            <dd>{{ account.next_activation or 'Unknown' }}</dd>
-          </div>
-        </dl>
-        <a href="/accounts/{{ account.public_token }}">Open account</a>
-      </article>
-      {% endfor %}
-    </section>
-    {% endfor %}
-  </div>
-</section>
-{% elif variant == 'timeline' %}
-<section class="timeline-layout" aria-label="Reset timeline layout">
-  <header>
-    <h2>Reset horizon</h2>
-    <p>
-      Confirmed timestamps lead. Estimated deadlines are visibly qualified;
-      unknown schedules stay unplotted.
-    </p>
-  </header>
-  <div class="timeline-axis" aria-hidden="true">
-    <span>Now</span><span>Next short reset</span><span>Weekly horizon</span>
-  </div>
-  <div class="timeline-list">
-    {% for account in accounts %}
-    <article>
-      <div class="timeline-identity">
-        <span class="status-label"
-          >{{ account.overall_state|replace('_',' ')|title }}</span
-        >
-        <h3>
-          <a href="/accounts/{{ account.public_token }}"
-            >{{ account.display_name }}</a
-          >
-        </h3>
-        <small>{{ account.last_refresh or 'Never refreshed' }}</small>
-      </div>
-      <div class="timeline-track">
-        <span class="short-marker"
-          ><b
-            >{{ account.short_percent if account.short_percent is not none else
-            '?' }}%</b
-          ><small
-            >{{ account.short_reset or 'Unknown short reset' }}</small
-          ></span
-        ><span class="weekly-marker"
-          ><b
-            >{{ account.weekly_percent if account.weekly_percent is not none
-            else '?' }}%</b
-          ><small
-            >{{ account.weekly_reset or 'Unknown weekly reset' }}</small
-          ></span
-        >
-      </div>
-      <div class="timeline-deadline">
-        <strong>{{ account.schedule_confidence|title }}</strong
-        ><span>{{ account.next_activation or 'No activation deadline' }}</span>
-      </div>
-    </article>
-    {% endfor %}
-  </div>
-</section>
-{% else %}
-<section class="focus-layout" aria-label="Account focus layout">
-  {% set featured = accounts|first %}
-  <article class="focus-primary">
-    <header>
-      <div>
-        <p class="kicker">Selected account</p>
-        <h2>{{ featured.display_name }}</h2>
-        <p>{{ featured.labels|join(', ') or 'No labels' }}</p>
-      </div>
-      <span class="status-label"
-        >{{ featured.overall_state|replace('_',' ')|title }}</span
-      >
-    </header>
-    <div class="focus-data">
-      <div>
-        <span>Short usage</span
-        ><strong
-          >{{ featured.short_percent if featured.short_percent is not none else
-          '?' }}%</strong
-        ><small>{{ featured.short_reset or 'Reset unknown' }}</small>
-      </div>
-      <div>
-        <span>Weekly usage</span
-        ><strong
-          >{{ featured.weekly_percent if featured.weekly_percent is not none
-          else '?' }}%</strong
-        ><small>{{ featured.weekly_reset or 'Reset unknown' }}</small>
-      </div>
-      <div>
-        <span>Next activation</span
-        ><strong>{{ featured.schedule_confidence|title }}</strong
-        ><small>{{ featured.next_activation or 'No deadline' }}</small>
-      </div>
-    </div>
-    <p class="evidence-line">
-      <strong>Evidence:</strong> {{ featured.evidence }}
-    </p>
-    <a class="primary-button" href="/accounts/{{ featured.public_token }}"
-      >Inspect account</a
-    >
-  </article>
-  <aside class="focus-list">
-    <h2>Other accounts</h2>
-    {% for account in accounts[1:] %}<a
-      href="/?variant=focus&q={{ account.display_name|urlencode }}"
-      ><span
-        ><strong>{{ account.display_name }}</strong
-        ><small>{{ account.overall_state|replace('_',' ')|title }}</small></span
-      ><b
-        >{{ account.short_percent if account.short_percent is not none else '?'
-        }}%</b
-      ></a
-    >{% else %}
-    <p class="subtle">Add another account to compare.</p>
-    {% endfor %}
-  </aside>
-</section>
-{% endif %} {% if dev %}
-<nav
-  class="prototype-switcher"
-  aria-label="Dashboard prototype variants"
-  data-variant-switcher
-  data-current="{{ variant }}"
-  data-variants="{{ variants.keys()|join(',') }}"
->
-  <button type="button" data-previous aria-label="Previous layout">←</button
-  ><span><b>{{ variant|upper }}</b> {{ variants[variant] }}</span
-  ><button type="button" data-next aria-label="Next layout">→</button>
-</nav>
 {% endif %} {% endblock %}

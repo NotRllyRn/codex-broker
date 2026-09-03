@@ -54,9 +54,7 @@ class Router:
         self.reset_padding_seconds = reset_padding_seconds
         self.clock = SystemClock()
 
-    async def route(
-        self, key_id: str, request: RouteRequest
-    ) -> RouteLease | PoolWait:
+    async def route(self, key_id: str, request: RouteRequest) -> RouteLease | PoolWait:
         now = self.clock.now_ms()
         rows = await self._accounts(key_id, now)
         failed = next(
@@ -82,7 +80,9 @@ class Router:
             rows = await self._accounts(key_id, now)
 
         usable = [row for row in rows if not self._exhausted(row) and not row["excluded_until"]]
-        selected = self._select(usable, request.preferred_account_id, request.failed_account_id, rows)
+        selected = self._select(
+            usable, request.preferred_account_id, request.failed_account_id, rows
+        )
         if selected:
             lease = await self.authority.lease(selected, now)
             return RouteLease(
@@ -142,7 +142,9 @@ class Router:
         if failed and usable:
             order = [str(row["public_token"]) for row in all_rows]
             start = (order.index(failed) + 1) % len(order)
-            return min(usable, key=lambda row: (order.index(str(row["public_token"])) - start) % len(order))
+            return min(
+                usable, key=lambda row: (order.index(str(row["public_token"])) - start) % len(order)
+            )
         return usable[0] if usable else None
 
     @staticmethod

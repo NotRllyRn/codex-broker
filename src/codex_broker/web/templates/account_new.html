@@ -1,4 +1,4 @@
-{% extends "base.html" %} {% block title %}Add account | Windowkeeper{% endblock
+{% extends "base.html" %} {% block title %}Add account | Codex Broker{% endblock
 %} {% block content %}
 <section class="page-heading">
   <a href="/">Back to accounts</a>
@@ -27,7 +27,7 @@
       maxlength="80"
       autocomplete="off"
     />
-    <p class="field-help">Used only inside Windowkeeper.</p>
+    <p class="field-help">Used only inside Codex Broker.</p>
     <label for="labels">Labels</label
     ><input
       id="labels"
@@ -41,7 +41,7 @@
     <label for="workspace">Workspace ID <span>optional</span></label
     ><input id="workspace" name="workspace" autocomplete="off" />
     <p class="field-help">
-      When supplied, Windowkeeper configures Codex to restrict sign-in to this
+      When supplied, Codex Broker configures Codex to restrict sign-in to this
       workspace.
     </p>
   </fieldset>
@@ -65,25 +65,10 @@
         ><strong>Sign in with browser</strong
         ><em
           >Open normal ChatGPT sign-in. In bridge mode, paste the localhost
-          callback URL back into Windowkeeper.</em
+          callback URL back into Codex Broker.</em
         ></span
       ></label
     >
-  </fieldset>
-  <fieldset>
-    <legend>Administrator confirmation</legend>
-    <label for="admin_password">Administrator password</label
-    ><input
-      id="admin_password"
-      name="admin_password"
-      type="password"
-      required
-      autocomplete="current-password"
-    />
-    <p class="field-help">
-      Credential enrollment requires administrator reauthentication. OAuth
-      methods require one ChatGPT approval.
-    </p>
   </fieldset>
   <div class="form-actions">
     <a class="quiet-button" href="/">Cancel</a

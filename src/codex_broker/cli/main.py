@@ -16,6 +16,7 @@ import click
 import httpx
 import uvicorn
 
+from codex_broker.client_auth import ClientKeyService
 from codex_broker.compatibility import inspect_codex
 from codex_broker.config import Settings, get_settings
 from codex_broker.database import Database
@@ -61,7 +62,7 @@ def _fsync_directory(path: Path) -> None:
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(VERSION)
 def cli() -> None:
-    """Operate the Windowkeeper service and its durable state."""
+    """Operate the Codex Broker service and its durable state."""
     get_settings.cache_clear()
 
 
@@ -135,7 +136,7 @@ def initialize(key_file: Path, password: str) -> None:
     except BaseException:
         key_file.unlink(missing_ok=True)
         raise
-    click.echo("Windowkeeper initialized.")
+    click.echo("Codex Broker initialized.")
     click.echo(f"Set WINDOWKEEPER_VAULT_KEY_FILE={key_file.resolve()}")
 
 
@@ -159,7 +160,7 @@ def password_set(password: str) -> None:
 @cli.command("version")
 @click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON.")
 def version_command(as_json: bool) -> None:
-    """Show the Windowkeeper CLI version."""
+    """Show the Codex Broker CLI version."""
     if as_json:
         click.echo(
             json.dumps(
@@ -202,7 +203,7 @@ def health(as_json: bool) -> None:
                 )
             )
         else:
-            click.echo("Windowkeeper service is unavailable.", err=True)
+            click.echo("Codex Broker service is unavailable.", err=True)
         raise click.exceptions.Exit(5) from error
     payload = {
         "api_version": "windowkeeper.dev/cli/v1",
@@ -249,12 +250,68 @@ def status(as_json: bool) -> None:
         click.echo(json.dumps(value, indent=2))
         return
     click.echo(
-        f"Windowkeeper {value['version']} | {len(value['accounts'])} accounts | {value['open_incidents']} open incidents"
+        f"Codex Broker {value['version']} | {len(value['accounts'])} accounts | {value['open_incidents']} open incidents"
     )
     for account in value["accounts"]:
         click.echo(
             f"  {account['display_name']:<24} {account['overall_state']:<16} {account['usage_state']}"
         )
+
+
+@cli.group("client-key")
+def client_key() -> None:
+    """Create and revoke machine API keys."""
+
+
+@client_key.command("create")
+@click.argument("name")
+def client_key_create(name: str) -> None:
+    """Create a key and print its secret once."""
+    settings = _settings()
+    lock, database = _database(settings)
+
+    async def apply() -> str:
+        try:
+            return (await ClientKeyService(database).create(name)).token
+        finally:
+            await _close(database, lock)
+
+    click.echo(_run(apply()))
+
+
+@client_key.command("list")
+def client_key_list() -> None:
+    """List key metadata without secrets."""
+    settings = _settings()
+    lock, database = _database(settings)
+
+    async def read() -> list[dict[str, object]]:
+        try:
+            return await ClientKeyService(database).list()
+        finally:
+            await _close(database, lock)
+
+    for key in _run(read()):
+        status = "revoked" if key["revoked_at_ms"] else "active"
+        click.echo(f"{key['key_id']}  {key['key_prefix']}  {status}  {key['name']}")
+
+
+@client_key.command("revoke")
+@click.argument("key_id")
+def client_key_revoke(key_id: str) -> None:
+    """Revoke one machine API key."""
+    settings = _settings()
+    lock, database = _database(settings)
+
+    async def apply() -> bool:
+        try:
+            return await ClientKeyService(database).revoke(key_id)
+        finally:
+            await _close(database, lock)
+
+    if not _run(apply()):
+        raise click.ClickException("active client key not found")
+    click.echo("Client key revoked.")
 
 
 @cli.command()
@@ -365,7 +422,7 @@ def restore(input_file: Path, confirm: str) -> None:
     finally:
         temporary.unlink(missing_ok=True)
         lock.release()
-    click.echo("Backup restored. Verify the vault key before starting Windowkeeper.")
+    click.echo("Backup restored. Verify the vault key before starting Codex Broker.")
 
 
 @cli.group()

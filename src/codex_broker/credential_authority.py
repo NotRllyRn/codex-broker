@@ -75,7 +75,10 @@ class CredentialAuthority:
             if force_refresh:
                 return True
             try:
-                return _lease_from_payload(self.vault, payload).expires_at_ms <= now_ms + REFRESH_SKEW_MS
+                return (
+                    _lease_from_payload(self.vault, payload).expires_at_ms
+                    <= now_ms + REFRESH_SKEW_MS
+                )
             except WindowkeeperError:
                 return True
 

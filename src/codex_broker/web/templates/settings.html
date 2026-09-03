@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% block title %}Settings | Windowkeeper{% endblock
+{% extends "base.html" %}{% block title %}Settings | Codex Broker{% endblock
 %}{% block content %}
 <section class="page-heading">
   <p class="kicker">Runtime configuration</p>
@@ -40,6 +40,38 @@
     </p>
   </article>
 </section>
+<section class="detail-section">
+  <h2>Client access keys</h2>
+  <p class="subtle">Each Pi or Hermes installation should have its own revocable key.</p>
+  {% if issued_key %}
+  <div class="service-alert" role="status">
+    <strong>Copy this key now. It will not be shown again.</strong>
+    <code>{{ issued_key.token }}</code>
+  </div>
+  {% endif %}
+  {% if client_keys %}
+  <div class="data-list">
+    {% for key in client_keys %}
+    <article>
+      <strong>{{ key.name }}</strong><span>{{ key.key_prefix }}… | {{ 'Revoked' if key.revoked_at_ms else 'Active' }}</span>
+      <small>Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms or 'never' }}</small>
+      <form method="post" action="/settings/client-keys/{{ key.key_id }}/{{ 'delete' if key.revoked_at_ms else 'revoke' }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <button class="{{ 'danger-button' if key.revoked_at_ms else 'quiet-button' }}" type="submit">
+          {{ 'Delete' if key.revoked_at_ms else 'Revoke' }}
+        </button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}<p class="subtle">No client keys exist.</p>{% endif %}
+  <form class="account-form" method="post" action="/settings/client-keys">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <label for="client_key_name">Client name</label>
+    <input id="client_key_name" name="name" maxlength="80" required placeholder="Pi desktop" />
+    <button class="primary-button" type="submit">Create key</button>
+  </form>
+</section>
 <section class="detail-section settings-webhooks">
   <h2>Webhook destinations</h2>
   <p class="subtle">
@@ -75,12 +107,6 @@
             type="hidden"
             name="enabled"
             value="{{ 'false' if destination.enabled else 'true' }}"
-          /><input
-            name="admin_password"
-            type="password"
-            required
-            autocomplete="current-password"
-            placeholder="Admin password"
           /><button class="quiet-button" type="submit">
             {{ 'Disable' if destination.enabled else 'Enable' }}
           </button>
@@ -90,13 +116,10 @@
           action="/settings/webhooks/{{ destination.destination_id }}/delete"
           data-confirm="Delete this webhook destination?"
         >
-          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><input
-            name="admin_password"
-            type="password"
-            required
-            autocomplete="current-password"
-            placeholder="Admin password"
-          /><button class="danger-button" type="submit">Delete</button>
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+            class="danger-button"
+            type="submit"
+          >Delete</button>
         </form>
       </div>
     </article>
@@ -141,14 +164,7 @@
       <p class="field-help">
         Sent as X-Windowkeeper-Signature using HMAC-SHA256.
       </p>
-      <label for="webhook_admin_password">Administrator password</label
-      ><input
-        id="webhook_admin_password"
-        name="admin_password"
-        type="password"
-        required
-        autocomplete="current-password"
-      /><button class="primary-button" type="submit">Add destination</button>
+      <button class="primary-button" type="submit">Add destination</button>
     </fieldset>
   </form>
 </section>

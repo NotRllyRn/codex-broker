@@ -1,5 +1,5 @@
 {% extends "base.html" %} {% block title %}{{ detail.account.display_name }} |
-Windowkeeper{% endblock %} {% block content %}
+Codex Broker{% endblock %} {% block content %}
 <section class="page-heading">
   <a href="/">Back to accounts</a>
   <p class="kicker">Account evidence</p>
@@ -17,7 +17,7 @@ Windowkeeper{% endblock %} {% block content %}
     else 'Ambiguous activation' }} requires review
   </h2>
   <p>
-    Windowkeeper will never resend this window. After checking upstream
+    Codex Broker will never resend this window. After checking upstream
     evidence, acknowledge the block to allow future windows to be scheduled.
   </p>
   <form
@@ -25,13 +25,10 @@ Windowkeeper{% endblock %} {% block content %}
     action="/accounts/{{ detail.account.public_token }}/ambiguity/acknowledge"
     data-confirm="Acknowledge this ambiguous activation without retrying it?"
   >
-    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
-      >Administrator password<input
-        name="admin_password"
-        type="password"
-        required
-        autocomplete="current-password" /></label
-    ><button class="danger-button" type="submit">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+      class="danger-button"
+      type="submit"
+    >
       Acknowledge without retry
     </button>
   </form>
@@ -90,7 +87,7 @@ Windowkeeper{% endblock %} {% block content %}
   {% if detail.auth_export.available %}
   <p class="subtle">
     This enrollment <code>auth.json</code> is externally owned and never used,
-    refreshed, or replaced by Windowkeeper. It may stop renewing after the
+    refreshed, or replaced by Codex Broker. It may stop renewing after the
     managed credential rotates. Do not use one copy in multiple independent
     services.
   </p>
@@ -100,14 +97,7 @@ Windowkeeper{% endblock %} {% block content %}
     action="/accounts/{{ detail.account.public_token }}/auth-export"
   >
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-    <label for="export_password">Confirm administrator password</label
-    ><input
-      id="export_password"
-      name="admin_password"
-      type="password"
-      required
-      autocomplete="current-password"
-    /><button class="primary-button" type="submit">
+    <button class="primary-button" type="submit">
       Download export snapshot
     </button>
   </form>
@@ -205,14 +195,7 @@ Windowkeeper{% endblock %} {% block content %}
           ></span
         ></label
       >
-      <label for="reauth_password">Confirm admin password</label
-      ><input
-        id="reauth_password"
-        name="admin_password"
-        type="password"
-        required
-        autocomplete="current-password"
-      /><button class="primary-button" type="submit">Continue</button>
+      <button class="primary-button" type="submit">Continue</button>
     </fieldset>
   </form>
 </section>
@@ -266,12 +249,6 @@ Windowkeeper{% endblock %} {% block content %}
     <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
       >Type <strong>{{ detail.account.display_name }}</strong
       ><input name="confirmation" required autocomplete="off" /></label
-    ><label
-      >Administrator password<input
-        name="admin_password"
-        type="password"
-        required
-        autocomplete="current-password" /></label
     ><button class="danger-button" type="submit">Delete account</button>
   </form>
 </section>

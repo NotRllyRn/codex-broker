@@ -36,7 +36,7 @@ from codex_broker.events import Broadcaster
 from codex_broker.logbook import LogBook, configure_logging
 from codex_broker.router import PoolWait, Router, RouteRequest
 from codex_broker.runtime import RuntimeManager
-from codex_broker.security import AdminSecurity, digest
+from codex_broker.security import AdminSecurity
 from codex_broker.services import ApplicationServices
 from codex_broker.singleton import SingletonLock
 from codex_broker.vault import Vault, decode_key
@@ -45,13 +45,6 @@ from codex_broker.webhooks import WebhookDispatcher
 
 SESSION_COOKIE = "wk_session"
 CSRF_COOKIE = "wk_csrf"
-VARIANTS = {
-    "orbit": "Orbit cockpit",
-    "ledger": "Evidence ledger",
-    "rail": "Command rail",
-    "timeline": "Reset timeline",
-    "focus": "Account focus",
-}
 
 
 class LoginThrottle:
@@ -273,10 +266,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return HTMLResponse(templates.get_template(name).render(**context))
 
     login_throttle = LoginThrottle()
-    reauth_throttle = LoginThrottle()
     client_auth_throttle = LoginThrottle()
     app = FastAPI(
-        title="Windowkeeper",
+        title="Codex Broker",
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
@@ -337,15 +329,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         key = await state(request).client_keys.authenticate(token)
         client_auth_throttle.clear(client)
         return key
-
-    async def require_reauthentication(request: Request, token: str, password: str) -> None:
-        key = digest(token).hex()
-        if not reauth_throttle.allow(key):
-            raise WindowkeeperError(
-                "REAUTH_THROTTLED", "Too many password attempts; retry in one minute", 429
-            )
-        await state(request).security.reauthenticate(token, password)
-        reauth_throttle.clear(key)
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
@@ -457,12 +440,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return response
 
     @app.get("/", response_class=HTMLResponse)
-    async def dashboard(
-        request: Request, variant: str = "orbit", state_filter: str = "", q: str = ""
-    ) -> Response:
+    async def dashboard(request: Request, state_filter: str = "", q: str = "") -> Response:
         if not await session_or_none(request):
             return RedirectResponse("/login", 303)
-        selected = variant if variant in VARIANTS else "orbit"
         accounts = await state(request).services.accounts()
         if state_filter:
             accounts = [account for account in accounts if account.overall_state == state_filter]
@@ -480,8 +460,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             request=request,
             accounts=views,
             counts=counts,
-            variant=selected,
-            variants=VARIANTS,
             csrf=request.cookies.get(CSRF_COOKIE, ""),
             vault_configured=state(request).vault_configured,
             dev=os.environ.get("WINDOWKEEPER_ENV", "development") != "production",
@@ -509,12 +487,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         labels: str = Form(""),
         workspace: str = Form(""),
         login_method: str = Form("CHATGPT_DEVICE_CODE"),
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
         token = await require_form(request, csrf_token)
         current = state(request)
-        await require_reauthentication(request, token, admin_password)
         if not current.vault_configured:
             raise WindowkeeperError(
                 "VAULT_KEY_REQUIRED", "Configure the vault key before adding accounts", 503
@@ -558,11 +534,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def auth_export(
         request: Request,
         public: str,
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
-        token = await require_form(request, csrf_token)
-        await require_reauthentication(request, token, admin_password)
+        await require_form(request, csrf_token)
         content = await state(request).services.export_auth_json(public)
         return _security_headers(
             Response(
@@ -589,11 +563,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def acknowledge_ambiguity(
         request: Request,
         public: str,
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
-        token = await require_form(request, csrf_token)
-        await require_reauthentication(request, token, admin_password)
+        await require_form(request, csrf_token)
         await state(request).services.acknowledge_ambiguity(public)
         return RedirectResponse(f"/accounts/{public}", 303)
 
@@ -602,12 +574,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         public: str,
         login_method: str = Form(),
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
         token = await require_form(request, csrf_token)
         current = state(request)
-        await require_reauthentication(request, token, admin_password)
         if not current.vault_configured:
             raise WindowkeeperError(
                 "VAULT_KEY_REQUIRED", "Configure the vault key before signing in", 503
@@ -658,11 +628,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         public: str,
         confirmation: str = Form(),
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
-        token = await require_form(request, csrf_token)
-        await require_reauthentication(request, token, admin_password)
+        await require_form(request, csrf_token)
         await state(request).services.delete_account(public, confirmation)
         return RedirectResponse("/", 303)
 
@@ -717,8 +685,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             vault_configured=current.vault_configured,
             compatibility=current.compatibility,
             destinations=await current.webhooks.destinations(),
+            client_keys=await current.client_keys.list(),
+            issued_key=None,
             csrf=request.cookies.get(CSRF_COOKIE, ""),
         )
+
+    @app.post("/settings/client-keys")
+    async def client_key_create(
+        request: Request, name: str = Form(), csrf_token: str = Form()
+    ) -> Response:
+        await require_form(request, csrf_token)
+        current = state(request)
+        issued = await current.client_keys.create(name)
+        return _security_headers(
+            render(
+                "settings.html",
+                settings=current.settings,
+                vault_configured=current.vault_configured,
+                compatibility=current.compatibility,
+                destinations=await current.webhooks.destinations(),
+                client_keys=await current.client_keys.list(),
+                issued_key=issued,
+                csrf=csrf_token,
+            ),
+            no_store=True,
+        )
+
+    @app.post("/settings/client-keys/{key_id}/revoke")
+    async def client_key_revoke(
+        request: Request, key_id: str, csrf_token: str = Form()
+    ) -> Response:
+        await require_form(request, csrf_token)
+        if not await state(request).client_keys.revoke(key_id):
+            raise WindowkeeperError("CLIENT_KEY_NOT_FOUND", "Active client key not found", 404)
+        return RedirectResponse("/settings", 303)
+
+    @app.post("/settings/client-keys/{key_id}/delete")
+    async def client_key_delete(
+        request: Request, key_id: str, csrf_token: str = Form()
+    ) -> Response:
+        await require_form(request, csrf_token)
+        if not await state(request).client_keys.delete_revoked(key_id):
+            raise WindowkeeperError(
+                "CLIENT_KEY_DELETE_BLOCKED", "Revoke the client key before deleting it", 409
+            )
+        return RedirectResponse("/settings", 303)
 
     @app.post("/settings/webhooks")
     async def webhook_create(
@@ -727,12 +738,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         url: str = Form(),
         signing_secret: str = Form(""),
         kind: str = Form("generic"),
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
-        token = await require_form(request, csrf_token)
+        await require_form(request, csrf_token)
         current = state(request)
-        await require_reauthentication(request, token, admin_password)
         if not current.vault_configured:
             raise WindowkeeperError(
                 "VAULT_KEY_REQUIRED", "Configure the vault key before adding webhooks", 503
@@ -755,11 +764,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request,
         destination_id: str,
         enabled: bool = Form(),
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
-        token = await require_form(request, csrf_token)
-        await require_reauthentication(request, token, admin_password)
+        await require_form(request, csrf_token)
         await state(request).webhooks.set_enabled(destination_id, enabled)
         return RedirectResponse("/settings", 303)
 
@@ -767,11 +774,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def webhook_delete(
         request: Request,
         destination_id: str,
-        admin_password: str = Form(),
         csrf_token: str = Form(),
     ) -> Response:
-        token = await require_form(request, csrf_token)
-        await require_reauthentication(request, token, admin_password)
+        await require_form(request, csrf_token)
         await state(request).webhooks.delete_destination(destination_id)
         return RedirectResponse("/settings", 303)
 

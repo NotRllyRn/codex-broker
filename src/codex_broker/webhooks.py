@@ -107,7 +107,7 @@ def _provider_body(kind: str, event: dict[str, Any]) -> bytes:
                 {
                     "title": str(event["notification"]["title"]),
                     "description": message.split("\n", 1)[1].strip()[:4_000],
-                    "footer": {"text": f"Windowkeeper event {event['event_id']}"},
+                    "footer": {"text": f"Codex Broker event {event['event_id']}"},
                 }
             ],
         }
@@ -327,10 +327,10 @@ class WebhookDispatcher:
             f"destination:{destination_id}",
             {
                 "destination_id": destination_id,
-                "message": "Windowkeeper successfully created a test notification.",
+                "message": "Codex Broker successfully created a test notification.",
                 "delivery_status": "DELIVERED",
                 "severity": "INFO",
-                "recommended_action": "No action required. This confirms the destination accepts Windowkeeper webhooks.",
+                "recommended_action": "No action required. This confirms the destination accepts Codex Broker webhooks.",
             },
             destination_id=destination_id,
         )
@@ -378,7 +378,7 @@ class WebhookDispatcher:
         body = bytes(delivery["immutable_body"])
         headers = {
             "Content-Type": delivery["content_type"],
-            "User-Agent": "windowkeeper/0.1",
+            "User-Agent": "codex-broker/0.1",
             "X-Windowkeeper-Event-ID": delivery["event_id"],
         }
         if secret:

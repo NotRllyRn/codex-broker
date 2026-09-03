@@ -12,7 +12,9 @@ from codex_broker.router import PoolWait, RouteLease, Router, RouteRequest
 
 
 class Authority:
-    async def lease(self, account: dict[str, Any], now: int, *, force_refresh: bool = False) -> Lease:
+    async def lease(
+        self, account: dict[str, Any], now: int, *, force_refresh: bool = False
+    ) -> Lease:
         del now, force_refresh
         return Lease(f"upstream-{account['public_token']}", "access", 9_999_999_999_000)
 
@@ -75,7 +77,21 @@ def seed(connection: sqlite3.Connection, *, used: int = 10, reset: int = 9_999_9
         )
         connection.execute(
             "INSERT INTO credential_bundles VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (f"bundle-{index}", account_id, "ACTIVE", 1, 1, "key", b"n", b"c", b"a", "v", 1, 1, None),
+            (
+                f"bundle-{index}",
+                account_id,
+                "ACTIVE",
+                1,
+                1,
+                "key",
+                b"n",
+                b"c",
+                b"a",
+                "v",
+                1,
+                1,
+                None,
+            ),
         )
 
 
@@ -94,9 +110,7 @@ async def test_router_preserves_preference_and_moves_after_failure(tmp_path: Pat
         assert preferred.account_id == "public-1"
         replacement = await router.route(
             "key",
-            RouteRequest(
-                "session", "retry", failed_account_id="public-0", failure_kind="quota"
-            ),
+            RouteRequest("session", "retry", failed_account_id="public-0", failure_kind="quota"),
         )
         assert isinstance(replacement, RouteLease)
         assert replacement.account_id == "public-1"

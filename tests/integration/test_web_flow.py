@@ -55,7 +55,7 @@ def wait_for(client: TestClient, text: str, path: str = "/", timeout: float = 8)
     raise AssertionError(f"{text!r} did not appear at {path}")
 
 
-def test_enrollment_refresh_activation_and_five_layouts(tmp_path: Path) -> None:
+def test_enrollment_refresh_activation_and_dashboard(tmp_path: Path) -> None:
     executable = Path(__file__).parents[1] / "fake_codex.py"
     os.chmod(executable, 0o700)
     settings = Settings(
@@ -100,10 +100,10 @@ def test_enrollment_refresh_activation_and_five_layouts(tmp_path: Path) -> None:
         wait_for(client, "Primary")
         wait_for(client, "Healthy")
         wait_for(client, "22%")
-        for variant in ("orbit", "ledger", "rail", "timeline", "focus"):
-            response = client.get(f"/?variant={variant}")
-            assert response.status_code == 200
-            assert f"variant-{variant}" in response.text
+        response = client.get("/")
+        assert response.status_code == 200
+        assert "orbit-layout" in response.text
+        assert "data-variant-switcher" not in response.text
         dashboard = client.get("/api/internal/v1/dashboard").json()
         account = dashboard["data"][0]
         assert account["short_percent"] == 22
@@ -143,13 +143,7 @@ def test_enrollment_refresh_activation_and_five_layouts(tmp_path: Path) -> None:
             ).status_code
             == 403
         )
-        assert (
-            client.post(
-                export_path,
-                data={"admin_password": "wrong password", "csrf_token": csrf},
-            ).status_code
-            == 401
-        )
+        assert client.post(export_path, data={"csrf_token": csrf}).status_code == 200
         auth_export = client.post(
             export_path,
             data={"admin_password": PASSWORD, "csrf_token": csrf},
@@ -179,6 +173,15 @@ def test_enrollment_refresh_activation_and_five_layouts(tmp_path: Path) -> None:
             assert time.monotonic() < deadline
             time.sleep(0.1)
         while len(refresh_traces[0].read_text(encoding="utf-8").splitlines()) < 3:
+            assert time.monotonic() < deadline
+            time.sleep(0.1)
+        while True:
+            with closing(sqlite3.connect(settings.data_dir / "windowkeeper.db")) as connection:
+                worker_state = connection.execute(
+                    "SELECT worker_state FROM account_state"
+                ).fetchone()[0]
+            if worker_state == "STOPPED":
+                break
             assert time.monotonic() < deadline
             time.sleep(0.1)
         rotated_export = client.post(
@@ -757,25 +760,31 @@ def test_authentication_csrf_and_readiness_fail_closed(tmp_path: Path) -> None:
                 data={
                     "display_name": "x",
                     "url": "https://example.test",
-                    "admin_password": PASSWORD,
                     "csrf_token": "wrong",
                 },
             ).status_code
             == 403
         )
-        statuses = [
+        key_page = client.post(
+            "/settings/client-keys",
+            data={"name": "Pi desktop", "csrf_token": client.cookies["wk_csrf"]},
+        )
+        assert key_page.status_code == 200
+        raw_key = re.search(r"<code>(cbk_[^<]+)</code>", key_page.text).group(1)  # type: ignore[union-attr]
+        assert "Copy this key now" in key_page.text
+        assert raw_key not in client.get("/settings").text
+        assert (
             client.post(
                 "/settings/webhooks",
                 data={
                     "display_name": "x",
                     "url": "https://example.test",
-                    "admin_password": "incorrect administrator password",
                     "csrf_token": client.cookies["wk_csrf"],
                 },
+                follow_redirects=False,
             ).status_code
-            for _ in range(6)
-        ]
-        assert statuses == [401, 401, 401, 401, 401, 429]
+            == 303
+        )
 
     rooted = Settings(
         data_dir=tmp_path / "rooted-data",

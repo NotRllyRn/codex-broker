@@ -7,7 +7,7 @@ document.querySelectorAll('[href^="/"], [action^="/"]').forEach((element) => {
 });
 const themeButton = document.querySelector("[data-theme-toggle]");
 const themes = ["system", "light", "dark"];
-const storedTheme = localStorage.getItem("windowkeeper.theme");
+const storedTheme = localStorage.getItem("codex-broker.theme");
 root.dataset.theme = themes.includes(storedTheme) ? storedTheme : "system";
 
 function updateThemeLabel() {
@@ -18,7 +18,7 @@ updateThemeLabel();
 themeButton?.addEventListener("click", () => {
 	const next = themes[(themes.indexOf(root.dataset.theme) + 1) % themes.length];
 	root.dataset.theme = next;
-	localStorage.setItem("windowkeeper.theme", next);
+	localStorage.setItem("codex-broker.theme", next);
 	updateThemeLabel();
 });
 
@@ -66,39 +66,6 @@ document.querySelectorAll("form[data-confirm]").forEach((form) => {
 		if (!window.confirm(form.dataset.confirm)) event.preventDefault();
 	});
 });
-
-const variantSwitcher = document.querySelector("[data-variant-switcher]");
-if (variantSwitcher) {
-	const variants = variantSwitcher.dataset.variants.split(",");
-	const move = (step) => {
-		const current = variants.indexOf(variantSwitcher.dataset.current);
-		try {
-			const url = new URL(location.href);
-			url.searchParams.set(
-				"variant",
-				variants[(current + step + variants.length) % variants.length],
-			);
-			location.assign(url);
-		} catch {
-			location.assign(
-				appPath(
-					`/?variant=${variants[(current + step + variants.length) % variants.length]}`,
-				),
-			);
-		}
-	};
-	variantSwitcher
-		.querySelector("[data-previous]")
-		.addEventListener("click", () => move(-1));
-	variantSwitcher
-		.querySelector("[data-next]")
-		.addEventListener("click", () => move(1));
-	document.addEventListener("keydown", (event) => {
-		if (event.target.matches("input, textarea, select")) return;
-		if (event.key === "[") move(-1);
-		if (event.key === "]") move(1);
-	});
-}
 
 function toast(message) {
 	const region = document.querySelector(".toast-region");
@@ -167,7 +134,7 @@ if (loginProgress) {
 			panel.hidden = false;
 			panel.querySelector("[data-verification]").href = data.verification_url;
 			panel.querySelector("[data-code]").textContent = data.user_code;
-			status.textContent = "Enter the one-time code. Windowkeeper never logs it.";
+			status.textContent = "Enter the one-time code. Codex Broker never logs it.";
 		} else {
 			const panel = loginProgress.querySelector("[data-browser]");
 			panel.hidden = false;

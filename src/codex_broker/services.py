@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
-from .clock import SystemClock
+from .clock import Clock, SystemClock
 from .codex.adapter import PRICING_VERIFIED_AT, LoginInteraction
 from .database import Database
 from .domain.models import AccountSummary, LoginMethod, RawWindow
@@ -28,11 +28,11 @@ PROMPT = 'Respond with exactly "OK" and perform no other actions.'
 PROMPT_DIGEST = hashlib.sha256(PROMPT.encode()).digest()
 INCIDENT_GUIDANCE = {
     "activation_ambiguous": (
-        "Windowkeeper dispatched an activation but could not prove whether Codex completed it, so replay is blocked to prevent duplicate usage.",
+        "Codex Broker dispatched an activation but could not prove whether Codex completed it, so replay is blocked to prevent duplicate usage.",
         "Open the account, review the latest activation operation, then acknowledge the ambiguity to resume scheduling.",
     ),
     "activation_safety": (
-        "Codex requested an action outside Windowkeeper's read-only, no-tool activation contract.",
+        "Codex requested an action outside Codex Broker's read-only, no-tool activation contract.",
         "Review the activation evidence, verify the pinned Codex release, then acknowledge the safety block only when it is understood.",
     ),
     "authentication_failed": (
@@ -40,7 +40,7 @@ INCIDENT_GUIDANCE = {
         "Open the account and use Replace or repair credentials with device code or browser sign-in.",
     ),
     "credential_checkpoint": (
-        "Codex may have changed its credential, but Windowkeeper could not safely persist the result.",
+        "Codex may have changed its credential, but Codex Broker could not safely persist the result.",
         "Stop account activity and preserve the quarantined runtime before restarting or reauthenticating.",
     ),
 }
@@ -325,7 +325,7 @@ class ApplicationServices:
         self.runtime = runtime
         self.events = events
         self.webhooks = webhooks
-        self.clock = SystemClock()
+        self.clock: Clock = SystemClock()
         self.interactions: dict[str, StoredInteraction] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._login_tasks: dict[str, asyncio.Task[Any]] = {}
@@ -1132,7 +1132,9 @@ class ApplicationServices:
                     self._promote_login_source(account["account_id"], attempt_id, source)
                 )
                 try:
-                    cancellation = await self._await_critical(promotion_task)
+                    cancellation: asyncio.CancelledError | None = await self._await_critical(
+                        promotion_task
+                    )
                     promoted = promotion_task.result()
                 except BaseException:
                     preserve_task = asyncio.create_task(self.runtime.preserve(source_runtime))
@@ -1145,7 +1147,7 @@ class ApplicationServices:
                 discard_task = asyncio.create_task(self.runtime.discard(source_runtime))
                 discard_cancellation = await self._await_critical(discard_task)
                 cancellation = cancellation or discard_cancellation
-                if cancellation:
+                if cancellation is not None:
                     raise cancellation
                 identity, _, export_error = await self._fork_credentials(
                     account, source, source_identity
@@ -1264,7 +1266,7 @@ class ApplicationServices:
             async with httpx.AsyncClient(
                 follow_redirects=False, trust_env=False, timeout=httpx.Timeout(5, connect=2)
             ) as client:
-                response = await client.get(destination, headers={"User-Agent": "windowkeeper/0.1"})
+                response = await client.get(destination, headers={"User-Agent": "codex-broker/0.1"})
                 if response.status_code >= 400:
                     raise WindowkeeperError(
                         "BROWSER_CALLBACK_FORWARD_FAILED", "Codex did not accept the callback", 502
@@ -2640,7 +2642,7 @@ class ApplicationServices:
             reason, action = INCIDENT_GUIDANCE.get(
                 kind,
                 (
-                    "Windowkeeper detected an account condition that requires operator attention.",
+                    "Codex Broker detected an account condition that requires operator attention.",
                     "Open the account and Incidents pages, review the latest operation, and correct the reported condition.",
                 ),
             )
@@ -2682,7 +2684,7 @@ class ApplicationServices:
             reason, _ = INCIDENT_GUIDANCE.get(
                 kind,
                 (
-                    "Windowkeeper previously detected an account condition requiring attention.",
+                    "Codex Broker previously detected an account condition requiring attention.",
                     "",
                 ),
             )
@@ -2694,7 +2696,7 @@ class ApplicationServices:
                     "RESOLVED",
                     f"Recovered from: {details['summary']}",
                     reason,
-                    "No action required. Windowkeeper closed this incident and resumed normal account processing.",
+                    "No action required. Codex Broker closed this incident and resumed normal account processing.",
                 )
                 | {"resolved_at_ms": now},
                 incident_id,

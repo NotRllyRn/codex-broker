@@ -20,7 +20,7 @@ def main() -> None:
     prepare_volumes()
     from codex_broker.cli.main import cli
 
-    cli(prog_name="windowkeeper")
+    cli(prog_name="codex-broker")
 
 
 if __name__ == "__main__":

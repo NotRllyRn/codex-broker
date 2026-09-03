@@ -37,6 +37,16 @@ def test_cli_initialization_vault_verification_and_version(tmp_path: Path) -> No
     assert status.exit_code == 0, status.output
     assert json.loads(status.output)["accounts"] == []
 
+    created_key = runner.invoke(cli, ["client-key", "create", "Pi desktop"], env=environment)
+    assert created_key.exit_code == 0, created_key.output
+    assert created_key.output.strip().startswith("cbk_")
+    listed_keys = runner.invoke(cli, ["client-key", "list"], env=environment)
+    assert "Pi desktop" in listed_keys.output
+    key_id = listed_keys.output.split()[0]
+    revoked_key = runner.invoke(cli, ["client-key", "revoke", key_id], env=environment)
+    assert revoked_key.exit_code == 0, revoked_key.output
+    assert "revoked" in runner.invoke(cli, ["client-key", "list"], env=environment).output
+
     backup_file = tmp_path / "backup.sqlite"
     backed_up = runner.invoke(cli, ["backup", "--output", str(backup_file)], env=environment)
     assert backed_up.exit_code == 0, backed_up.output
