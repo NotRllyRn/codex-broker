@@ -6,4 +6,4 @@ def test_dockerfile_preserves_wheel_filename() -> None:
 
     assert "COPY --from=build /build/dist/*.whl /tmp/" in dockerfile
     assert "pip install --no-cache-dir /tmp/*.whl" in dockerfile
-    assert 'ENTRYPOINT ["python","-m","windowkeeper.container_entrypoint"]' in dockerfile
+    assert 'ENTRYPOINT ["python","-m","codex_broker.container_entrypoint"]' in dockerfile

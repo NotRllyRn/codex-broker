@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from types import TracebackType
 
-from windowkeeper.errors import Unavailable
+from codex_broker.errors import Unavailable
 
 
 class SingletonLock:

@@ -16,13 +16,13 @@ import click
 import httpx
 import uvicorn
 
-from windowkeeper.compatibility import inspect_codex
-from windowkeeper.config import Settings, get_settings
-from windowkeeper.database import Database
-from windowkeeper.security import AdminSecurity
-from windowkeeper.singleton import SingletonLock
-from windowkeeper.vault import Envelope, Vault, decode_key, generate_key
-from windowkeeper.version import __version__ as VERSION
+from codex_broker.compatibility import inspect_codex
+from codex_broker.config import Settings, get_settings
+from codex_broker.database import Database
+from codex_broker.security import AdminSecurity
+from codex_broker.singleton import SingletonLock
+from codex_broker.vault import Envelope, Vault, decode_key, generate_key
+from codex_broker.version import __version__ as VERSION
 
 
 def _settings() -> Settings:
@@ -72,7 +72,7 @@ def serve(host: str | None, port: int | None) -> None:
     """Run the authenticated dashboard and scheduler."""
     settings = _settings()
     uvicorn.run(
-        "windowkeeper.web.app:app",
+        "codex_broker.web.app:app",
         host=host or settings.host,
         port=port or settings.port,
         proxy_headers=bool(settings.trusted_proxies),

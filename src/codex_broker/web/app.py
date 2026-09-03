@@ -23,20 +23,20 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from windowkeeper.compatibility import Compatibility, inspect_codex
-from windowkeeper.config import Settings, get_settings
-from windowkeeper.database import Database
-from windowkeeper.domain.models import LoginMethod
-from windowkeeper.errors import WindowkeeperError
-from windowkeeper.events import Broadcaster
-from windowkeeper.logbook import LogBook, configure_logging
-from windowkeeper.runtime import RuntimeManager
-from windowkeeper.security import AdminSecurity, digest
-from windowkeeper.services import ApplicationServices
-from windowkeeper.singleton import SingletonLock
-from windowkeeper.vault import Vault, decode_key
-from windowkeeper.views import account_view
-from windowkeeper.webhooks import WebhookDispatcher
+from codex_broker.compatibility import Compatibility, inspect_codex
+from codex_broker.config import Settings, get_settings
+from codex_broker.database import Database
+from codex_broker.domain.models import LoginMethod
+from codex_broker.errors import WindowkeeperError
+from codex_broker.events import Broadcaster
+from codex_broker.logbook import LogBook, configure_logging
+from codex_broker.runtime import RuntimeManager
+from codex_broker.security import AdminSecurity, digest
+from codex_broker.services import ApplicationServices
+from codex_broker.singleton import SingletonLock
+from codex_broker.vault import Vault, decode_key
+from codex_broker.views import account_view
+from codex_broker.webhooks import WebhookDispatcher
 
 SESSION_COOKIE = "wk_session"
 CSRF_COOKIE = "wk_csrf"

@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-import windowkeeper.logbook as logbook_module
-from windowkeeper.logbook import LogBook
+import codex_broker.logbook as logbook_module
+from codex_broker.logbook import LogBook
 
 
 def test_logbook_repairs_partial_tail_and_rotates(

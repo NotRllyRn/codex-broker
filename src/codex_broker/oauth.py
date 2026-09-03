@@ -3,7 +3,7 @@ import hmac
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
-from windowkeeper.errors import WindowkeeperError
+from codex_broker.errors import WindowkeeperError
 
 
 @dataclass(frozen=True, slots=True)

@@ -5,7 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from windowkeeper.errors import Unavailable, WindowkeeperError
+from codex_broker.errors import Unavailable, WindowkeeperError
 
 MAX_FRAME = 8 * 1024 * 1024
 _NOTIFICATION_CLOSED = object()

@@ -8,8 +8,8 @@ from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, TypeVar
 
-from windowkeeper.clock import SystemClock
-from windowkeeper.ids import new_id
+from codex_broker.clock import SystemClock
+from codex_broker.ids import new_id
 
 T = TypeVar("T")
 DbJob = tuple[Callable[[sqlite3.Connection], Any], Future[Any]] | None

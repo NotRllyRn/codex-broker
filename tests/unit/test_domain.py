@@ -1,7 +1,7 @@
-from windowkeeper.domain.models import RawWindow
-from windowkeeper.domain.scheduling import decide_schedule, deterministic_jitter
-from windowkeeper.domain.status import overall_state
-from windowkeeper.domain.usage import clamped_percent, freshness, normalize_usage
+from codex_broker.domain.models import RawWindow
+from codex_broker.domain.scheduling import decide_schedule, deterministic_jitter
+from codex_broker.domain.status import overall_state
+from codex_broker.domain.usage import clamped_percent, freshness, normalize_usage
 
 
 def test_usage_normalization_uses_duration_semantics() -> None:

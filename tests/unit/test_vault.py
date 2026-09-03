@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from windowkeeper.vault import Vault, decode_key, generate_key
+from codex_broker.vault import Vault, decode_key, generate_key
 
 
 def test_envelope_round_trip_and_account_binding() -> None:

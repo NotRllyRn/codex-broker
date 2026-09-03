@@ -1,4 +1,4 @@
-from windowkeeper.web.app import _templates
+from codex_broker.web.app import _templates
 
 
 def test_all_templates_compile() -> None:

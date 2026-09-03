@@ -1,7 +1,7 @@
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from windowkeeper.domain.models import NormalizedUsage, RawWindow
+from codex_broker.domain.models import NormalizedUsage, RawWindow
 
 WEEK_MINUTES = 10_080
 WEEK_TOLERANCE = 0.05

@@ -1,6 +1,6 @@
 import hashlib
 
-from windowkeeper.domain.models import RawWindow, ScheduleDecision
+from codex_broker.domain.models import RawWindow, ScheduleDecision
 
 
 def deterministic_jitter(account_id: str, window_key: str, maximum_seconds: int) -> int:

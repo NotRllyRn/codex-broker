@@ -2,7 +2,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from windowkeeper.config import Settings
+from codex_broker.config import Settings
 
 SUPPORTED_CODEX_VERSION = "codex-cli 0.145.0"
 

@@ -1,6 +1,6 @@
 import pytest
 
-from windowkeeper.events import Broadcaster
+from codex_broker.events import Broadcaster
 
 
 @pytest.mark.asyncio

@@ -276,7 +276,7 @@ wheels = [
 ]
 
 [[package]]
-name = "codex-windowkeeper"
+name = "codex-broker"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

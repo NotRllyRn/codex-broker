@@ -5,10 +5,10 @@ from urllib.parse import quote
 
 import pytest
 
-from windowkeeper.codex.adapter import CodexAdapter, select_activation_model
-from windowkeeper.errors import WindowkeeperError
-from windowkeeper.redaction import redact, sanitize_url
-from windowkeeper.services import (
+from codex_broker.codex.adapter import CodexAdapter, select_activation_model
+from codex_broker.errors import WindowkeeperError
+from codex_broker.redaction import redact, sanitize_url
+from codex_broker.services import (
     ApplicationServices,
     browser_contract,
     validate_callback,

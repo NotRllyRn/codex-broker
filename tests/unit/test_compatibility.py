@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from windowkeeper.compatibility import inspect_codex
-from windowkeeper.config import Settings
+from codex_broker.compatibility import inspect_codex
+from codex_broker.config import Settings
 
 
 def test_unmanaged_codex_version_is_rejected(tmp_path: Path) -> None:

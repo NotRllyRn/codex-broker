@@ -18,7 +18,7 @@ def prepare_volumes(paths: tuple[Path, ...] = VOLUME_PATHS) -> None:
 
 def main() -> None:
     prepare_volumes()
-    from windowkeeper.cli.main import cli
+    from codex_broker.cli.main import cli
 
     cli(prog_name="windowkeeper")
 

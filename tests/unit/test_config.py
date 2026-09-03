@@ -4,9 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from windowkeeper.config import Settings
-from windowkeeper.vault import generate_key
-from windowkeeper.web.app import _read_secret, create_app
+from codex_broker.config import Settings
+from codex_broker.vault import generate_key
+from codex_broker.web.app import _read_secret, create_app
 
 PASSWORD = "correct horse battery staple"  # noqa: S105
 

@@ -4,11 +4,11 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from windowkeeper.cli.main import cli
-from windowkeeper.config import get_settings
-from windowkeeper.database import Database
-from windowkeeper.vault import Envelope, Vault, decode_key, generate_key
-from windowkeeper.webhooks import WebhookDispatcher
+from codex_broker.cli.main import cli
+from codex_broker.config import get_settings
+from codex_broker.database import Database
+from codex_broker.vault import Envelope, Vault, decode_key, generate_key
+from codex_broker.webhooks import WebhookDispatcher
 
 
 def test_vault_rotation_includes_webhook_secrets(tmp_path: Path) -> None:

@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [project]
-name = "codex-windowkeeper"
+name = "codex-broker"
 version = "0.1.0"
-description = "Evidence-driven Codex usage-window activation supervisor"
+description = "Central Codex auth, quota, and account-routing service."
 requires-python = ">=3.12"
 dependencies = [
   "argon2-cffi>=23.1,<26",
@@ -31,10 +31,11 @@ dev = [
 ]
 
 [project.scripts]
-windowkeeper = "windowkeeper.cli.main:cli"
+codex-broker = "codex_broker.cli.main:cli"
+windowkeeper = "codex_broker.cli.main:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/windowkeeper"]
+packages = ["src/codex_broker"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -57,4 +58,4 @@ ignore = ["E501", "S101"]
 python_version = "3.12"
 strict = true
 plugins = ["pydantic.mypy"]
-packages = ["windowkeeper"]
+packages = ["codex_broker"]

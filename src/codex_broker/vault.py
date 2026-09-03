@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from windowkeeper.ids import new_id
+from codex_broker.ids import new_id
 
 PREFIX = "wk1_"
 LEGACY_ALLOWED_FILES = {"auth.json", "config.toml"}

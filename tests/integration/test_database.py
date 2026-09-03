@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from windowkeeper.database import Database
+from codex_broker.database import Database
 
 
 @pytest.mark.asyncio
@@ -38,7 +38,7 @@ async def test_migrations_are_idempotent_and_foreign_keys_hold(tmp_path: Path) -
 async def test_migration_six_preserves_all_credential_generations(tmp_path: Path) -> None:
     old_migrations = tmp_path / "migrations"
     old_migrations.mkdir()
-    source = Path(__file__).parents[2] / "src" / "windowkeeper" / "migrations"
+    source = Path(__file__).parents[2] / "src" / "codex_broker" / "migrations"
     for migration in sorted(source.glob("00[1-5]_*.sql")):
         shutil.copy2(migration, old_migrations)
     path = tmp_path / "windowkeeper.db"

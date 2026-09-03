@@ -3,7 +3,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from windowkeeper.cli.main import cli
+from codex_broker.cli.main import cli
 
 PASSWORD = "correct horse battery staple"  # noqa: S105
 

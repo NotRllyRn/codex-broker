@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from windowkeeper.database import Database
-from windowkeeper.vault import Vault, decode_key, generate_key
-from windowkeeper.webhooks import WebhookDispatcher, _resolve_public_destination
+from codex_broker.database import Database
+from codex_broker.vault import Vault, decode_key, generate_key
+from codex_broker.webhooks import WebhookDispatcher, _resolve_public_destination
 
 
 @pytest.mark.asyncio

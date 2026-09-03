@@ -1,8 +1,8 @@
 from dataclasses import asdict
 from typing import Any
 
-from windowkeeper.clock import iso_time
-from windowkeeper.domain.models import AccountSummary
+from codex_broker.clock import iso_time
+from codex_broker.domain.models import AccountSummary
 
 
 def account_view(account: AccountSummary) -> dict[str, Any]:

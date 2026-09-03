@@ -11,11 +11,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from windowkeeper.clock import SystemClock
-from windowkeeper.database import Database
-from windowkeeper.ids import new_id
-from windowkeeper.redaction import redact
-from windowkeeper.vault import Vault
+from codex_broker.clock import SystemClock
+from codex_broker.database import Database
+from codex_broker.ids import new_id
+from codex_broker.redaction import redact
+from codex_broker.vault import Vault
 
 RETRY_SECONDS = (60, 300, 1_800, 7_200, 21_600, 43_200, 86_400, 86_400)
 DESTINATION_KINDS = {"generic", "slack", "discord"}

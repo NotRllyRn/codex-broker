@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from windowkeeper.container_entrypoint import GROUP_ID, USER_ID, prepare_volumes
+from codex_broker.container_entrypoint import GROUP_ID, USER_ID, prepare_volumes
 
 
 def test_prepare_volumes_changes_ownership_then_drops_privileges(

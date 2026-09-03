@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import pytest
 
-from windowkeeper.codex.client import AppServerClient
+from codex_broker.codex.client import AppServerClient
 
 
 @pytest.mark.asyncio

@@ -11,10 +11,10 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
-from windowkeeper.config import Settings
-from windowkeeper.database import Database
-from windowkeeper.vault import Envelope, Vault, decode_key, generate_key
-from windowkeeper.web.app import create_app
+from codex_broker.config import Settings
+from codex_broker.database import Database
+from codex_broker.vault import Envelope, Vault, decode_key, generate_key
+from codex_broker.web.app import create_app
 
 PASSWORD = "correct horse battery staple"  # noqa: S105
 
@@ -623,7 +623,7 @@ def test_login_cancellation_cannot_promote_credentials(tmp_path: Path) -> None:
 def test_manual_token_migration_recovers_v4_schema_drift(tmp_path: Path) -> None:
     old_migrations = tmp_path / "old-migrations"
     old_migrations.mkdir()
-    migrations = Path(__file__).parents[2] / "src" / "windowkeeper" / "migrations"
+    migrations = Path(__file__).parents[2] / "src" / "codex_broker" / "migrations"
     for migration in sorted(migrations.glob("00[1-3]_*.sql")):
         shutil.copy2(migration, old_migrations)
     database_path = tmp_path / "data" / "windowkeeper.db"

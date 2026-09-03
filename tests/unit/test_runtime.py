@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from windowkeeper.config import Settings
-from windowkeeper.runtime import RuntimeManager
-from windowkeeper.vault import Vault, decode_key, generate_key
+from codex_broker.config import Settings
+from codex_broker.runtime import RuntimeManager
+from codex_broker.vault import Vault, decode_key, generate_key
 
 
 def credential_payload(workspace: str | None = None) -> dict[str, Any]:
@@ -71,7 +71,7 @@ async def test_runtime_refuses_to_reuse_an_existing_generation(
         del args, kwargs
         return Client()
 
-    monkeypatch.setattr("windowkeeper.runtime.AppServerClient.spawn", spawn)
+    monkeypatch.setattr("codex_broker.runtime.AppServerClient.spawn", spawn)
     settings = Settings(data_dir=tmp_path / "data", runtime_dir=tmp_path / "run")
     manager = RuntimeManager(settings, Vault(decode_key(generate_key()), "instance"))
     await manager.start_fresh("account", credential_payload())
