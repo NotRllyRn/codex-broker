@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 
 @dataclass(slots=True)
-class WindowkeeperError(Exception):
+class BrokerError(Exception):
     code: str
     detail: str
     status: int = 400
@@ -11,11 +11,11 @@ class WindowkeeperError(Exception):
         return self.detail
 
 
-class Conflict(WindowkeeperError):
+class Conflict(BrokerError):
     def __init__(self, code: str, detail: str) -> None:
         super().__init__(code, detail, 409)
 
 
-class Unavailable(WindowkeeperError):
+class Unavailable(BrokerError):
     def __init__(self, code: str, detail: str) -> None:
         super().__init__(code, detail, 503)

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
 from codex_broker.clock import SystemClock
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 from codex_broker.ids import new_id
 
 T = TypeVar("T")
@@ -79,7 +79,7 @@ class ClientKeyService:
 
         key = await self.database.transaction(work)
         if not key:
-            raise WindowkeeperError("CLIENT_KEY_INVALID", "Client authentication failed", 401)
+            raise BrokerError("CLIENT_KEY_INVALID", "Client authentication failed", 401)
         return key
 
     async def revoke(self, key_id: str) -> bool:

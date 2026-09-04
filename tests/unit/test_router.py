@@ -9,7 +9,7 @@ import pytest
 
 from codex_broker.credential_authority import Lease
 from codex_broker.database import Database
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 from codex_broker.router import PoolWait, RouteLease, Router, RouteRequest
 
 
@@ -168,7 +168,7 @@ async def test_router_rejects_exhaustion_without_reset(tmp_path: Path) -> None:
             )
         )
         router = Router(database, Services(), cast(Any, Authority()))
-        with pytest.raises(WindowkeeperError, match="reliable retry time") as caught:
+        with pytest.raises(BrokerError, match="reliable retry time") as caught:
             await router.route("key", RouteRequest("session", "turn"))
         assert caught.value.code == "POOL_RESET_UNKNOWN"
     finally:

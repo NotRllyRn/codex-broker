@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from codex_broker.credential_authority import ACCOUNT_CLAIM, CredentialAuthority
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 from codex_broker.vault import Vault
 
 
@@ -70,5 +70,5 @@ async def test_authority_refreshes_stale_token_and_returns_only_lease_fields() -
 async def test_authority_rejects_invalid_refreshed_payload() -> None:
     vault = Vault(b"x" * 32, "instance")
     services = Services(payload(vault, "invalid"))
-    with pytest.raises(WindowkeeperError, match="cannot be leased"):
+    with pytest.raises(BrokerError, match="cannot be leased"):
         await CredentialAuthority(services, vault).lease({"account_id": "internal"}, 1_000)

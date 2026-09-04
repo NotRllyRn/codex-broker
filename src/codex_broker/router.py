@@ -8,7 +8,7 @@ from typing import Any, Literal, Protocol
 from codex_broker.clock import SystemClock
 from codex_broker.credential_authority import CredentialAuthority
 from codex_broker.database import Database
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 
 FailureKind = Literal["quota", "auth", "rate_limit"]
 
@@ -61,7 +61,7 @@ class Router:
             (row for row in rows if row["public_token"] == request.failed_account_id), None
         )
         if request.failed_account_id and not failed:
-            raise WindowkeeperError("FAILED_ACCOUNT_INVALID", "Failed account is not routable", 422)
+            raise BrokerError("FAILED_ACCOUNT_INVALID", "Failed account is not routable", 422)
         if failed and request.failure_kind:
             if request.failure_kind == "quota":
                 await self.services.refresh(str(failed["public_token"]), "CLIENT_FAILURE")
@@ -95,7 +95,7 @@ class Router:
             )
         next_retry = self._next_retry(rows, now)
         if next_retry is None:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "POOL_RESET_UNKNOWN", "No routable account has a reliable retry time", 503
             )
         retry_after = max(0, math.ceil((next_retry - now) / 1000))

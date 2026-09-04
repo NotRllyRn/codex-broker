@@ -3,7 +3,7 @@ import hmac
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlsplit
 
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +37,7 @@ def browser_contract(authorization_url: str, allowed_ports: tuple[int, ...]) -> 
         ):
             raise ValueError("unexpected callback contract")
     except ValueError as error:
-        raise WindowkeeperError(
+        raise BrokerError(
             "CODEX_BROWSER_AUTH_CONTRACT_CHANGED",
             "Codex returned an unsupported browser sign-in contract",
             409,
@@ -54,7 +54,7 @@ def browser_contract(authorization_url: str, allowed_ports: tuple[int, ...]) -> 
 
 def validate_callback(value: str, contract: BrowserContract) -> str:
     if len(value.encode()) > 16_384:
-        raise WindowkeeperError("BROWSER_CALLBACK_INVALID", "The callback URL is too large")
+        raise BrokerError("BROWSER_CALLBACK_INVALID", "The callback URL is too large")
     try:
         callback = urlsplit(value)
         query = parse_qs(callback.query, strict_parsing=True)
@@ -73,11 +73,11 @@ def validate_callback(value: str, contract: BrowserContract) -> str:
         ):
             raise ValueError("callback does not match")
     except ValueError as error:
-        raise WindowkeeperError(
+        raise BrokerError(
             "BROWSER_CALLBACK_INVALID", "The callback URL is not valid", 400
         ) from error
     if not hmac.compare_digest(hashlib.sha256(state[0].encode()).digest(), contract.state_hash):
-        raise WindowkeeperError(
+        raise BrokerError(
             "BROWSER_CALLBACK_STATE_MISMATCH", "The callback belongs to another sign-in", 409
         )
     return f"{contract.scheme}://{contract.host}:{contract.port}{contract.path}?code={code[0]}&state={state[0]}"

@@ -13,7 +13,7 @@ from argon2.exceptions import (  # pyright: ignore[reportMissingImports]
 )
 
 from .clock import SystemClock
-from .errors import WindowkeeperError
+from .errors import BrokerError
 
 T = TypeVar("T")
 
@@ -108,7 +108,7 @@ class AdminSecurity:
 
     async def login(self, password: str, fingerprint: str = "") -> Session:
         if not await self.verify_password(password):
-            raise WindowkeeperError("LOGIN_FAILED", "The password was not accepted", 401)
+            raise BrokerError("LOGIN_FAILED", "The password was not accepted", 401)
         now = self.clock.now_ms()
         token = secrets.token_urlsafe(32)
         csrf = secrets.token_urlsafe(32)
@@ -180,7 +180,7 @@ class AdminSecurity:
             or not isinstance(stored, bytes)
             or not hmac.compare_digest(stored, digest(supplied))
         ):
-            raise WindowkeeperError("CSRF_INVALID", "The request could not be verified", 403)
+            raise BrokerError("CSRF_INVALID", "The request could not be verified", 403)
 
     async def logout(self, token: str) -> None:
         now = self.clock.now_ms()

@@ -31,7 +31,7 @@ from codex_broker.config import Settings, get_settings
 from codex_broker.credential_authority import CredentialAuthority
 from codex_broker.database import Database
 from codex_broker.domain.models import LoginMethod
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 from codex_broker.events import Broadcaster
 from codex_broker.logbook import LogBook, configure_logging
 from codex_broker.router import PoolWait, Router, RouteRequest
@@ -121,7 +121,7 @@ def _templates() -> Environment:
     )
 
 
-def problem(error: WindowkeeperError, request: Request) -> JSONResponse:
+def problem(error: BrokerError, request: Request) -> JSONResponse:
     return JSONResponse(
         {
             "type": f"urn:codex-broker:problem:{error.code.lower().replace('_', '-')}",
@@ -292,8 +292,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.headers["location"] = f"{resolved.root_path}{location}"
         return _security_headers(response, no_store=request.url.path.startswith("/api/v1/"))
 
-    @app.exception_handler(WindowkeeperError)
-    async def handle_problem(request: Request, error: WindowkeeperError) -> JSONResponse:
+    @app.exception_handler(BrokerError)
+    async def handle_problem(request: Request, error: BrokerError) -> JSONResponse:
         return problem(error, request)
 
     def state(request: Request) -> AppState:
@@ -320,12 +320,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> dict[str, object]:
         client = request.client.host if request.client else "unknown"
         if not client_auth_throttle.allow(client):
-            raise WindowkeeperError(
+            raise BrokerError(
                 "CLIENT_AUTH_THROTTLED", "Client authentication is temporarily unavailable", 429
             )
         scheme, _, token = (authorization or "").partition(" ")
         if scheme.lower() != "bearer" or not token.startswith("cbk_"):
-            raise WindowkeeperError("CLIENT_KEY_INVALID", "Client authentication failed", 401)
+            raise BrokerError("CLIENT_KEY_INVALID", "Client authentication failed", 401)
         key = await state(request).client_keys.authenticate(token)
         client_auth_throttle.clear(client)
         return key
@@ -409,7 +409,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             created = await current.security.login(
                 password, request.headers.get("user-agent", "")[:200]
             )
-        except WindowkeeperError as error:
+        except BrokerError as error:
             return _security_headers(render("login.html", error=error.detail), no_store=True)
         login_throttle.clear(client_key)
         response = RedirectResponse("/", 303)
@@ -498,14 +498,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = await require_form(request, csrf_token)
         current = state(request)
         if not current.vault_configured:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "VAULT_KEY_REQUIRED", "Configure the vault key before adding accounts", 503
             )
         if not current.compatibility.compatible:
-            raise WindowkeeperError(current.compatibility.code, current.compatibility.detail, 503)
+            raise BrokerError(current.compatibility.code, current.compatibility.detail, 503)
         method = LoginMethod(login_method)
         if method == LoginMethod.MANUAL_TOKENS:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "LOGIN_METHOD_UNAVAILABLE",
                 "Manual token import is retired; use device code or browser sign-in",
                 409,
@@ -569,15 +569,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = await require_form(request, csrf_token)
         current = state(request)
         if not current.vault_configured:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "VAULT_KEY_REQUIRED", "Configure the vault key before signing in", 503
             )
         if not current.compatibility.compatible:
-            raise WindowkeeperError(current.compatibility.code, current.compatibility.detail, 503)
+            raise BrokerError(current.compatibility.code, current.compatibility.detail, 503)
         account = (await current.services.account_detail(public))["account"]
         method = LoginMethod(login_method)
         if method == LoginMethod.MANUAL_TOKENS:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "LOGIN_METHOD_UNAVAILABLE",
                 "Manual token import is retired; use device code or browser sign-in",
                 409,
@@ -707,7 +707,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         await require_form(request, csrf_token)
         if not await state(request).client_keys.revoke(key_id):
-            raise WindowkeeperError("CLIENT_KEY_NOT_FOUND", "Active client key not found", 404)
+            raise BrokerError("CLIENT_KEY_NOT_FOUND", "Active client key not found", 404)
         return RedirectResponse("/settings", 303)
 
     @app.post("/settings/client-keys/{key_id}/delete")
@@ -716,7 +716,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ) -> Response:
         await require_form(request, csrf_token)
         if not await state(request).client_keys.delete_revoked(key_id):
-            raise WindowkeeperError(
+            raise BrokerError(
                 "CLIENT_KEY_DELETE_BLOCKED", "Revoke the client key before deleting it", 409
             )
         return RedirectResponse("/settings", 303)
@@ -733,7 +733,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await require_form(request, csrf_token)
         current = state(request)
         if not current.vault_configured:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "VAULT_KEY_REQUIRED", "Configure the vault key before adding webhooks", 503
             )
         await current.webhooks.create_destination(
@@ -819,7 +819,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         body = await request.json()
         callback_url = body.get("callback_url") if isinstance(body, dict) else None
         if not isinstance(callback_url, str):
-            raise WindowkeeperError("BROWSER_CALLBACK_INVALID", "Provide the full callback URL")
+            raise BrokerError("BROWSER_CALLBACK_INVALID", "Provide the full callback URL")
         await state(request).services.forward_callback(
             attempt_id, token, x_interaction_nonce, callback_url
         )

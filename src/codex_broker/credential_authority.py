@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 from codex_broker.vault import Vault
 
 ACCOUNT_CLAIM = "https://api.openai.com/auth"
@@ -47,7 +47,7 @@ def _lease_from_payload(vault: Vault, payload: dict[str, Any]) -> Lease:
         account_id = account_claim["chatgpt_account_id"]
         expires_at_ms = claims["exp"] * 1000
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
-        raise WindowkeeperError(
+        raise BrokerError(
             "CREDENTIAL_FORMAT_INVALID", "The active credential cannot be leased", 503
         ) from error
     if (
@@ -57,7 +57,7 @@ def _lease_from_payload(vault: Vault, payload: dict[str, Any]) -> Lease:
         or not isinstance(expires_at_ms, int)
         or expires_at_ms <= 0
     ):
-        raise WindowkeeperError(
+        raise BrokerError(
             "CREDENTIAL_FORMAT_INVALID", "The active credential cannot be leased", 503
         )
     return Lease(account_id, access_token, expires_at_ms)
@@ -79,11 +79,11 @@ class CredentialAuthority:
                     _lease_from_payload(self.vault, payload).expires_at_ms
                     <= now_ms + REFRESH_SKEW_MS
                 )
-            except WindowkeeperError:
+            except BrokerError:
                 return True
 
         payload = await self.services.credential_payload_for_lease(account, stale)
         lease = _lease_from_payload(self.vault, payload)
         if lease.expires_at_ms <= now_ms:
-            raise WindowkeeperError("CREDENTIAL_EXPIRED", "The active credential is expired", 503)
+            raise BrokerError("CREDENTIAL_EXPIRED", "The active credential is expired", 503)
         return lease

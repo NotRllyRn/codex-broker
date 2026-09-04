@@ -5,7 +5,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
-from codex_broker.errors import Unavailable, WindowkeeperError
+from codex_broker.errors import BrokerError, Unavailable
 
 MAX_FRAME = 8 * 1024 * 1024
 _NOTIFICATION_CLOSED = object()
@@ -101,13 +101,13 @@ class AppServerClient:
                         )
                     return
                 if len(line) > MAX_FRAME:
-                    raise WindowkeeperError(
+                    raise BrokerError(
                         "CODEX_FRAME_TOO_LARGE", "Codex returned an oversized frame"
                     )
                 try:
                     message = json.loads(line)
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
-                    raise WindowkeeperError(
+                    raise BrokerError(
                         "CODEX_INVALID_FRAME", "Codex returned an invalid frame"
                     ) from error
                 if not isinstance(message, dict):
@@ -197,10 +197,10 @@ class AppServerClient:
             raise
         if error := response.get("error"):
             if isinstance(error, Mapping) and self._is_auth_error(error):
-                raise WindowkeeperError(
+                raise BrokerError(
                     "CODEX_AUTH_REQUIRED", "Codex authentication must be renewed"
                 )
-            raise WindowkeeperError("CODEX_RPC_REJECTED", "Codex rejected the request")
+            raise BrokerError("CODEX_RPC_REJECTED", "Codex rejected the request")
         result = response.get("result")
         return (result if isinstance(result, dict) else {}, evidence)
 

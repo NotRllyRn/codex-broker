@@ -4,7 +4,7 @@ from urllib.parse import quote
 
 import pytest
 
-from codex_broker.errors import WindowkeeperError
+from codex_broker.errors import BrokerError
 from codex_broker.redaction import redact, sanitize_url
 from codex_broker.services import (
     browser_contract,
@@ -19,11 +19,11 @@ def test_browser_callback_contract_and_state() -> None:
     contract = browser_contract(auth, (1455, 1457))
     callback = validate_callback(f"{redirect}?code=accepted&state=expected", contract)
     assert "code=accepted" in callback
-    with pytest.raises(WindowkeeperError) as caught:
+    with pytest.raises(BrokerError) as caught:
         validate_callback(f"{redirect}?code=accepted&state=wrong", contract)
     assert caught.value.code == "BROWSER_CALLBACK_STATE_MISMATCH"
     assert contract.state_hash == hashlib.sha256(b"expected").digest()
-    with pytest.raises(WindowkeeperError) as oversized:
+    with pytest.raises(BrokerError) as oversized:
         browser_contract(auth + "&padding=" + "x" * 17_000, (1455, 1457))
     assert oversized.value.code == "CODEX_BROWSER_AUTH_CONTRACT_CHANGED"
 
@@ -43,7 +43,7 @@ def test_chatgpt_identity_accepts_nullable_email_but_rejects_mismatch() -> None:
         )["email"]
         == ""
     )
-    with pytest.raises(WindowkeeperError) as reauthentication:
+    with pytest.raises(BrokerError) as reauthentication:
         verify_identity(
             {"upstream_email": "owner@example.test"},
             {"account": {"type": "chatgpt", "email": "other@example.test"}},
@@ -53,7 +53,7 @@ def test_chatgpt_identity_accepts_nullable_email_but_rejects_mismatch() -> None:
 
 @pytest.mark.parametrize("identity", ({}, {"account": None}))
 def test_missing_codex_account_requires_authentication(identity: dict[str, Any]) -> None:
-    with pytest.raises(WindowkeeperError) as missing:
+    with pytest.raises(BrokerError) as missing:
         verify_identity({}, identity)
     assert missing.value.code == "CODEX_AUTH_REQUIRED"
 
@@ -67,7 +67,7 @@ def test_missing_codex_account_requires_authentication(identity: dict[str, Any])
     ),
 )
 def test_identity_still_rejects_empty_or_non_chatgpt_account(identity: dict[str, Any]) -> None:
-    with pytest.raises(WindowkeeperError) as unverifiable:
+    with pytest.raises(BrokerError) as unverifiable:
         verify_identity({}, identity)
     assert unverifiable.value.code == "AUTH_IDENTITY_UNVERIFIED"
 

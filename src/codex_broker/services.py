@@ -17,7 +17,7 @@ from .codex.adapter import LoginInteraction
 from .database import Database
 from .domain.models import AccountSummary, LoginMethod
 from .domain.usage import normalize_usage
-from .errors import Conflict, WindowkeeperError
+from .errors import BrokerError, Conflict
 from .ids import new_id, public_token
 from .redaction import redact
 from .security import digest
@@ -116,7 +116,7 @@ def browser_contract(
     maximum_bytes: int = 16_384,
 ) -> BrowserContract:
     if len(authorization_url.encode()) > maximum_bytes:
-        raise WindowkeeperError(
+        raise BrokerError(
             "CODEX_BROWSER_AUTH_CONTRACT_CHANGED",
             "Codex returned an oversized browser sign-in contract",
             409,
@@ -146,13 +146,13 @@ def browser_contract(
         ):
             raise ValueError("unexpected callback contract")
     except ValueError as error:
-        raise WindowkeeperError(
+        raise BrokerError(
             "CODEX_BROWSER_AUTH_CONTRACT_CHANGED",
             "Codex returned an unsupported browser sign-in contract",
             409,
         ) from error
     if not redirect.hostname or not redirect.port:
-        raise WindowkeeperError(
+        raise BrokerError(
             "CODEX_BROWSER_AUTH_CONTRACT_CHANGED",
             "Codex returned an incomplete callback contract",
             409,
@@ -168,7 +168,7 @@ def browser_contract(
 
 def validate_callback(value: str, contract: BrowserContract, maximum_bytes: int = 16_384) -> str:
     if len(value.encode()) > maximum_bytes:
-        raise WindowkeeperError("BROWSER_CALLBACK_INVALID", "The callback URL is too large")
+        raise BrokerError("BROWSER_CALLBACK_INVALID", "The callback URL is too large")
     try:
         callback = urlsplit(value)
         query = parse_qs(callback.query, strict_parsing=True)
@@ -186,11 +186,11 @@ def validate_callback(value: str, contract: BrowserContract, maximum_bytes: int 
         ):
             raise ValueError("callback does not match")
     except ValueError as error:
-        raise WindowkeeperError(
+        raise BrokerError(
             "BROWSER_CALLBACK_INVALID", "The callback URL is not valid", 400
         ) from error
     if not secrets.compare_digest(hashlib.sha256(state[0].encode()).digest(), contract.state_hash):
-        raise WindowkeeperError(
+        raise BrokerError(
             "BROWSER_CALLBACK_STATE_MISMATCH", "The callback belongs to another sign-in", 409
         )
     encoded_query = urlencode({"code": code[0], "state": state[0]})
@@ -199,14 +199,14 @@ def validate_callback(value: str, contract: BrowserContract, maximum_bytes: int 
 
 def verify_identity(account: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
     if "account" not in identity or identity["account"] is None:
-        raise WindowkeeperError(
+        raise BrokerError(
             "CODEX_AUTH_REQUIRED",
             "Codex authentication must be renewed",
             409,
         )
     observed = identity["account"]
     if not isinstance(observed, dict) or observed.get("type") != "chatgpt":
-        raise WindowkeeperError(
+        raise BrokerError(
             "AUTH_IDENTITY_UNVERIFIED",
             "Codex did not return a ChatGPT identity",
             409,
@@ -218,7 +218,7 @@ def verify_identity(account: dict[str, Any], identity: dict[str, Any]) -> dict[s
         and observed_email
         and str(expected_email).casefold() != str(observed_email).casefold()
     ):
-        raise WindowkeeperError(
+        raise BrokerError(
             "AUTH_IDENTITY_MISMATCH",
             "The authenticated ChatGPT identity does not match this account",
             409,
@@ -416,7 +416,7 @@ class ApplicationServices:
     ) -> dict[str, Any]:
         name = " ".join(display_name.split())
         if not name or len(name) > 80:
-            raise WindowkeeperError(
+            raise BrokerError(
                 "ACCOUNT_NAME_INVALID", "Enter an account name of 1-80 characters"
             )
         account_id = new_id()
@@ -424,7 +424,7 @@ class ApplicationServices:
         now = self.clock.now_ms()
         clean_labels = sorted({" ".join(value.split()) for value in labels or [] if value.strip()})
         if len(clean_labels) > 20 or any(len(label) > 40 for label in clean_labels):
-            raise WindowkeeperError(
+            raise BrokerError(
                 "ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters"
             )
 
@@ -497,7 +497,7 @@ class ApplicationServices:
 
         row = await self.database.call(work)
         if not row:
-            raise WindowkeeperError("ACCOUNT_NOT_FOUND", "Account not found", 404)
+            raise BrokerError("ACCOUNT_NOT_FOUND", "Account not found", 404)
         return row
 
     async def accounts(self) -> list[AccountSummary]:
@@ -704,7 +704,7 @@ class ApplicationServices:
                 raise Conflict(
                     code, "Another sign-in is already active for this account"
                 ) from error
-            raise WindowkeeperError(
+            raise BrokerError(
                 code, "Sign-in could not be recorded; apply database migrations and retry", 500
             ) from error
         task = self._background(
@@ -888,7 +888,7 @@ class ApplicationServices:
                 "Sign-in was interrupted",
             )
             raise
-        except WindowkeeperError as error:
+        except BrokerError as error:
             self.log.warning("login rejected", extra={"event": "login.rejected"})
             action_required = error.code in {
                 "AUTH_IDENTITY_UNVERIFIED",
@@ -919,12 +919,12 @@ class ApplicationServices:
                     continue
                 params = event.get("params") or {}
                 if params.get("loginId") != login_id:
-                    raise WindowkeeperError(
+                    raise BrokerError(
                         "ACCOUNT_ISOLATION_VIOLATION",
                         "Codex routed a sign-in event to the wrong account",
                     )
                 if not params.get("success"):
-                    raise WindowkeeperError("LOGIN_DENIED", "ChatGPT sign-in was not approved")
+                    raise BrokerError("LOGIN_DENIED", "ChatGPT sign-in was not approved")
                 return
         raise TimeoutError("sign-in expired")
 
@@ -936,7 +936,7 @@ class ApplicationServices:
             or not secrets.compare_digest(stored.session_hash, digest(session_token))
             or not secrets.compare_digest(stored.nonce_hash, digest(nonce))
         ):
-            raise WindowkeeperError(
+            raise BrokerError(
                 "LOGIN_INTERACTION_NOT_READY", "The sign-in interaction is unavailable", 404
             )
         interaction = stored.interaction
@@ -978,7 +978,7 @@ class ApplicationServices:
             ) as client:
                 response = await client.get(destination, headers={"User-Agent": "codex-broker/0.1"})
                 if response.status_code >= 400:
-                    raise WindowkeeperError(
+                    raise BrokerError(
                         "BROWSER_CALLBACK_FORWARD_FAILED", "Codex did not accept the callback", 502
                     )
         finally:
@@ -988,7 +988,7 @@ class ApplicationServices:
     async def cancel_login(self, attempt_id: str, session_token: str) -> str:
         stored = self.interactions.get(attempt_id)
         if not stored or not secrets.compare_digest(stored.session_hash, digest(session_token)):
-            raise WindowkeeperError(
+            raise BrokerError(
                 "LOGIN_INTERACTION_SESSION_MISMATCH", "This sign-in belongs to another session", 403
             )
 
@@ -1294,7 +1294,7 @@ class ApplicationServices:
                 primary_error = primary_error or cancellation
             except (Exception, CancelledError) as ignored:
                 del ignored
-            raise WindowkeeperError(
+            raise BrokerError(
                 "CREDENTIAL_CHECKPOINT_FAILED",
                 "Codex credential state could not be safely checkpointed",
                 503,
@@ -1341,7 +1341,7 @@ class ApplicationServices:
                     account.get("workspace_constraint"),
                 )
             if self.vault.auth_fingerprint(payload) in forbidden_fingerprints:
-                raise WindowkeeperError(
+                raise BrokerError(
                     "CODEX_TOKEN_NOT_ROTATED",
                     f"Codex did not create a separate {state.lower()} credential",
                 )
@@ -1495,10 +1495,10 @@ class ApplicationServices:
         now = self.clock.now_ms()
         duration = _integer((self.clock.monotonic() - started) * 1000)
         snapshot_id = new_id()
-        error_code = error.code if isinstance(error, WindowkeeperError) else "USAGE_REFRESH_FAILED"
+        error_code = error.code if isinstance(error, BrokerError) else "USAGE_REFRESH_FAILED"
         summary = (
             str(redact(error.detail))[:200]
-            if isinstance(error, WindowkeeperError)
+            if isinstance(error, BrokerError)
             else "Usage could not be refreshed"
         )
         auth_failure = error_code == "CODEX_AUTH_REQUIRED"
@@ -1781,7 +1781,7 @@ class ApplicationServices:
 
         value = await self.database.call(work)
         if not value:
-            raise WindowkeeperError("OPERATION_NOT_FOUND", "Operation not found", 404)
+            raise BrokerError("OPERATION_NOT_FOUND", "Operation not found", 404)
         return value
 
     async def incidents(self) -> list[dict[str, Any]]:
@@ -1799,7 +1799,7 @@ class ApplicationServices:
         account = await self._account_row(public)
         clean = sorted({" ".join(value.split()) for value in labels if value.strip()})
         if len(clean) > 20 or any(len(label) > 40 for label in clean):
-            raise WindowkeeperError(
+            raise BrokerError(
                 "ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters"
             )
         now = self.clock.now_ms()
