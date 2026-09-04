@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from codex_broker.config import Settings
 from codex_broker.database import Database
+from codex_broker.router import RouteLease, RouteRequest
 from codex_broker.vault import Vault, decode_key, generate_key
 from codex_broker.web.app import create_app
 
@@ -114,6 +115,66 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
         }
         assert response.json()["expires_at"].endswith("Z")
         assert "refresh" not in response.text
+
+
+def test_concurrent_near_expiry_routes_refresh_once(tmp_path: Path) -> None:
+    executable = Path(__file__).parents[1] / "fake_codex.py"
+    marker = executable.with_suffix(".lease-refresh")
+    marker.touch()
+    os.chmod(executable, 0o700)
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        runtime_dir=tmp_path / "run",
+        vault_key=generate_key(),
+        admin_password=PASSWORD,
+        codex_executable=str(executable),
+    )
+    try:
+        app = create_app(settings)
+        with TestClient(app) as client:
+            state = app.state.windowkeeper
+            assert client.portal is not None
+            issued = client.portal.call(state.client_keys.create, "Pi")
+            access = jwt(
+                {
+                    "exp": int(time.time()) + 30,
+                    ACCOUNT_CLAIM: {"chatgpt_account_id": "upstream"},
+                }
+            )
+            client.portal.call(
+                state.database.transaction,
+                lambda connection: seed_account(connection, state.services.vault, access),
+            )
+
+            async def routes() -> list[RouteLease]:
+                values = await asyncio.gather(
+                    *(
+                        state.router.route(
+                            issued.key_id, RouteRequest("session", f"turn-{index}")
+                        )
+                        for index in range(50)
+                    )
+                )
+                return [value for value in values if isinstance(value, RouteLease)]
+
+            leases = client.portal.call(routes)
+            assert len(leases) == 50
+            assert len({lease.access_token for lease in leases}) == 1
+            traces = list((tmp_path / "run" / "accounts").glob("*/.fake-lease-refreshes"))
+            assert len(traces) == 1
+            assert traces[0].read_text().splitlines() == ["refresh"]
+            counts = client.portal.call(
+                state.database.call,
+                lambda connection: tuple(
+                    tuple(row)
+                    for row in connection.execute(
+                        "SELECT state,count(*) FROM credential_bundles GROUP BY state ORDER BY state"
+                    )
+                ),
+            )
+            assert counts == (("ACTIVE", 1), ("RETIRED", 1))
+    finally:
+        marker.unlink(missing_ok=True)
 
 
 def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:

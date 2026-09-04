@@ -1,5 +1,6 @@
 # pyright: reportMissingImports=false
 
+import asyncio
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -8,6 +9,7 @@ import pytest
 
 from codex_broker.credential_authority import Lease
 from codex_broker.database import Database
+from codex_broker.errors import WindowkeeperError
 from codex_broker.router import PoolWait, RouteLease, Router, RouteRequest
 
 
@@ -114,6 +116,61 @@ async def test_router_preserves_preference_and_moves_after_failure(tmp_path: Pat
         assert isinstance(replacement, RouteLease)
         assert replacement.account_id == "public-1"
         assert services.refreshed == ["public-0:CLIENT_FAILURE"]
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_valid_routes_do_not_mutate_credentials(tmp_path: Path) -> None:
+    database = Database(tmp_path / "broker.db")
+    database.start()
+    try:
+        await database.transaction(seed)
+        router = Router(database, Services(), cast(Any, Authority()))
+        results = await asyncio.gather(
+            *(router.route("key", RouteRequest("session", f"turn-{index}")) for index in range(50))
+        )
+        assert {result.account_id for result in results if isinstance(result, RouteLease)} == {
+            "public-0"
+        }
+        assert await database.call(
+            lambda connection: connection.execute(
+                "SELECT count(*) FROM credential_bundles"
+            ).fetchone()[0]
+        ) == 2
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_router_ignores_exhaustion_after_known_reset(tmp_path: Path) -> None:
+    database = Database(tmp_path / "broker.db")
+    database.start()
+    try:
+        now = 2_000_000
+        await database.transaction(lambda connection: seed(connection, used=100, reset=1_900))
+        router = Router(database, Services(), cast(Any, Authority()))
+        router.clock.now_ms = lambda: now  # type: ignore[method-assign]
+        assert isinstance(await router.route("key", RouteRequest("session", "turn")), RouteLease)
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
+async def test_router_rejects_exhaustion_without_reset(tmp_path: Path) -> None:
+    database = Database(tmp_path / "broker.db")
+    database.start()
+    try:
+        await database.transaction(lambda connection: seed(connection, used=100))
+        await database.transaction(
+            lambda connection: connection.execute(
+                "UPDATE usage_current SET short_resets_at_s=NULL"
+            )
+        )
+        router = Router(database, Services(), cast(Any, Authority()))
+        with pytest.raises(WindowkeeperError, match="reliable retry time") as caught:
+            await router.route("key", RouteRequest("session", "turn"))
+        assert caught.value.code == "POOL_RESET_UNKNOWN"
     finally:
         await database.close()
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import os
 import sys
@@ -31,6 +32,21 @@ def mutate_auth(label: str) -> None:
     auth["checkpoint"] = label
     auth["tokens"]["access_token"] = f"{label}-access"
     auth["tokens"]["refresh_token"] = f"{label}-refresh"
+    (home / "auth.json").write_text(json.dumps(auth, separators=(",", ":")), encoding="utf-8")
+
+
+def refresh_lease_auth() -> None:
+    trace = home.parents[1] / ".fake-lease-refreshes"
+    with trace.open("a", encoding="utf-8") as stream:
+        stream.write("refresh\n")
+    claims = {
+        "exp": int(time.time()) + 3600,
+        "https://api.openai.com/auth": {"chatgpt_account_id": "upstream"},
+    }
+    payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).rstrip(b"=").decode()
+    auth = json.loads((home / "auth.json").read_text(encoding="utf-8"))
+    auth["tokens"]["access_token"] = f"header.{payload}.signature"
+    auth["tokens"]["refresh_token"] = "lease-refresh"  # noqa: S105
     (home / "auth.json").write_text(json.dumps(auth, separators=(",", ":")), encoding="utf-8")
 
 
@@ -111,6 +127,8 @@ for line in sys.stdin:
             )
             pending_login_id = None
     elif method == "account/read":
+        if marker(".lease-refresh") and not params.get("refreshToken"):
+            refresh_lease_auth()
         if params.get("refreshToken"):
             trace = home.parents[1] / ".fake-refreshes"
             refresh_number = (

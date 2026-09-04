@@ -79,7 +79,9 @@ class Router:
             await self._exclude(key_id, failed, request.failure_kind, now)
             rows = await self._accounts(key_id, now)
 
-        usable = [row for row in rows if not self._exhausted(row) and not row["excluded_until"]]
+        usable = [
+            row for row in rows if not self._exhausted(row, now) and not row["excluded_until"]
+        ]
         selected = self._select(
             usable, request.preferred_account_id, request.failed_account_id, rows
         )
@@ -122,10 +124,15 @@ class Router:
         return await self.database.transaction(read)
 
     @staticmethod
-    def _exhausted(row: dict[str, Any]) -> bool:
+    def _exhausted(row: dict[str, Any], now: int) -> bool:
         return any(
-            isinstance(value, int) and value >= 100
-            for value in (row.get("short_used_percent_raw"), row.get("weekly_used_percent_raw"))
+            isinstance(used, int)
+            and used >= 100
+            and (not isinstance(reset, int) or reset * 1000 > now)
+            for used, reset in (
+                (row.get("short_used_percent_raw"), row.get("short_resets_at_s")),
+                (row.get("weekly_used_percent_raw"), row.get("weekly_resets_at_s")),
+            )
         )
 
     @staticmethod
