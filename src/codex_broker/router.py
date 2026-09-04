@@ -82,9 +82,7 @@ class Router:
         usable = [
             row for row in rows if not self._exhausted(row, now) and not row["excluded_until"]
         ]
-        selected = self._select(
-            usable, request.preferred_account_id, request.failed_account_id, rows
-        )
+        selected = self._select(usable, request.preferred_account_id, now)
         if selected:
             lease = await self.authority.lease(selected, now)
             return self._route_lease(selected, lease)
@@ -147,22 +145,22 @@ class Router:
 
     @staticmethod
     def _select(
-        usable: list[dict[str, Any]],
-        preferred: str | None,
-        failed: str | None,
-        all_rows: list[dict[str, Any]],
+        usable: list[dict[str, Any]], preferred: str | None, now: int
     ) -> dict[str, Any] | None:
-        if preferred and not failed:
-            match = next((row for row in usable if row["public_token"] == preferred), None)
-            if match:
-                return match
-        if failed and usable:
-            order = [str(row["public_token"]) for row in all_rows]
-            start = (order.index(failed) + 1) % len(order)
-            return min(
-                usable, key=lambda row: (order.index(str(row["public_token"])) - start) % len(order)
+        def rank(row: dict[str, Any]) -> tuple[float, float, bool, int, str]:
+            def reset(name: str) -> float:
+                value = row.get(name)
+                return value if isinstance(value, int) and value * 1000 > now else math.inf
+
+            return (
+                reset("weekly_resets_at_s"),
+                reset("short_resets_at_s"),
+                row["public_token"] != preferred,
+                row["created_at_ms"],
+                str(row["account_id"]),
             )
-        return usable[0] if usable else None
+
+        return min(usable, key=rank) if usable else None
 
     @staticmethod
     def _account_reset(row: dict[str, Any], now: int) -> int | None:

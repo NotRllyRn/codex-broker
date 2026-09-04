@@ -124,6 +124,35 @@ async def test_router_preserves_preference_and_moves_after_failure(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_router_ranks_weekly_then_short_reset(tmp_path: Path) -> None:
+    database = Database(tmp_path / "broker.db")
+    database.start()
+    try:
+        await database.transaction(seed)
+        await database.transaction(
+            lambda connection: connection.executescript(
+                """UPDATE usage_current SET weekly_resets_at_s=3000,short_resets_at_s=2100 WHERE account_id='account-0';
+                UPDATE usage_current SET weekly_resets_at_s=2500,short_resets_at_s=2900 WHERE account_id='account-1';"""
+            )
+        )
+        router = Router(database, Services(), cast(Any, Authority()))
+        router.clock.now_ms = lambda: 2_000_000  # type: ignore[method-assign]
+        weekly = await router.route("key", RouteRequest("session", "weekly"))
+        assert isinstance(weekly, RouteLease)
+        assert weekly.account_id == "public-1"
+        await database.transaction(
+            lambda connection: connection.execute(
+                "UPDATE usage_current SET weekly_resets_at_s=2500 WHERE account_id='account-0'"
+            )
+        )
+        short = await router.route("key", RouteRequest("session", "short"))
+        assert isinstance(short, RouteLease)
+        assert short.account_id == "public-0"
+    finally:
+        await database.close()
+
+
+@pytest.mark.asyncio
 async def test_concurrent_valid_routes_do_not_mutate_credentials(tmp_path: Path) -> None:
     database = Database(tmp_path / "broker.db")
     database.start()

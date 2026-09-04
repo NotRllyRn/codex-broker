@@ -426,13 +426,13 @@ Algorithm:
 2. If the request reports a failure, exclude that account from this selection.
 3. For `quota`, immediately refresh that account's usage state using the existing usage mechanism before final pool-exhaustion calculation when practical.
 4. For `auth`, ask `CredentialAuthority` to force one refresh attempt; if that fails, exclude the account and mark it as requiring login through existing state/error mechanisms.
-5. If `preferred_account_id` remains usable, keep it.
-6. Otherwise choose the first usable account in stable creation order; after a failed account, choose the next usable account in circular stable order.
+5. Rank usable accounts by the soonest known future weekly reset, then by the soonest known future short-window reset.
+6. Put unknown or elapsed reset timestamps after known future resets. Use `preferred_account_id` only to break equal reset-time rankings, followed by stable creation order.
 7. Obtain a valid access token from `CredentialAuthority` and return the lease.
 
-This means clients contact the broker on **every user turn**, as requested, while the broker normally returns the same healthy account. That preserves account/prompt-cache affinity instead of pointlessly rotating credentials each turn. Hermes itself documents that credential rotation resets prompt cache.
+This means clients contact the broker on **every user turn** and receive the account whose long-window capacity renews soonest, with short-window renewal as the secondary criterion. Failed accounts remain excluded before ranking.
 
-Do not add round-robin/least-used configuration in v1.
+Do not add configurable routing strategies in v1.
 
 ### Pool exhaustion calculation
 
@@ -947,9 +947,9 @@ Migration 009 is destructive only to removed activation history. Rollback to sof
 ## Routing tests
 
 - every new-turn call runs router logic;
-- preferred healthy account remains selected;
-- failed account is skipped;
-- next stable account is selected;
+- known future weekly reset ranks first, then short-window reset;
+- preference breaks equal reset-time rankings;
+- failed account is skipped before ranking;
 - disabled/deleted/no-ACTIVE/needs-login accounts are skipped;
 - known 100% short or weekly window is unavailable;
 - stale-but-not-known-exhausted telemetry does not unnecessarily take the whole broker down;
@@ -1048,7 +1048,7 @@ Implementation status at the current branch:
 1. Add migrations 007-008.
 2. Add `client_auth.py` + Settings key UI.
 3. Add `credential_authority.py` over existing ACTIVE/checkpoint machinery.
-4. Add `router.py` with stable preferred/next-available selection.
+4. Add `router.py` with weekly-reset-first, short-reset-second selection.
 5. Add `/api/v1/route` and health.
 6. Add exact reset timestamp + padding behavior.
 7. Add direct HTTPS LAN configuration and startup guard.
