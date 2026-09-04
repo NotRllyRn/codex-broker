@@ -51,7 +51,7 @@ class Database:
     def start(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._migrate()
-        self._thread = threading.Thread(target=self._run, name="windowkeeper-db", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="codex-broker-db", daemon=True)
         self._thread.start()
         self._ready.wait(timeout=10)
         if self._startup_error:

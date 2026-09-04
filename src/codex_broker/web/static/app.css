@@ -1,5 +1,5 @@
 @font-face {
-	font-family: WKMono;
+	font-family: BrokerMono;
 	src: local("SFMono-Regular"), local("Cascadia Mono"), local("Liberation Mono");
 	font-display: swap;
 }
@@ -154,7 +154,7 @@ button {
 	background: var(--ink);
 	color: var(--paper);
 	font:
-		700 0.68rem / 1 WKMono,
+		700 0.68rem / 1 BrokerMono,
 		monospace;
 	letter-spacing: 0.08em;
 }
@@ -238,7 +238,7 @@ main {
 	margin: 0 0 0.7rem;
 	color: var(--accent);
 	font:
-		700 0.7rem / 1 WKMono,
+		700 0.7rem / 1 BrokerMono,
 		monospace;
 	letter-spacing: 0.14em;
 	text-transform: uppercase;
@@ -313,7 +313,7 @@ main {
 }
 .status-strip span {
 	font:
-		600 1.5rem / 1 WKMono,
+		600 1.5rem / 1 BrokerMono,
 		monospace;
 }
 .status-strip small {
@@ -381,7 +381,7 @@ textarea {
 	align-items: center;
 	gap: 0.45rem;
 	font:
-		700 0.67rem / 1 WKMono,
+		700 0.67rem / 1 BrokerMono,
 		monospace;
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
@@ -462,7 +462,7 @@ textarea {
 }
 .orbit-core strong {
 	font:
-		600 1rem / 1.2 WKMono,
+		600 1rem / 1.2 BrokerMono,
 		monospace;
 }
 .orbit-accounts {
@@ -508,7 +508,7 @@ textarea {
 }
 .paired-usage strong {
 	font:
-		500 clamp(2rem, 4vw, 3.5rem) / 1 WKMono,
+		500 clamp(2rem, 4vw, 3.5rem) / 1 BrokerMono,
 		monospace;
 	letter-spacing: -0.07em;
 }
@@ -621,7 +621,7 @@ textarea {
 	border: 1px solid var(--line-strong);
 	border-radius: 50%;
 	font:
-		600 0.7rem WKMono,
+		600 0.7rem BrokerMono,
 		monospace;
 }
 .progress-step.current {
@@ -690,7 +690,7 @@ textarea {
 }
 .code-copy span {
 	font:
-		700 2rem WKMono,
+		700 2rem BrokerMono,
 		monospace;
 	letter-spacing: 0.12em;
 }
@@ -751,7 +751,7 @@ textarea {
 }
 .evidence-number {
 	font:
-		500 4rem / 1 WKMono,
+		500 4rem / 1 BrokerMono,
 		monospace;
 	letter-spacing: -0.07em;
 }
@@ -844,7 +844,7 @@ textarea {
 .incident-list article time {
 	color: var(--muted);
 	font:
-		500 0.7rem WKMono,
+		500 0.7rem BrokerMono,
 		monospace;
 }
 .incident-list article p {
@@ -867,7 +867,7 @@ textarea {
 	gap: 1rem;
 	align-items: center;
 	font:
-		500 0.72rem WKMono,
+		500 0.72rem BrokerMono,
 		monospace;
 }
 .log-level {
@@ -879,7 +879,7 @@ textarea {
 	padding: 1rem;
 	color: var(--muted);
 	font:
-		500 0.68rem / 1.5 WKMono,
+		500 0.68rem / 1.5 BrokerMono,
 		monospace;
 }
 .settings-list {

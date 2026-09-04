@@ -454,7 +454,7 @@ def test_managed_cancellation_checkpoints_before_returning(tmp_path: Path) -> No
         public = client.get("/api/internal/v1/dashboard").json()["data"][0]["public_token"]
 
         async def run_cancelled_operation() -> str:
-            account = (await app.state.windowkeeper.services.account_detail(public))["account"]
+            account = (await app.state.broker.services.account_detail(public))["account"]
 
             async def mutate_then_cancel(runtime: Any) -> None:
                 path = runtime.codex_home / "auth.json"
@@ -465,7 +465,7 @@ def test_managed_cancellation_checkpoints_before_returning(tmp_path: Path) -> No
                 raise asyncio.CancelledError
 
             try:
-                await app.state.windowkeeper.services._run_managed(account, mutate_then_cancel)
+                await app.state.broker.services._run_managed(account, mutate_then_cancel)
             except asyncio.CancelledError:
                 return "cancelled"
             raise AssertionError("managed cancellation was not propagated")

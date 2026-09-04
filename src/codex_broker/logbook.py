@@ -23,7 +23,7 @@ class LogBook(logging.Handler):
         self.events: deque[dict[str, Any]] = deque(maxlen=maximum_events)
         self._queue: queue.Queue[dict[str, Any] | None] = queue.Queue(maxsize=10_000)
         self._dropped = 0
-        self._thread = threading.Thread(target=self._write, name="windowkeeper-log", daemon=True)
+        self._thread = threading.Thread(target=self._write, name="codex-broker-log", daemon=True)
 
     def start(self) -> None:
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)

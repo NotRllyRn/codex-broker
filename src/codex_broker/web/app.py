@@ -234,7 +234,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             client_keys,
             router,
         )
-        app.state.windowkeeper = state
+        app.state.broker = state
         await services.reconcile_startup()
         state.ready = vault_configured and admin_configured and compatibility.compatible
         if state.ready:
@@ -297,7 +297,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return problem(error, request)
 
     def state(request: Request) -> AppState:
-        return cast(AppState, request.app.state.windowkeeper)
+        return cast(AppState, request.app.state.broker)
 
     async def session_or_none(request: Request) -> dict[str, object] | None:
         return await state(request).security.session(request.cookies.get(SESSION_COOKIE))

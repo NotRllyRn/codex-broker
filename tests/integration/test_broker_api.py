@@ -84,7 +84,7 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
     )
     app = create_app(settings)
     with TestClient(app) as client:
-        state = app.state.windowkeeper
+        state = app.state.broker
         portal = client.portal
         assert portal is not None
         issued = portal.call(state.client_keys.create, "Pi")
@@ -150,7 +150,7 @@ def test_concurrent_near_expiry_routes_refresh_once(tmp_path: Path) -> None:
     try:
         app = create_app(settings)
         with TestClient(app) as client:
-            state = app.state.windowkeeper
+            state = app.state.broker
             assert client.portal is not None
             issued = client.portal.call(state.client_keys.create, "Pi")
             access = jwt(
@@ -273,7 +273,7 @@ def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
         client.cookies.update(login.cookies)
         dashboard = client.get("/api/internal/v1/dashboard").json()["data"]
         assert dashboard[0]["display_name"] == "Existing"
-        state = app.state.windowkeeper
+        state = app.state.broker
         assert client.portal is not None
         issued = client.portal.call(state.client_keys.create, "Migration test")
         response = client.post(
