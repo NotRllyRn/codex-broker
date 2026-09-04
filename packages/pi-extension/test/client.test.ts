@@ -72,6 +72,13 @@ test("requires a trusted local CA and bounds responses", async () => {
           return;
         }
         response.writeHead(200, { "content-type": "application/json" });
+        const resetFields =
+          input.turn_id === "legacy"
+            ? {}
+            : {
+                short_resets_at: "2099-01-01T00:00:00Z",
+                weekly_resets_at: "2099-01-02T00:00:00Z",
+              };
         response.end(
           JSON.stringify({
             status: "ok",
@@ -82,8 +89,7 @@ test("requires a trusted local CA and bounds responses", async () => {
             expires_at: "2099-01-01T00:00:00Z",
             short_remaining_percent: 80,
             weekly_remaining_percent: 60,
-            short_resets_at: "2099-01-01T00:00:00Z",
-            weekly_resets_at: "2099-01-02T00:00:00Z",
+            ...resetFields,
           }),
         );
       });
@@ -111,6 +117,11 @@ test("requires a trusted local CA and bounds responses", async () => {
       ).status,
       "ok",
     );
+    const legacy = await new BrokerClient(url, "cbk_test", cert).route({
+      session_id: "s",
+      turn_id: "legacy",
+    });
+    assert.equal(legacy.status === "ok" && legacy.short_resets_at, null);
     await assert.rejects(
       new BrokerClient(url, "cbk_test", cert).route({
         session_id: "s",

@@ -114,9 +114,13 @@ export class BrokerClient {
           response.on("error", reject);
           response.on("end", () => {
             try {
-              const value: unknown = JSON.parse(
+              const parsed: unknown = JSON.parse(
                 Buffer.concat(chunks).toString("utf8"),
               );
+              const value =
+                parsed && typeof parsed === "object"
+                  ? { short_resets_at: null, weekly_resets_at: null, ...parsed }
+                  : parsed;
               if (response.statusCode === 200 && isLease(value)) resolve(value);
               else if (response.statusCode === 429 && isWait(value))
                 resolve(value);
