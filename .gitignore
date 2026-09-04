@@ -211,7 +211,8 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
-# Local upstream source snapshots used for integration audits
+# Local deployment secrets and upstream source snapshots
+deployment/certs/
 sources/
 
 # PyPI configuration file
