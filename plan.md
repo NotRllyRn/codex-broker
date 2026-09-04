@@ -890,7 +890,7 @@ README sections:
 4. HTTPS LAN setup.
 5. Create client access key.
 6. Install Pi adapter.
-7. Hermes adapter only if compatibility-tested/shipped.
+7. Hermes fork integration only after version-specific compatibility and live acceptance pass.
 8. Removal of legacy automatic activation.
 9. Backup/recovery.
 10. Security limitations, especially issued access-token revocation.
@@ -1023,7 +1023,7 @@ Implementation status at the current branch:
 - the Hermes core integration is live-tested, maintained in a fork, and pinned at `integrations/hermes-agent`;
 - migrations 007-009 add client routing and remove legacy activation state while preserving migrations 001-006 for direct upgrades;
 - the synthetic pre-rewrite migration fixture proves sentinel/credential compatibility and managed checkpointing without relogin;
-- a production data-volume copy drill and the live Hermes gate remain release operations because those external checkouts/data are not in this repository.
+- a production data-volume copy drill remains an external release operation; the v0.21.0 Hermes live gate passed and must be repeated for each future pinned version.
 
 ## Phase 0 — freeze behavior + Hermes spike
 
@@ -1098,7 +1098,7 @@ Implementation status at the current branch:
 | 90-day absolute session is longer than conventional high-security admin interfaces | Explicit convenience choice for a private home-LAN management service. Keep a 31-day inactivity cutoff. |
 | Renaming crypto strings could strand every credential | Never rename legacy KDF/sentinel strings. Test migration before release. |
 | Renaming Docker volume can make data appear lost | Preserve physical `windowkeeper-data` volume name. |
-| Hermes plugin API may still be insufficient for retry/resume | Compatibility gate. Omit plugin instead of shipping a brittle private-internals hack. |
+| Hermes updates move the required core seams | Rebase the rolling fork branch, rerun compatibility/live gates, and publish a new immutable version pin; never move an old pin. |
 | A full project rewrite could accidentally discard Windowkeeper's strong checkpoint/recovery code | Refactor around existing vault/services rather than rewriting the credential engine from scratch. |
 
 ---

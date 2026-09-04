@@ -43,7 +43,7 @@ Historical compatibility identifiers must remain stable: `windowkeeper.db`, lock
 
 ## Hermes gate
 
-Hermes is not shipped from this repository. Apply `docs/integrations/hermes-agent-patch.md` to the live pinned checkout and pass every automated and live acceptance step there. If its current seams cannot enforce fail-closed per-turn leases and disable native refresh-token mutation, omit the integration.
+Hermes source is maintained in the dedicated fork and pinned here as a submodule; it is not packaged into Codex Broker. For every Hermes release, rebase `codex-broker-next`, create a new immutable version branch/tag, run the automated and live acceptance steps in `docs/integrations/hermes-agent-patch.md`, then update the submodule and installer pins together. The installer must refuse unknown revisions, validate TLS/client authentication, and roll back when gateway startup fails.
 
 ## Final
 
