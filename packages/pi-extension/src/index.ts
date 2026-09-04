@@ -104,6 +104,7 @@ export default function codexBroker(pi: ExtensionAPI): void {
   };
 
   pi.registerProvider("openai-codex", {
+    api: "openai-codex-responses",
     apiKey: "broker-managed",
     streamSimple: (
       model: Model<Api>,
