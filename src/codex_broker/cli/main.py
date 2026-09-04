@@ -72,10 +72,19 @@ def cli() -> None:
 def serve(host: str | None, port: int | None) -> None:
     """Run the authenticated dashboard and scheduler."""
     settings = _settings()
+    bind_host = host or settings.host
+    try:
+        loopback = ipaddress.ip_address(bind_host).is_loopback
+    except ValueError:
+        loopback = bind_host.lower() == "localhost"
+    if not loopback and not (settings.tls_cert_file and settings.tls_key_file):
+        raise click.ClickException("non-loopback binds require TLS certificate and key files")
     uvicorn.run(
         "codex_broker.web.app:app",
-        host=host or settings.host,
+        host=bind_host,
         port=port or settings.port,
+        ssl_certfile=settings.tls_cert_file,
+        ssl_keyfile=settings.tls_key_file,
         proxy_headers=bool(settings.trusted_proxies),
         forwarded_allow_ips=settings.trusted_proxies or "",
         server_header=False,

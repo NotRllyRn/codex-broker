@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     timezone: str = "UTC"
     root_path: str = ""
     trusted_proxies: str = ""
+    tls_cert_file: Path | None = None
+    tls_key_file: Path | None = None
+    tls_ca_file: Path | None = None
     vault_key_file: Path | None = None
     vault_key: str | None = None
     admin_password_file: Path | None = None
