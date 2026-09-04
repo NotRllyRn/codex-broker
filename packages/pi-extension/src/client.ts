@@ -33,20 +33,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isLease(value: unknown): value is Lease {
-  return isRecord(value)
-    && value.status === "ok"
-    && typeof value.account_id === "string"
-    && typeof value.access_token === "string"
-    && typeof value.chatgpt_account_id === "string"
-    && typeof value.expires_at === "string";
+  return (
+    isRecord(value) &&
+    value.status === "ok" &&
+    typeof value.account_id === "string" &&
+    typeof value.access_token === "string" &&
+    typeof value.chatgpt_account_id === "string" &&
+    typeof value.expires_at === "string"
+  );
 }
 
 function isWait(value: unknown): value is Wait {
-  return isRecord(value)
-    && value.status === "wait"
-    && typeof value.code === "string"
-    && (typeof value.next_retry_at === "string" || value.next_retry_at === null)
-    && typeof value.retry_after_seconds === "number";
+  return (
+    isRecord(value) &&
+    value.status === "wait" &&
+    typeof value.code === "string" &&
+    (typeof value.next_retry_at === "string" || value.next_retry_at === null) &&
+    typeof value.retry_after_seconds === "number"
+  );
 }
 
 export class BrokerClient {
@@ -62,7 +66,8 @@ export class BrokerClient {
     } catch {
       throw new Error("CODEX_BROKER_URL must be a valid URL");
     }
-    if (this.url.protocol !== "https:") throw new Error("CODEX_BROKER_URL must use HTTPS");
+    if (this.url.protocol !== "https:")
+      throw new Error("CODEX_BROKER_URL must use HTTPS");
   }
 
   async route(input: RouteInput, signal?: AbortSignal): Promise<Lease | Wait> {
@@ -95,17 +100,27 @@ export class BrokerClient {
           response.on("error", reject);
           response.on("end", () => {
             try {
-              const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              const value: unknown = JSON.parse(
+                Buffer.concat(chunks).toString("utf8"),
+              );
               if (response.statusCode === 200 && isLease(value)) resolve(value);
-              else if (response.statusCode === 429 && isWait(value)) resolve(value);
-              else reject(new Error(`Invalid broker response (${response.statusCode ?? "unknown"})`));
+              else if (response.statusCode === 429 && isWait(value))
+                resolve(value);
+              else
+                reject(
+                  new Error(
+                    `Invalid broker response (${response.statusCode ?? "unknown"})`,
+                  ),
+                );
             } catch (error) {
               reject(error);
             }
           });
         },
       );
-      req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("Broker request timed out")));
+      req.setTimeout(REQUEST_TIMEOUT_MS, () =>
+        req.destroy(new Error("Broker request timed out")),
+      );
       req.on("error", reject);
       req.end(body);
     });
@@ -114,6 +129,7 @@ export class BrokerClient {
 
 export function failureKind(status: number, text = ""): string | undefined {
   if (status === 401 || status === 403) return "auth";
-  if (status === 429 || /quota|rate.?limit|usage.?limit/i.test(text)) return "quota";
+  if (status === 429 || /quota|rate.?limit|usage.?limit/i.test(text))
+    return "quota";
   return undefined;
 }

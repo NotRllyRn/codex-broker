@@ -128,7 +128,11 @@ def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
     old = Database(database_path, old_migrations)
     old.start()
     instance = asyncio.run(
-        old.call(lambda connection: str(connection.execute("SELECT instance_uuid FROM instance_metadata").fetchone()[0]))
+        old.call(
+            lambda connection: str(
+                connection.execute("SELECT instance_uuid FROM instance_metadata").fetchone()[0]
+            )
+        )
     )
     vault = Vault(decode_key(key), instance)
     access = jwt(
@@ -142,7 +146,11 @@ def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
         envelope = vault.encrypt("internal-old", credential(access))
         connection.execute(
             "INSERT INTO vault_state VALUES(1,?,?,?,1)",
-            (vault.key_id, b"legacy", vault.seal_text("vault-sentinel", f"windowkeeper:{instance}")),
+            (
+                vault.key_id,
+                b"legacy",
+                vault.seal_text("vault-sentinel", f"windowkeeper:{instance}"),
+            ),
         )
         connection.execute(
             "INSERT INTO accounts VALUES('internal-old','public-old','Existing','chatgpt','CHATGPT_DEVICE_CODE','CHATGPT_DEVICE_CODE',NULL,1,'ACTIVE',1,1,NULL)"
@@ -197,6 +205,8 @@ def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
         assert response.json()["access_token"] == access
         columns = client.portal.call(
             state.database.call,
-            lambda connection: [row[1] for row in connection.execute("PRAGMA table_info(account_state)")],
+            lambda connection: [
+                row[1] for row in connection.execute("PRAGMA table_info(account_state)")
+            ],
         )
         assert "activation_state" not in columns

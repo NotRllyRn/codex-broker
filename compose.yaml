@@ -26,7 +26,13 @@ services:
       - /run/windowkeeper:uid=10001,gid=10001,mode=0700,size=512m
       - /tmp:uid=10001,gid=10001,mode=0700,size=128m
     healthcheck:
-      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1', 8787), 2).close()"]
+      test:
+        [
+          CMD,
+          python,
+          -c,
+          "import socket; socket.create_connection(('127.0.0.1', 8787), 2).close()",
+        ]
       interval: 30s
       timeout: 3s
       retries: 3

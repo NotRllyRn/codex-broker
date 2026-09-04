@@ -34,33 +34,55 @@
 </section>
 <section class="detail-section">
   <h2>Client access keys</h2>
-  <p class="subtle">Each Pi or Hermes installation should have its own revocable key.</p>
+  <p class="subtle">
+    Each Pi or Hermes installation should have its own revocable key.
+  </p>
   {% if issued_key %}
   <div class="service-alert" role="status">
     <strong>Copy this key now. It will not be shown again.</strong>
     <code>{{ issued_key.token }}</code>
   </div>
-  {% endif %}
-  {% if client_keys %}
+  {% endif %} {% if client_keys %}
   <div class="data-list">
     {% for key in client_keys %}
     <article>
-      <strong>{{ key.name }}</strong><span>{{ key.key_prefix }}… | {{ 'Revoked' if key.revoked_at_ms else 'Active' }}</span>
-      <small>Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms or 'never' }}</small>
-      <form method="post" action="/settings/client-keys/{{ key.key_id }}/{{ 'delete' if key.revoked_at_ms else 'revoke' }}">
+      <strong>{{ key.name }}</strong
+      ><span
+        >{{ key.key_prefix }}… | {{ 'Revoked' if key.revoked_at_ms else 'Active'
+        }}</span
+      >
+      <small
+        >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms or
+        'never' }}</small
+      >
+      <form
+        method="post"
+        action="/settings/client-keys/{{ key.key_id }}/{{ 'delete' if key.revoked_at_ms else 'revoke' }}"
+      >
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-        <button class="{{ 'danger-button' if key.revoked_at_ms else 'quiet-button' }}" type="submit">
+        <button
+          class="{{ 'danger-button' if key.revoked_at_ms else 'quiet-button' }}"
+          type="submit"
+        >
           {{ 'Delete' if key.revoked_at_ms else 'Revoke' }}
         </button>
       </form>
     </article>
     {% endfor %}
   </div>
-  {% else %}<p class="subtle">No client keys exist.</p>{% endif %}
+  {% else %}
+  <p class="subtle">No client keys exist.</p>
+  {% endif %}
   <form class="account-form" method="post" action="/settings/client-keys">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
     <label for="client_key_name">Client name</label>
-    <input id="client_key_name" name="name" maxlength="80" required placeholder="Pi desktop" />
+    <input
+      id="client_key_name"
+      name="name"
+      maxlength="80"
+      required
+      placeholder="Pi desktop"
+    />
     <button class="primary-button" type="submit">Create key</button>
   </form>
 </section>
@@ -111,7 +133,9 @@
           <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
             class="danger-button"
             type="submit"
-          >Delete</button>
+          >
+            Delete
+          </button>
         </form>
       </div>
     </article>

@@ -684,7 +684,6 @@ def test_latest_auth_export_survives_restart(tmp_path: Path) -> None:
         assert json.loads(persisted.content)["tokens"]["refresh_token"] == "fork-refresh-2"  # noqa: S105
 
 
-
 def test_authentication_csrf_and_readiness_fail_closed(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path / "data",

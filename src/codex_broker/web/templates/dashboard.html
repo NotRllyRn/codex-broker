@@ -1,6 +1,5 @@
 {% extends "base.html" %} {% block title %}Accounts | Codex Broker{% endblock %}
-{% block content %}
-{% if not vault_configured %}
+{% block content %} {% if not vault_configured %}
 <section class="service-alert" role="alert">
   <strong>Vault key required.</strong> Monitoring remains visible, but account
   enrollment and credential operations are unavailable.
@@ -11,7 +10,8 @@
     <p class="kicker">Credential broker</p>
     <h1>Codex accounts, one authority.</h1>
     <p class="intro-copy">
-      Monitor account capacity and issue short-lived in-memory leases to trusted clients.
+      Monitor account capacity and issue short-lived in-memory leases to trusted
+      clients.
     </p>
   </div>
   <div class="intro-actions">

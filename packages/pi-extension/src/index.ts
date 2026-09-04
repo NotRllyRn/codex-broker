@@ -1,9 +1,22 @@
 import { randomUUID } from "node:crypto";
 import { streamSimple as streamCodex } from "@earendil-works/pi-ai/api/openai-codex-responses";
-import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  Api,
+  Context,
+  Model,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
-import { BrokerClient, failureKind, type Lease, type RouteInput } from "./client.js";
+import {
+  BrokerClient,
+  failureKind,
+  type Lease,
+  type RouteInput,
+} from "./client.js";
 
 const STATUS_ID = "codex-broker";
 
@@ -45,7 +58,10 @@ export default function codexBroker(pi: ExtensionAPI): void {
   const broker = (): BrokerClient => (client ??= clientFromEnvironment());
   const show = (ctx: ExtensionContext): void => {
     const label = lease ? `broker: ${lease.account_id}` : "broker: waiting";
-    ctx.ui.setStatus(STATUS_ID, ctx.ui.theme.fg(lease ? "success" : "warning", label));
+    ctx.ui.setStatus(
+      STATUS_ID,
+      ctx.ui.theme.fg(lease ? "success" : "warning", label),
+    );
   };
 
   const route = async (
@@ -67,7 +83,10 @@ export default function codexBroker(pi: ExtensionAPI): void {
     }
   };
 
-  const reroute = async (ctx: ExtensionContext, kind: string): Promise<boolean> => {
+  const reroute = async (
+    ctx: ExtensionContext,
+    kind: string,
+  ): Promise<boolean> => {
     if (!lease || retried || meaningfulOutput) return false;
     retried = true;
     const replacement = await route(
@@ -92,11 +111,11 @@ export default function codexBroker(pi: ExtensionAPI): void {
       options?: SimpleStreamOptions,
     ) => {
       if (!lease) throw new Error("Codex Broker did not issue a lease");
-      return streamCodex(
-        model as Model<"openai-codex-responses">,
-        context,
-        { ...options, apiKey: lease.access_token, maxRetries: 0 },
-      );
+      return streamCodex(model as Model<"openai-codex-responses">, context, {
+        ...options,
+        apiKey: lease.access_token,
+        maxRetries: 0,
+      });
     },
   });
 
@@ -134,7 +153,8 @@ export default function codexBroker(pi: ExtensionAPI): void {
   });
 
   pi.on("message_end", async (event, ctx) => {
-    if (!codexActive || event.message.role !== "assistant" || meaningfulOutput) return;
+    if (!codexActive || event.message.role !== "assistant" || meaningfulOutput)
+      return;
     const kind = failureKind(0, event.message.errorMessage ?? "");
     if (kind && (await reroute(ctx, kind))) retryQueued = true;
   });
@@ -146,7 +166,8 @@ export default function codexBroker(pi: ExtensionAPI): void {
     pi.sendMessage(
       {
         customType: "codex-broker-retry",
-        content: "The broker changed accounts. Retry the interrupted request once.",
+        content:
+          "The broker changed accounts. Retry the interrupted request once.",
         display: true,
       },
       { deliverAs: "followUp", triggerTurn: true },
@@ -161,7 +182,9 @@ export default function codexBroker(pi: ExtensionAPI): void {
     description: "Show the current Codex Broker route",
     handler: async (_args, ctx) => {
       ctx.ui.notify(
-        lease ? `Codex Broker account: ${lease.account_id}` : "Codex Broker has no active route",
+        lease
+          ? `Codex Broker account: ${lease.account_id}`
+          : "Codex Broker has no active route",
         "info",
       );
     },
