@@ -8,7 +8,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
@@ -282,6 +282,24 @@ def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
             json={"session_id": "session", "turn_id": "turn"},
         )
         assert response.json()["access_token"] == access
+        assert dashboard[0]["auth_state"] == "VERIFIED"
+
+        marker = Path(settings.codex_executable).with_suffix(".rotate-on-rate-limits")
+        marker.touch()
+
+        async def checkpoint() -> dict[str, Any]:
+            account = await state.services._account_row("public-old")
+            await state.services._run_managed(
+                account, lambda runtime: runtime.adapter.rate_limits()
+            )
+            payload = await state.services._credential_payload("internal-old")
+            return cast(dict[str, Any], json.loads(state.services.vault.auth_json(payload)))
+
+        try:
+            assert client.portal.call(checkpoint)["checkpoint"] == "rate-limits"
+        finally:
+            marker.unlink(missing_ok=True)
+
         columns = client.portal.call(
             state.database.call,
             lambda connection: [
