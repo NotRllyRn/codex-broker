@@ -175,6 +175,37 @@ async def test_router_rejects_exhaustion_without_reset(tmp_path: Path) -> None:
         await database.close()
 
 
+@pytest.mark.parametrize(
+    "condition", ("disabled", "deleted", "auth", "worker", "credential")
+)
+@pytest.mark.asyncio
+async def test_router_skips_ineligible_accounts(tmp_path: Path, condition: str) -> None:
+    database = Database(tmp_path / "broker.db")
+    database.start()
+
+    def make_ineligible(connection: sqlite3.Connection) -> None:
+        if condition == "disabled":
+            connection.execute("UPDATE accounts SET enabled=0")
+        elif condition == "deleted":
+            connection.execute("UPDATE accounts SET deleted_at_ms=1")
+        elif condition == "auth":
+            connection.execute("UPDATE account_state SET auth_state='AUTH_REQUIRED'")
+        elif condition == "worker":
+            connection.execute("UPDATE account_state SET worker_state='CREDENTIAL_IN_USE'")
+        else:
+            connection.execute("DELETE FROM credential_bundles")
+
+    try:
+        await database.transaction(seed)
+        await database.transaction(make_ineligible)
+        router = Router(database, Services(), cast(Any, Authority()))
+        with pytest.raises(BrokerError) as caught:
+            await router.route("key", RouteRequest("session", "turn"))
+        assert caught.value.code == "POOL_RESET_UNKNOWN"
+    finally:
+        await database.close()
+
+
 @pytest.mark.asyncio
 async def test_router_returns_earliest_padded_pool_reset(tmp_path: Path) -> None:
     database = Database(tmp_path / "broker.db")
