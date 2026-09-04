@@ -725,44 +725,30 @@ The archived source has no uploaded `hermes-codex-pool` plugin to evolve. Native
 
 Its current implementation imports internal Hermes modules such as `agent.credential_pool` / `hermes_cli.auth`, prompts for both access and refresh tokens, and creates native `PooledCredential` rows containing the refresh token. That is exactly the ownership model this rewrite removes.
 
-Current upstream Hermes is more promising than when that plugin was designed:
+The static audit found that a plugin-only implementation is **not safe** in this snapshot:
 
-- `pre_llm_call` fires once per user turn;
-- current plugin middleware supports `llm_request`, which can replace effective provider kwargs before provider execution;
-- `llm_execution` can wrap the provider call;
-- middleware receives `session_id`, `turn_id`, provider, model, and API mode;
-- Hermes documents native credential rotation and warns that rotating credentials resets prompt cache.
+- `pre_llm_call` and request middleware are fail-open;
+- `llm_execution.next_call` is deliberately single-use, so it cannot perform replacement-account replay;
+- initialization still resolves Hermes's native Codex OAuth pool unless an explicit key is supplied;
+- the built-in HTTP 401 branch invokes Hermes's own Codex credential refresh.
 
-That makes a clean plugin **plausible**, but two behaviors must be proved against current Hermes before committing to the package: avoiding Hermes's own Codex OAuth resolver at initialization, and safely retrying/suspending after 401/429 without private monkey-patching.
+Therefore, `docs/integrations/hermes-agent-patch.md` specifies a small fail-closed core patch against exact audited source paths. No Hermes package is added here.
 
-## Phase 0 Hermes compatibility spike — MUST PASS IN THE LIVE HERMES CHECKOUT
+## External Hermes core patch
 
-Source audit shows that `pre_llm_call` is once per turn, `llm_request` can replace `extra_headers`, `api_request_error` observes each failure, and `transform_api_error_classification` can steer the built-in retry classifier. However, middleware is fail-open and `llm_execution.next_call` is single-use, so safe lease replacement/resume cannot be certified from static source alone.
+The external implementer must:
 
-The external implementer must build a disposable proof. It passes only if all four are true using public plugin/provider APIs:
+1. add `agent/codex_broker.py`, a synchronous HTTPS client and in-memory per-turn lease manager;
+2. change all `openai-codex` branches in `hermes_cli/runtime_provider.py` to use a non-secret initialization sentinel in broker mode rather than native credentials;
+3. attach the manager in `agent/agent_init.py` and disable the native Codex credential pool;
+4. obtain one lease per `(session_id, turn_id)` in `agent/conversation_loop.py`, apply it by atomically rebuilding the Codex client, and reuse it for inner tool-loop requests;
+5. use the existing `on_first_delta` callback as the no-replay boundary;
+6. replace a pre-output 401/403/quota failure at most once through the existing outer retry loop;
+7. wait on the broker's exact pool-reset timestamp and remain interruptible;
+8. discard access-token state at every turn exit and preserve only the non-secret preferred account ID;
+9. skip `_try_refresh_codex_client_credentials()` and every native Codex pool read/write while broker mode is active.
 
-1. Hermes can initialize and run Codex without owning a real refresh token.
-2. A plugin can inject the broker-issued `Authorization` token (and ChatGPT account identity if required) into the actual `codex_responses` request.
-3. After 401/quota failure, Hermes can obtain a replacement lease and retry through normal middleware/runtime behavior **without replaying an already-started streamed/tool side effect unsafely**.
-4. `POOL_EXHAUSTED` can wait until `next_retry_at` and then resume the turn without patching Hermes core/private internals.
-
-If any requirement needs imports from private credential internals or monkey-patching, stop. If a small Hermes core seam is required, document the proposed upstream patch in `docs/integrations/hermes-agent-patch.md`; do not add an `adapters/hermes/` package here.
-
-## If the spike passes: patch design for the external Hermes repository
-
-Suggested plugin name: `codex-broker-hermes`
-
-Workflow:
-
-1. `pre_llm_call` runs once for the user turn and obtains a broker lease, keyed in memory by `session_id + turn_id`.
-2. `llm_request` middleware injects the current lease into the effective Codex request immediately before provider execution.
-3. No refresh token is persisted in Hermes.
-4. If an upstream quota/auth error is surfaced through a public retry/middleware boundary, report it to `/route`, replace the in-memory lease, and allow Hermes's normal retry path to re-enter request middleware.
-5. If broker says all exhausted, wait until `next_retry_at`, fetch a new lease, then allow the normal retry to continue.
-6. End of turn: discard turn-specific lease state except the non-secret preferred broker account ID/session affinity hint.
-7. New user turn: always call the broker again.
-
-Do not port the current plugin's account add/list/rename/remove credential-pool commands; Codex Broker's UI owns all of that.
+The patch document pins the source archive hash, lists concrete methods and source locations, defines tests, and provides a twelve-step live acceptance procedure. Ship only after those tests pass against the live Hermes revision.
 
 ## Existing Hermes plugin files to retire
 
