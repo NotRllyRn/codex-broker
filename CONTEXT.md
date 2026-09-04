@@ -1,25 +1,29 @@
-# Windowkeeper glossary
+# Codex Broker glossary
 
 ## Account
 
-A locally named representation of one authenticated ChatGPT identity and its usage history, scheduling, and activation state.
+A locally named authenticated ChatGPT identity with an isolated managed credential and usage history.
 
 ## Managed credential bundle
 
-The single mutable credential lineage Windowkeeper uses for an account. Codex owns normal OAuth refresh behavior; Windowkeeper treats `auth.json` as opaque state and checkpoints it after every authenticated runtime.
+The only mutable credential lineage for an account. Codex Broker treats `auth.json` as opaque state and checkpoints it after every broker-owned authenticated runtime. Pi, Hermes, and other clients never receive its refresh token.
 
 ## Downloadable credential bundle
 
-An externally owned `auth.json` snapshot issued during enrollment when the account has no export. Windowkeeper never uses, refreshes, or replaces an existing export during reauthentication or normal operations. Its independent renewability is not guaranteed.
-
-## Enrollment
-
-Creation of an account from one ChatGPT approval. Windowkeeper durably captures the source, advances the managed lineage, and attempts one separate export snapshot without risking rollback of the managed credential.
-
-## Reauthentication
-
-Replacement and verification of the managed credential from a new ChatGPT approval. An existing export remains unchanged.
+An immutable, externally owned `auth.json` snapshot created during enrollment when no export exists. Codex Broker never uses, refreshes, or replaces it during normal operation. Its independent renewability is not guaranteed.
 
 ## Credential checkpoint
 
-The quiesce, opaque capture, encryption, and atomic promotion performed before an authenticated runtime is deleted. Failures quarantine runtime evidence rather than discard potentially newer credentials.
+Quiesce the Codex runtime, capture `auth.json`, encrypt it, and atomically promote it before deleting plaintext. Failure quarantines runtime evidence.
+
+## Lease
+
+An in-memory access token, ChatGPT account ID, account public ID, and expiry returned to an authenticated machine client. A lease never includes a refresh token.
+
+## Pool wait
+
+A route response stating that every eligible account is exhausted and giving the exact earliest reset time plus configured padding.
+
+## Preferred account
+
+A non-secret account public ID sent by a client to preserve prompt-cache affinity. The broker still runs eligibility checks for every new user turn.

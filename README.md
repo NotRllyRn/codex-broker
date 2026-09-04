@@ -1,96 +1,102 @@
-# Codex Windowkeeper
+# Codex Broker
 
-Windowkeeper is a single-instance supervisor for independently authenticated ChatGPT/Codex accounts. It reads authoritative short and weekly usage windows from the managed Codex app-server, waits while either limit is exhausted, schedules one evidence-backed activation when usage returns, and makes genuinely ambiguous submissions visible instead of retrying blindly.
+Codex Broker is a central Codex authentication, quota, and account-routing service. It owns the only mutable OAuth credential for each account, tracks short and weekly usage windows, and leases access tokens to trusted LAN clients without exposing refresh tokens.
 
 ## What ships
 
-- Isolated runtime and encrypted managed credential lineage per account.
-- One-approval enrollment that creates a managed credential and one externally owned `auth.json` export snapshot.
-- Device-code sign-in (recommended) and managed browser OAuth.
-- Opaque `auth.json` checkpointing after every authenticated Codex runtime, including failed operations.
-- Immediate first-window activation, one in-flight activation per account, automatic short/weekly limit recovery, and reported-reset scheduling with a duration fallback when an idle reset moves forward on every poll.
-- Activation discovers account-available models and pins the cheapest officially priced text model at its lowest effort and standard service tier.
-- Five switchable dashboard compositions—Orbit, Ledger, Rail, Timeline, and Focus—in light and dark themes.
-- Durable operations, incidents, SSE updates, sanitized JSONL logs, and numbered, account-specific generic/Slack/Discord webhooks with causes and recovery steps.
-- SQLite, AES-256-GCM, opaque administrator sessions, CSRF, recent-password confirmation, and managed Codex availability checks.
+- Encrypted, isolated credential lineage per ChatGPT/Codex account.
+- Device-code and managed browser sign-in.
+- Opaque `auth.json` checkpointing after every broker-owned authenticated runtime.
+- Stable account routing with preferred-account affinity and exact pool-reset responses.
+- Hashed, revocable client keys for the machine API.
+- A small Pi extension under [`packages/pi-extension`](packages/pi-extension/README.md).
+- An external Hermes implementation specification under [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md).
+- One Orbit dashboard, persistent administrator sessions, CSRF protection, incidents, webhooks, and sanitized logs.
+- Direct TLS for same-network deployment.
 
-Windowkeeper does **not** pool quota, route work between accounts, expose a public API, or call undocumented usage endpoints.
+Codex Broker is a control plane, not an inference proxy. Clients call Codex directly with short-lived leased access tokens. Revoking a broker key prevents future leases but cannot revoke an already-issued upstream token before its expiry.
+
+The former automatic activation/model-turn scheduler is intentionally removed. Broker-owned model turns spend quota, complicate credential mutation, and are not required for routing.
 
 ## Local development
 
-Requires Python 3.12+, `uv`, and a separately installed Codex executable.
+Requires Python 3.12+, `uv`, and a compatible `codex` executable.
 
 ```bash
 uv sync --all-extras
 uv run ruff check src tests
-uv run mypy src tests
+uv run pyright src tests
 uv run pytest
 ```
 
-Create a private repository-local `.env` file—no shell exports required:
+The historical `WINDOWKEEPER_*` configuration prefix and storage names remain compatibility identifiers so existing installations upgrade without relogin.
 
 ```bash
 cp .env.example .env
 chmod 600 .env
-uv run windowkeeper vault generate-key  # paste the result into WINDOWKEEPER_VAULT_KEY
-# set WINDOWKEEPER_ADMIN_PASSWORD in .env, then:
-uv run windowkeeper serve
+uv run codex-broker vault generate-key
+# Set WINDOWKEEPER_VAULT_KEY and WINDOWKEEPER_ADMIN_PASSWORD in .env.
+uv run codex-broker serve
 ```
 
-Windowkeeper loads `.env` automatically. The file is ignored by Git and excluded from Docker build contexts; never commit it.
+Loopback HTTP is allowed for development. Non-loopback binding requires a TLS certificate and private key.
 
-A service is ready once the vault and administrator password are configured and the managed Codex executable starts successfully.
+## Secure LAN deployment
 
-## Hardened Docker Compose
-
-1. Run `cp .env.example .env && chmod 600 .env`.
-2. Fill in the administrator password and generated vault key.
-3. Run `docker compose up --build -d`. Compose reads `.env` automatically.
+Generate a local CA, server certificate, administrator password, vault key, and `.env`, then start Compose:
 
 ```bash
-cp .env.example .env
-chmod 600 .env
-uv run windowkeeper vault generate-key  # paste into .env
+scripts/bootstrap.sh 192.168.1.20
 docker compose up --build -d
 ```
 
-The image installs and manages Codex automatically. Its entrypoint uses only `CHOWN`, `SETGID`, and `SETUID` to initialize mounted-volume ownership, immediately drops to UID/GID 10001, and runs with a read-only root filesystem, no-new-privileges, bounded tmpfs runtime trees, and a persistent `/data` volume. `/health/live` checks the process; `/health/ready` also requires the vault, administrator password, and working Codex executable.
+Install `deployment/certs/ca.crt` in every client host's trust store, or configure the Pi/Hermes CA-file variable. Never disable certificate verification. The service communicates over local IP addresses, but TLS still prevents passive credential capture and detects man-in-the-middle endpoints.
 
-### OAuth deployment modes
+Create a client key and copy the secret once:
 
-- `manual` (default): device code works from Docker/NAS/SSH. Browser sign-in displays a one-time authorization URL, then securely accepts the exact localhost callback URL in the authenticated UI. OAuth query values are never persisted or logged.
-- `host-loopback`: Linux-only automatic browser callback mode. Start with `docker compose -f compose.host-network.yaml up --build`; keep the service bound to loopback or behind a trusted reverse proxy.
-- `disabled`: browser login is unavailable; device code remains available.
+```bash
+codex-broker client-key create "Pi desktop"
+```
 
-Only one browser attempt may own the callback-port set. Device-code attempts remain isolated and obey the configured authentication concurrency bound.
+Machine endpoints:
+
+- `POST /api/v1/route` — select an eligible account and return an access-only lease, or an exact wait response.
+- `GET /api/v1/health` — authenticated broker readiness.
+
+See [`plan.md`](plan.md) for the API contract and [`OPERATIONS.md`](OPERATIONS.md) for backup, recovery, upgrades, and incident response.
+
+## Pi
+
+```bash
+pi install ./packages/pi-extension
+export CODEX_BROKER_URL=https://192.168.1.20:8787
+export CODEX_BROKER_CLIENT_KEY=cbk_...
+export CODEX_BROKER_CA_CERT=/path/to/ca.crt  # if the CA is not in system trust
+```
+
+The extension requests one in-memory lease per user turn and never stores refresh tokens or complete `auth.json` payloads.
+
+## Hermes
+
+Hermes cannot be safely integrated as a plugin against the audited snapshot because its relevant hooks fail open and native Codex refresh would conflict with broker ownership. Apply and live-test [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md) in the actual Hermes checkout. Do not deploy the integration until its acceptance gate passes.
 
 ## Operations
 
-See [OPERATIONS.md](OPERATIONS.md) for initialization, OAuth modes, backup/restore, reverse-proxy configuration, incident response, upgrades, and rollback. Release operators must also complete [RELEASE_GATES.md](RELEASE_GATES.md).
-
 ```bash
-windowkeeper --version
-windowkeeper version --json
-windowkeeper health --json
-windowkeeper status --json
-windowkeeper doctor
-windowkeeper backup --output /secure/backups/windowkeeper.sqlite
-windowkeeper restore --input /secure/backups/windowkeeper.sqlite --confirm RESTORE
-windowkeeper vault rotate --old-key-file /secure/old.key --new-key-file /secure/new.key
-windowkeeper password-set
-windowkeeper vault verify --key-file /secure/current.key
+codex-broker --version
+codex-broker health --json
+codex-broker status --json
+codex-broker doctor
+codex-broker backup --output /secure/backups/windowkeeper.sqlite
+codex-broker restore --input /secure/backups/windowkeeper.sqlite --confirm RESTORE
+codex-broker vault rotate --old-key-file /secure/old.key --new-key-file /secure/new.key
+codex-broker password-set
 ```
 
-Vault rotation is offline, all-or-nothing, and re-encrypts managed credentials, downloadable auth bundles, and webhook URLs/signing secrets before writing the new key file. Replace the configured key file atomically only after the command succeeds.
-
-The dashboard provides password-reauthenticated download of the enrollment `auth.json` snapshot, account enable/disable, one-approval reauthentication, typed-confirmation deletion, manual refresh/activation, operation history, incident state, webhook management, log filtering, and sanitized JSONL download. Normal operations advance only the managed credential and never replace the externally owned export. Activation records the selected model, reasoning effort, standard service tier, and pricing verification date in its durable operation result.
+The administrator can enroll, reauthenticate, enable, disable, refresh, and delete accounts; download the immutable manual export; manage client keys and webhooks; inspect operations/incidents; and export sanitized logs. Password prompts are limited to sign-in and password change. Other browser mutations require the administrator session and CSRF token.
 
 ## Security boundary
 
-The vault key must not live in SQLite or the persistent data directory. Runtime credential files exist only under the runtime tmpfs and are removed after their credential state is safely checkpointed. A failed checkpoint quarantines the runtime instead of deleting potentially newer credentials. URL query strings, callback values, device codes, tokens, authorization headers, and known token-shaped strings are redacted before logs, SSE, API responses, incidents, or webhooks.
+The vault key must stay outside SQLite and the persistent data directory. Runtime plaintext exists only in isolated temporary directories and is removed after safe checkpointing. Failed checkpoints quarantine the runtime rather than deleting potentially newer credentials. Tokens, authorization headers, callback values, device codes, and URL query strings are redacted.
 
-Windowkeeper trusts its managed Codex child process with plaintext credentials while that isolated process is running. It does not protect against a compromised host, root user, or malicious Codex binary.
-
-## UI evaluation
-
-Use the **View** selector in the header to switch among all five mockups without losing filters. Use the adjacent theme control for system, light, or dark mode. Both choices are stored locally in the browser; the server view-model and functionality remain identical.
+Codex Broker does not protect against a compromised host, root user, malicious Codex binary, or a trusted client that exfiltrates its leased access token.

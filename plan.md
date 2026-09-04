@@ -19,7 +19,7 @@ Rename **Windowkeeper** to **Codex Broker**.
 - Short description: **Central Codex auth, quota, and account-routing service.**
 - Optional tagline: **One credential authority for every Codex client.**
 
-The product stops being primarily a usage-window supervisor and becomes the **single authority for Codex account credentials**. The existing window-activation feature stays, but becomes one capability inside the broker rather than the product identity.
+The product stops being a usage-window activation supervisor and becomes the **single authority for Codex account credentials**. The former automatic activation/model-turn feature is removed: it spends quota, adds an unnecessary token-mutating runtime, and is not needed for usage tracking or routing.
 
 The architectural invariant is:
 
@@ -47,7 +47,8 @@ YAGNI is a hard requirement for this rewrite. Do **not** add:
 - quota reservations or predicted token accounting;
 - automatic HA/failover of the broker;
 - refresh tokens in Pi or Hermes;
-- separate Git repositories nested inside the main repository.
+- separate Git repositories nested inside the main repository;
+- automatic activation/model turns or reset-time model submissions.
 
 A full inference proxy would make Codex Broker own SSE/streaming, cancellation, backpressure, request replay semantics, and upstream protocol changes. Pi Relay already demonstrates why post-output failover is application-specific. The broker should remain a **control plane**, not become the data plane unless a later requirement makes that necessary.
 
@@ -66,7 +67,7 @@ A full inference proxy would make Codex Broker own SSE/streaming, cancellation, 
       +-- encrypted ACTIVE credential B     |
       +-- encrypted ACTIVE credential C     |
       +-- usage/reset state                 |
-      +-- activation scheduler              |
+      +-- stable account router             |
       +-- client access keys                |
       |                                     |
       +-- returns ACCESS token only --------+
@@ -94,7 +95,7 @@ codex-broker/
 │   ├── credential_authority.py    # NEW: only refresh-token owner
 │   ├── router.py                  # NEW: account selection + retry timestamps
 │   ├── client_auth.py             # NEW: machine/client access keys
-│   └── ...                        # existing service, UI, scheduler, vault, etc.
+│   └── ...                        # existing service, UI, usage, vault, etc.
 ├── packages/
 │   └── pi-extension/              # small Pi 0.84.4 extension package
 ├── tests/
@@ -394,7 +395,6 @@ The current code already has useful invariants:
 - checkpointing changed `auth.json` back into encrypted storage;
 - one unique `ACTIVE` credential bundle per account;
 - usage polling;
-- activation scheduling;
 - recovery around managed credentials.
 
 Preserve those.
@@ -403,7 +403,6 @@ Refactor credential payload/refresh/promotion helpers behind `CredentialAuthorit
 
 - periodic usage refresh;
 - manual usage refresh;
-- window activation;
 - client token refresh after expiry/401;
 - upstream account verification/re-login checkpointing.
 
@@ -845,11 +844,11 @@ Useful high-level fields:
 - next pool reset if all are exhausted;
 - client key count/last-used activity link.
 
-Existing account cards continue showing usage and activation state.
+Existing account cards continue showing authentication and usage state. Remove activation state, next-activation controls, and ambiguity acknowledgment.
 
 ## Account detail
 
-Keep existing usage/auth/activation detail. Remove password prompts. Rename re-login wording to `Sign in again`.
+Keep existing usage/auth detail. Remove activation controls and password prompts. Rename re-login wording to `Sign in again`.
 
 The auth.json download remains available to the logged-in administrator but is visually identified as a **manual external export**, not something Pi/Hermes should consume.
 
@@ -875,7 +874,7 @@ Revoked key must fail `/api/v1/route` immediately.
 
 New opening:
 
-> **Codex Broker** is a central Codex authentication, quota, and account-routing service. It keeps the only mutable copy of each account's OAuth credential, tracks Codex usage windows, routes trusted local clients to an available account, and preserves Windowkeeper's automatic window-activation behavior.
+> **Codex Broker** is a central Codex authentication, quota, and account-routing service. It keeps the only mutable copy of each account's OAuth credential, tracks Codex usage windows, and routes trusted local clients to an available account.
 
 README sections:
 
@@ -886,7 +885,7 @@ README sections:
 5. Create client access key.
 6. Install Pi adapter.
 7. Hermes adapter only if compatibility-tested/shipped.
-8. Existing window activation behavior.
+8. Removal of legacy automatic activation.
 9. Backup/recovery.
 10. Security limitations, especially issued access-token revocation.
 
@@ -923,21 +922,22 @@ Create a fixture representing an actual pre-rewrite Windowkeeper installation:
 
 Test that Codex Broker:
 
-1. applies 007;
-2. verifies old sentinel;
-3. decrypts all old ACTIVE credentials;
-4. lists accounts;
-5. serves an access-token lease;
-6. performs a managed checkpoint;
-7. does not request re-login.
+1. applies migrations 007-009;
+2. removes activation tables/state without touching account or credential rows;
+3. verifies the old sentinel;
+4. decrypts all old ACTIVE credentials;
+5. lists accounts;
+6. serves an access-token lease;
+7. performs a managed checkpoint;
+8. does not request re-login.
 
-Also test rollback compatibility of the additive schema where practical.
+Migration 009 is destructive only to removed activation history. Rollback to software expecting that schema requires restoring its automatic pre-v9 backup.
 
 ## Credential concurrency tests
 
 - 50 concurrent `/route` calls for one account with a comfortably valid access token => no mutation/refresh.
 - 50 concurrent `/route` calls when token is near expiry => exactly **one** refresh/checkpoint lineage mutation; every caller receives the newest token.
-- concurrent usage poll + activation + client refresh => serialized mutation; never two refresh-token writers.
+- concurrent usage poll + client refresh => serialized mutation; never two refresh-token writers.
 - stale refresh/checkpoint may not overwrite a newer ACTIVE bundle.
 
 ## Routing tests
@@ -1010,6 +1010,13 @@ If any gate fails, do not ship the Hermes adapter.
 
 # 14. Implementation sequence
 
+Implementation status at the current branch:
+
+- phases 0-5 are implemented in commits `2be34cf` through `2f21b1d`;
+- the Pi package exists at `packages/pi-extension/` and passes its Node tests;
+- the Hermes work is intentionally specification-only at `docs/integrations/hermes-agent-patch.md` pending live-checkout validation;
+- phase 6 is in progress; migration 009 removes the legacy activation tables/state while preserving migrations 001-008 for upgrade compatibility.
+
 ## Phase 0 — freeze behavior + Hermes spike
 
 1. Add migration fixture/backups and record current baseline tests.
@@ -1059,12 +1066,14 @@ If any gate fails, do not ship the Hermes adapter.
 
 ## Phase 6 — cleanup/release
 
-1. Rewrite docs.
-2. Archive/delete obsolete Windowkeeper and old plugin planning docs.
-3. Verify no old product-name strings remain except intentional storage/crypto compatibility identifiers.
-4. Run full tests/type checks.
-5. Test upgrade from a copy of the real existing data volume.
-6. Cut the first Codex Broker release only after zero-relogin migration is proven.
+1. Remove automatic activation routes, services, scheduler, UI, tests, and Codex model-turn adapter methods.
+2. Apply migration 009 to drop activation tables and `account_state.activation_state` without rewriting historical migrations.
+3. Rewrite docs.
+4. Archive/delete obsolete Windowkeeper and old plugin planning docs.
+5. Verify no old product-name strings remain except intentional storage/crypto compatibility identifiers.
+6. Run full Python and Pi tests/type checks.
+7. Test upgrade from a copy of the real existing data volume.
+8. Cut the first Codex Broker release only after zero-relogin migration is proven.
 
 ---
 

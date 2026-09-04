@@ -1,39 +1,50 @@
-# Release gates
+# Codex Broker release gates
 
-Windowkeeper installs Codex as part of its image and checks it automatically at startup. This file separates repository checks from evidence that can only be produced in the release environment.
+A release is blocked unless every applicable gate passes.
 
-## Repository checks
-
-Run on every change:
+## Automated
 
 ```bash
-uv sync --all-extras --locked
+uv sync --all-extras
 uv run ruff check src tests
-uv run ruff format --check src tests
-uv run mypy src tests
-uv run pyright
+uv run pyright src tests
 uv run pytest
-uv run pip-audit
-uv build
+npm --prefix packages/pi-extension test
+npm --prefix packages/pi-extension run check
 ```
 
-The automated suite covers migrations and credential-generation preservation, singleton refusal, vault mismatch and rotation, opaque credential checkpointing after successful and failed RPCs, immutable export snapshots, fresh runtime/config policy, transport EOF handling, manual-token retirement, credential/webhook encryption, numbered provider-native webhook rendering and account context, OAuth callback validation, redaction, CSRF checks, administrator throttling, all five UI layouts, light/dark controls, immediate and rolling-reset scheduling, real Codex terminal-event parsing, paginated lowest-cost model selection, explicit standard-tier activation, activation deduplication, stale-plan cancellation, tool-item rejection, auth-failure/checkpoint incidents, reauthentication recovery, durable backup/restore, log repair/rotation, and restart reconciliation from upstream turn evidence.
+Required coverage includes:
 
-CI uses commit-SHA-pinned actions and publishes multi-architecture images with SBOM, provenance, and GitHub build attestation for version tags.
+- migrations through 009, foreign keys, idempotency, and credential-generation preservation;
+- upgrade from a pre-rename database without account relogin;
+- vault mismatch, verification, rotation, backup, and restore;
+- managed credential checkpointing after success, RPC failure, cancellation, and restart;
+- concurrent near-expiry leases producing one credential mutation;
+- stable preferred routing, failed-account exclusion, known exhaustion, exact reset padding, and unknown-reset failure;
+- client-key one-time display, hashing, authentication, revocation, and log redaction;
+- persistent administrator sessions, CSRF, logout/password-change revocation, and Orbit-only UI;
+- non-loopback TLS startup guard and trusted/untrusted CA behavior;
+- Pi one-lease-per-user-turn behavior, bounded pre-output failover, wait/resume, and no secret persistence;
+- absence of activation endpoints, scheduler code, activation tables after migration 009, and broker-owned model turns.
 
-## Release-environment evidence
+## Compatibility
 
-Do not publish a release until all of the following are recorded for the Codex package installed in the image:
+Record the pinned Codex package version, `codex --version`, executable SHA-256, App Server initialization/login/rate-limit response shapes, callback ports, and credential-file allowlist. Test upgrades independently from broker behavior changes.
 
-- Exact Codex package version, `codex --version` output, executable SHA-256, initialization schema, login methods, callback ports, credential-file allowlist, usage shape, model catalog shape, official credit-rate manifest, persistent-thread behavior, and no-tool activation profile.
-- Device-code enrollment for at least two isolated real accounts and browser OAuth in each enabled deployment mode.
-- One-time ACTIVE/EXPORT issuance evidence, including failure after managed rotation, immutable export bundle identity across normal operations, and explicit acknowledgment that independent export renewability is unsupported.
-- Correct account attribution for short and weekly usage reads.
-- The complete activation crash/fault-injection matrix, including pre-write, partial write, accepted response, notification loss, checkpoint failure, restart reconciliation, and proof that no accepted logical window is duplicated.
-- Secret-canary scans across `/data`, runtime cleanup, logs, HTML/JSON, SSE, incidents, and webhook bodies.
-- A 25-account soak covering polling, scheduling, cancellation, shutdown, process cleanup, bounded tasks, database integrity, and latency targets.
-- Chromium accessibility and responsive smoke tests for all five layouts in light and dark modes.
-- Native or emulated `linux/amd64` and `linux/arm64` image startup, readiness, device login, activation safety, backup/restore, and vulnerability scan.
-- Registry signature/attestation verification and an approved exception for any remaining non-fixable high or critical image vulnerability.
+Historical compatibility identifiers must remain stable: `windowkeeper.db`, lock/volume names, vault sentinel and HKDF/AAD strings, cookie name, and persisted webhook/log schema identifiers.
 
-Operators do not configure Codex versions or digests. Record the observed release evidence with the image; `windowkeeper doctor` and `/health/ready` must remain blocked when the managed executable is missing or cannot start.
+## Live security and deployment
+
+- Start native or emulated `linux/amd64` and `linux/arm64` images.
+- Verify readiness, device login, browser callback validation, routing lease, checkpoint, backup/restore, and vulnerability scan.
+- Capture LAN traffic and confirm credentials/client keys are not readable.
+- Confirm a wrong CA, hostname/IP SAN mismatch, expired certificate, and revoked client key fail closed.
+- Search logs, Pi state, and browser responses for access token, refresh token, `auth.json`, callback values, and client-key leakage.
+
+## Hermes gate
+
+Hermes is not shipped from this repository. Apply `docs/integrations/hermes-agent-patch.md` to the live pinned checkout and pass every automated and live acceptance step there. If its current seams cannot enforce fail-closed per-turn leases and disable native refresh-token mutation, omit the integration.
+
+## Final
+
+Test against a copy of a real existing data volume. Release only after account listing, export decryption, route leasing, and a managed credential checkpoint succeed without relogin. Do not push or publish from the implementation session.
