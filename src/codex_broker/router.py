@@ -37,6 +37,8 @@ class RouteLease:
     expires_at_ms: int
     short_remaining_percent: int | None
     weekly_remaining_percent: int | None
+    short_resets_at_ms: int | None
+    weekly_resets_at_ms: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,7 +75,7 @@ class Router:
             if request.failure_kind == "auth":
                 try:
                     lease = await self.authority.lease(failed, now, force_refresh=True)
-                    return self._route_lease(failed, lease)
+                    return self._route_lease(failed, lease, now)
                 except Exception:
                     await self._mark_auth_required(str(failed["account_id"]), now)
             await self._exclude(key_id, failed, request.failure_kind, now)
@@ -85,7 +87,7 @@ class Router:
         selected = self._select(usable, request.preferred_account_id, now)
         if selected:
             lease = await self.authority.lease(selected, now)
-            return self._route_lease(selected, lease)
+            return self._route_lease(selected, lease, now)
         next_retry = self._next_retry(rows, now)
         if next_retry is None:
             raise BrokerError(
@@ -117,9 +119,12 @@ class Router:
         return await self.database.transaction(read)
 
     @staticmethod
-    def _route_lease(account: dict[str, Any], lease: Lease) -> RouteLease:
+    def _route_lease(account: dict[str, Any], lease: Lease, now: int) -> RouteLease:
         def remaining(value: object) -> int | None:
             return max(0, min(100, 100 - value)) if isinstance(value, int) else None
+
+        def reset(value: object) -> int | None:
+            return value * 1000 if isinstance(value, int) and value * 1000 > now else None
 
         return RouteLease(
             str(account["public_token"]),
@@ -129,6 +134,8 @@ class Router:
             lease.expires_at_ms,
             remaining(account.get("short_used_percent_raw")),
             remaining(account.get("weekly_used_percent_raw")),
+            reset(account.get("short_resets_at_s")),
+            reset(account.get("weekly_resets_at_s")),
         )
 
     @staticmethod

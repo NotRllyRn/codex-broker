@@ -118,6 +118,8 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
             "expires_at": response.json()["expires_at"],
             "short_remaining_percent": 90,
             "weekly_remaining_percent": 60,
+            "short_resets_at": None,
+            "weekly_resets_at": None,
         }
         assert response.json()["expires_at"].endswith("Z")
         assert "refresh" not in response.text

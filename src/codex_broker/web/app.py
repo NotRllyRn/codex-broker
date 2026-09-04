@@ -389,6 +389,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "expires_at": iso_time(result.expires_at_ms),
                 "short_remaining_percent": result.short_remaining_percent,
                 "weekly_remaining_percent": result.weekly_remaining_percent,
+                "short_resets_at": iso_time(result.short_resets_at_ms),
+                "weekly_resets_at": iso_time(result.weekly_resets_at_ms),
             }
         )
 

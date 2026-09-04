@@ -112,6 +112,8 @@ async def test_router_preserves_preference_and_moves_after_failure(tmp_path: Pat
         assert preferred.account_label == "public-1"
         assert preferred.short_remaining_percent == 90
         assert preferred.weekly_remaining_percent is None
+        assert preferred.short_resets_at_ms == 9_999_999_999_000
+        assert preferred.weekly_resets_at_ms is None
         replacement = await router.route(
             "key",
             RouteRequest("session", "retry", failed_account_id="public-0", failure_kind="quota"),
