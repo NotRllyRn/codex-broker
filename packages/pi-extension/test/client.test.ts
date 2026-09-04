@@ -58,6 +58,11 @@ test("requires a trusted local CA and bounds responses", async () => {
           response.end(JSON.stringify({ padding: "x".repeat(70_000) }));
           return;
         }
+        if (input.turn_id === "revoked") {
+          response.writeHead(401, { "content-type": "application/problem+json" });
+          response.end(JSON.stringify({ code: "CLIENT_KEY_INVALID" }));
+          return;
+        }
         response.writeHead(200, { "content-type": "application/json" });
         response.end(JSON.stringify({
           status: "ok",
@@ -86,6 +91,10 @@ test("requires a trusted local CA and bounds responses", async () => {
     await assert.rejects(
       new BrokerClient(url, "cbk_test", cert).route({ session_id: "s", turn_id: "large" }),
       /too large/,
+    );
+    await assert.rejects(
+      new BrokerClient(url, "cbk_test", cert).route({ session_id: "s", turn_id: "revoked" }),
+      /Invalid broker response \(401\)/,
     );
   } finally {
     server.close();
