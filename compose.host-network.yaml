@@ -1,6 +1,6 @@
 # Linux-only standalone profile for automatic browser loopback OAuth.
 services:
-  windowkeeper:
+  broker:
     build: .
     init: true
     restart: unless-stopped
@@ -18,7 +18,7 @@ services:
       WINDOWKEEPER_VAULT_KEY: ${WINDOWKEEPER_VAULT_KEY:?Set WINDOWKEEPER_VAULT_KEY in .env}
       WINDOWKEEPER_ADMIN_PASSWORD: ${WINDOWKEEPER_ADMIN_PASSWORD:?Set WINDOWKEEPER_ADMIN_PASSWORD in .env}
     volumes:
-      - windowkeeper-data:/data
+      - broker-data:/data
     tmpfs:
       - /run/windowkeeper:uid=10001,gid=10001,mode=0700,size=512m
       - /tmp:uid=10001,gid=10001,mode=0700,size=128m
@@ -36,4 +36,5 @@ services:
       start_period: 15s
 
 volumes:
-  windowkeeper-data: {}
+  broker-data:
+    name: windowkeeper-data
