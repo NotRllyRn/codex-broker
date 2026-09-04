@@ -26,7 +26,6 @@ class DatabasePort(Protocol):
 class SessionSettings(Protocol):
     session_idle_minutes: int
     session_absolute_hours: int
-    reauth_minutes: int
 
 
 _hasher = PasswordHasher(time_cost=3, memory_cost=65_536, parallelism=1, hash_len=32, salt_len=16)
@@ -107,34 +106,6 @@ class AdminSecurity:
         except (VerifyMismatchError, InvalidHashError):
             return False
 
-    async def reauthenticate(self, token: str, password: str) -> None:
-        if not await self.verify_password(password):
-            raise WindowkeeperError(
-                "REAUTH_FAILED", "The administrator password was not accepted", 401
-            )
-        now = self.clock.now_ms()
-
-        def work(connection: sqlite3.Connection) -> None:
-            changed = connection.execute(
-                "UPDATE admin_sessions SET reauthenticated_at_ms=? WHERE session_id_hash=? AND revoked_at_ms IS NULL AND idle_expires_at_ms>? AND absolute_expires_at_ms>?",
-                (now, digest(token), now, now),
-            ).rowcount
-            if not changed:
-                raise WindowkeeperError("SESSION_EXPIRED", "Sign in again to continue", 401)
-
-        await self.database.transaction(work)
-
-    async def require_recent_reauth(self, token: str) -> None:
-        current = await self.session(token)
-        value = current.get("reauthenticated_at_ms") if current else None
-        if (
-            not isinstance(value, int)
-            or self.clock.now_ms() - value > self.settings.reauth_minutes * 60_000
-        ):
-            raise WindowkeeperError(
-                "REAUTH_REQUIRED", "Confirm the administrator password to continue", 403
-            )
-
     async def login(self, password: str, fingerprint: str = "") -> Session:
         if not await self.verify_password(password):
             raise WindowkeeperError("LOGIN_FAILED", "The password was not accepted", 401)
@@ -182,12 +153,20 @@ class AdminSecurity:
                 return None
             try:
                 last_seen = int(row["last_seen_at_ms"])
+                absolute_expiry = int(row["absolute_expires_at_ms"])
             except (TypeError, ValueError) as error:
                 raise RuntimeError("stored session timestamp is invalid") from error
             if now - last_seen > 60_000:
                 connection.execute(
                     "UPDATE admin_sessions SET last_seen_at_ms=?,idle_expires_at_ms=? WHERE session_id_hash=?",
-                    (now, now + self.settings.session_idle_minutes * 60_000, digest(token)),
+                    (
+                        now,
+                        min(
+                            now + self.settings.session_idle_minutes * 60_000,
+                            absolute_expiry,
+                        ),
+                        digest(token),
+                    ),
                 )
             return dict(row)
 

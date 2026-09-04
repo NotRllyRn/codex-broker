@@ -81,6 +81,8 @@ def test_enrollment_refresh_and_dashboard(tmp_path: Path) -> None:
             follow_redirects=False,
         )
         assert login.status_code == 303
+        assert login.headers.get_list("set-cookie")[0].count("Max-Age=7776000") == 1
+        assert login.headers.get_list("set-cookie")[1].count("Max-Age=7776000") == 1
         client.cookies.update(login.cookies)
         csrf = client.cookies["wk_csrf"]
         created = client.post(

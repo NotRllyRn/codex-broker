@@ -343,9 +343,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/v1/health")
     async def api_health(
         request: Request, authorization: str | None = Header(None)
-    ) -> dict[str, str]:
+    ) -> JSONResponse:
         await require_client(request, authorization)
-        return {"status": "ok" if state(request).ready else "unavailable"}
+        current = state(request)
+        return JSONResponse(
+            {"status": "ok" if current.ready else "unavailable"},
+            status_code=200 if current.ready else 503,
+        )
 
     @app.post("/api/v1/route")
     async def api_route(
@@ -419,6 +423,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             secure=secure,
             samesite="lax",
             path=current.settings.root_path or "/",
+            max_age=current.settings.session_absolute_hours * 3600,
         )
         response.set_cookie(
             CSRF_COOKIE,
@@ -427,6 +432,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             secure=secure,
             samesite="lax",
             path=current.settings.root_path or "/",
+            max_age=current.settings.session_absolute_hours * 3600,
         )
         return _security_headers(response, no_store=True)
 

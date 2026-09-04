@@ -11,6 +11,12 @@ from codex_broker.web.app import _read_secret, create_app
 PASSWORD = "correct horse battery staple"  # noqa: S105
 
 
+def test_session_defaults_are_persistent_but_bounded(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path / "data", runtime_dir=tmp_path / "run")
+    assert settings.session_idle_minutes == 31 * 24 * 60
+    assert settings.session_absolute_hours == 90 * 24
+
+
 def test_dotenv_secrets_are_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     key = generate_key()
     (tmp_path / ".env").write_text(

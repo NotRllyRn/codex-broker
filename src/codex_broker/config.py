@@ -28,9 +28,8 @@ class Settings(BaseSettings):
     admin_password_file: Path | None = None
     admin_password: str | None = None
     cookie_secure: Literal["auto", "true", "false"] = "auto"
-    session_idle_minutes: int = Field(default=15, ge=1)
-    session_absolute_hours: int = Field(default=8, ge=1)
-    reauth_minutes: int = Field(default=5, ge=1)
+    session_idle_minutes: int = Field(default=44_640, ge=1)
+    session_absolute_hours: int = Field(default=2_160, ge=1)
     usage_poll_seconds: int = Field(default=300, ge=60)
     usage_timeout_seconds: int = Field(default=15, ge=1)
     usage_refresh_concurrency: int = Field(default=4, ge=1, le=16)
