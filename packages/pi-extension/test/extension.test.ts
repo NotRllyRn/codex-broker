@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
 
 import { BrokerClient, type Lease, type RouteInput } from "../src/client.js";
 import codexBroker from "../src/index.js";
@@ -63,7 +66,10 @@ test("routes once per prompt and bounds pre-output retry", async () => {
   const calls: RouteInput[] = [];
   BrokerClient.prototype.route = async (input) => {
     calls.push(input);
-    return { ...LEASE, account_id: calls.length === 2 ? "replacement" : "public" };
+    return {
+      ...LEASE,
+      account_id: calls.length === 2 ? "replacement" : "public",
+    };
   };
   process.env.CODEX_BROKER_URL = "https://broker.test";
   process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";

@@ -185,9 +185,7 @@ def test_concurrent_near_expiry_routes_refresh_once(tmp_path: Path) -> None:
             async def routes() -> list[RouteLease]:
                 values = await asyncio.gather(
                     *(
-                        state.router.route(
-                            issued.key_id, RouteRequest("session", f"turn-{index}")
-                        )
+                        state.router.route(issued.key_id, RouteRequest("session", f"turn-{index}"))
                         for index in range(50)
                     )
                 )

@@ -133,11 +133,14 @@ async def test_concurrent_valid_routes_do_not_mutate_credentials(tmp_path: Path)
         assert {result.account_id for result in results if isinstance(result, RouteLease)} == {
             "public-0"
         }
-        assert await database.call(
-            lambda connection: connection.execute(
-                "SELECT count(*) FROM credential_bundles"
-            ).fetchone()[0]
-        ) == 2
+        assert (
+            await database.call(
+                lambda connection: connection.execute(
+                    "SELECT count(*) FROM credential_bundles"
+                ).fetchone()[0]
+            )
+            == 2
+        )
     finally:
         await database.close()
 
@@ -163,9 +166,7 @@ async def test_router_rejects_exhaustion_without_reset(tmp_path: Path) -> None:
     try:
         await database.transaction(lambda connection: seed(connection, used=100))
         await database.transaction(
-            lambda connection: connection.execute(
-                "UPDATE usage_current SET short_resets_at_s=NULL"
-            )
+            lambda connection: connection.execute("UPDATE usage_current SET short_resets_at_s=NULL")
         )
         router = Router(database, Services(), cast(Any, Authority()))
         with pytest.raises(BrokerError, match="reliable retry time") as caught:
@@ -175,9 +176,7 @@ async def test_router_rejects_exhaustion_without_reset(tmp_path: Path) -> None:
         await database.close()
 
 
-@pytest.mark.parametrize(
-    "condition", ("disabled", "deleted", "auth", "worker", "credential")
-)
+@pytest.mark.parametrize("condition", ("disabled", "deleted", "auth", "worker", "credential"))
 @pytest.mark.asyncio
 async def test_router_skips_ineligible_accounts(tmp_path: Path, condition: str) -> None:
     database = Database(tmp_path / "broker.db")

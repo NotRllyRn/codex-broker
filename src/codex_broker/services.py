@@ -416,17 +416,13 @@ class ApplicationServices:
     ) -> dict[str, Any]:
         name = " ".join(display_name.split())
         if not name or len(name) > 80:
-            raise BrokerError(
-                "ACCOUNT_NAME_INVALID", "Enter an account name of 1-80 characters"
-            )
+            raise BrokerError("ACCOUNT_NAME_INVALID", "Enter an account name of 1-80 characters")
         account_id = new_id()
         token = public_token()
         now = self.clock.now_ms()
         clean_labels = sorted({" ".join(value.split()) for value in labels or [] if value.strip()})
         if len(clean_labels) > 20 or any(len(label) > 40 for label in clean_labels):
-            raise BrokerError(
-                "ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters"
-            )
+            raise BrokerError("ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters")
 
         def work(connection: sqlite3.Connection) -> None:
             connection.execute(
@@ -1799,9 +1795,7 @@ class ApplicationServices:
         account = await self._account_row(public)
         clean = sorted({" ".join(value.split()) for value in labels if value.strip()})
         if len(clean) > 20 or any(len(label) > 40 for label in clean):
-            raise BrokerError(
-                "ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters"
-            )
+            raise BrokerError("ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters")
         now = self.clock.now_ms()
 
         def work(connection: sqlite3.Connection) -> None:

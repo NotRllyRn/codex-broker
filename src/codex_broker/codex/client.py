@@ -101,9 +101,7 @@ class AppServerClient:
                         )
                     return
                 if len(line) > MAX_FRAME:
-                    raise BrokerError(
-                        "CODEX_FRAME_TOO_LARGE", "Codex returned an oversized frame"
-                    )
+                    raise BrokerError("CODEX_FRAME_TOO_LARGE", "Codex returned an oversized frame")
                 try:
                     message = json.loads(line)
                 except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -197,9 +195,7 @@ class AppServerClient:
             raise
         if error := response.get("error"):
             if isinstance(error, Mapping) and self._is_auth_error(error):
-                raise BrokerError(
-                    "CODEX_AUTH_REQUIRED", "Codex authentication must be renewed"
-                )
+                raise BrokerError("CODEX_AUTH_REQUIRED", "Codex authentication must be renewed")
             raise BrokerError("CODEX_RPC_REJECTED", "Codex rejected the request")
         result = response.get("result")
         return (result if isinstance(result, dict) else {}, evidence)

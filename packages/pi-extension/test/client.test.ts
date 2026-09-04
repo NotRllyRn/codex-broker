@@ -25,24 +25,28 @@ test("requires a trusted local CA and bounds responses", async () => {
   const directory = await mkdtemp(join(tmpdir(), "codex-broker-test-"));
   const key = join(directory, "server.key");
   const cert = join(directory, "server.crt");
-  execFileSync("openssl", [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-nodes",
-    "-sha256",
-    "-days",
-    "1",
-    "-subj",
-    "/CN=127.0.0.1",
-    "-addext",
-    "subjectAltName=IP:127.0.0.1",
-    "-keyout",
-    key,
-    "-out",
-    cert,
-  ], { stdio: "ignore" });
+  execFileSync(
+    "openssl",
+    [
+      "req",
+      "-x509",
+      "-newkey",
+      "rsa:2048",
+      "-nodes",
+      "-sha256",
+      "-days",
+      "1",
+      "-subj",
+      "/CN=127.0.0.1",
+      "-addext",
+      "subjectAltName=IP:127.0.0.1",
+      "-keyout",
+      key,
+      "-out",
+      cert,
+    ],
+    { stdio: "ignore" },
+  );
   const server = createServer(
     { key: await readFile(key), cert: await readFile(cert) },
     (request, response) => {
@@ -50,7 +54,9 @@ test("requires a trusted local CA and bounds responses", async () => {
       assert.equal(request.headers.authorization, "Bearer cbk_test");
       let body = "";
       request.setEncoding("utf8");
-      request.on("data", (chunk) => { body += chunk; });
+      request.on("data", (chunk) => {
+        body += chunk;
+      });
       request.on("end", () => {
         const input = JSON.parse(body) as { turn_id: string };
         if (input.turn_id === "large") {
@@ -59,18 +65,22 @@ test("requires a trusted local CA and bounds responses", async () => {
           return;
         }
         if (input.turn_id === "revoked") {
-          response.writeHead(401, { "content-type": "application/problem+json" });
+          response.writeHead(401, {
+            "content-type": "application/problem+json",
+          });
           response.end(JSON.stringify({ code: "CLIENT_KEY_INVALID" }));
           return;
         }
         response.writeHead(200, { "content-type": "application/json" });
-        response.end(JSON.stringify({
-          status: "ok",
-          account_id: "public",
-          access_token: "access",
-          chatgpt_account_id: "upstream",
-          expires_at: "2099-01-01T00:00:00Z",
-        }));
+        response.end(
+          JSON.stringify({
+            status: "ok",
+            account_id: "public",
+            access_token: "access",
+            chatgpt_account_id: "upstream",
+            expires_at: "2099-01-01T00:00:00Z",
+          }),
+        );
       });
     },
   );
@@ -81,19 +91,33 @@ test("requires a trusted local CA and bounds responses", async () => {
   const url = `https://127.0.0.1:${address.port}`;
   try {
     await assert.rejects(
-      new BrokerClient(url, "cbk_test").route({ session_id: "s", turn_id: "untrusted" }),
+      new BrokerClient(url, "cbk_test").route({
+        session_id: "s",
+        turn_id: "untrusted",
+      }),
       /self-signed certificate/,
     );
     assert.equal(
-      (await new BrokerClient(url, "cbk_test", cert).route({ session_id: "s", turn_id: "trusted" })).status,
+      (
+        await new BrokerClient(url, "cbk_test", cert).route({
+          session_id: "s",
+          turn_id: "trusted",
+        })
+      ).status,
       "ok",
     );
     await assert.rejects(
-      new BrokerClient(url, "cbk_test", cert).route({ session_id: "s", turn_id: "large" }),
+      new BrokerClient(url, "cbk_test", cert).route({
+        session_id: "s",
+        turn_id: "large",
+      }),
       /too large/,
     );
     await assert.rejects(
-      new BrokerClient(url, "cbk_test", cert).route({ session_id: "s", turn_id: "revoked" }),
+      new BrokerClient(url, "cbk_test", cert).route({
+        session_id: "s",
+        turn_id: "revoked",
+      }),
       /Invalid broker response \(401\)/,
     );
   } finally {
