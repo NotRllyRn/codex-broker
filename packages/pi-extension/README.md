@@ -19,4 +19,4 @@ export CODEX_BROKER_CA_CERT=/path/to/ca.crt
 
 Create the API key with `codex-broker client-key create "Pi desktop"`. Copy it immediately; the broker stores only its hash. Trust the broker's CA and keep the API key outside Pi settings and source control.
 
-Use `/broker-status` to show the selected broker account. Pre-output authentication/quota failures reroute once; failures after streamed output are surfaced without automatic replay. The extension never stores refresh tokens or full `auth.json` payloads.
+The status bar and `/broker-status` show the selected account label plus remaining 5-hour and weekly usage. Pre-output authentication/quota failures reroute once; failures after streamed output are surfaced without automatic replay. The extension never stores refresh tokens or full `auth.json` payloads.

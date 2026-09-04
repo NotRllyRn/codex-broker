@@ -8,9 +8,12 @@ const REQUEST_TIMEOUT_MS = 60_000;
 export interface Lease {
   status: "ok";
   account_id: string;
+  account_label: string;
   access_token: string;
   chatgpt_account_id: string;
   expires_at: string;
+  short_remaining_percent: number | null;
+  weekly_remaining_percent: number | null;
 }
 
 export interface Wait {
@@ -37,9 +40,14 @@ function isLease(value: unknown): value is Lease {
     isRecord(value) &&
     value.status === "ok" &&
     typeof value.account_id === "string" &&
+    typeof value.account_label === "string" &&
     typeof value.access_token === "string" &&
     typeof value.chatgpt_account_id === "string" &&
-    typeof value.expires_at === "string"
+    typeof value.expires_at === "string" &&
+    (typeof value.short_remaining_percent === "number" ||
+      value.short_remaining_percent === null) &&
+    (typeof value.weekly_remaining_percent === "number" ||
+      value.weekly_remaining_percent === null)
   );
 }
 

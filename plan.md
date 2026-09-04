@@ -477,9 +477,12 @@ Success `200`:
 {
   "status": "ok",
   "account_id": "broker-public-account-id",
+  "account_label": "operator-visible account label",
   "access_token": "<access-token>",
   "chatgpt_account_id": "<upstream-account-id>",
-  "expires_at": "RFC3339 timestamp"
+  "expires_at": "RFC3339 timestamp",
+  "short_remaining_percent": 83,
+  "weekly_remaining_percent": 61
 }
 ```
 
@@ -500,7 +503,7 @@ Other status codes:
 - `429` no account currently has usage and a reset is known;
 - `503` vault/runtime/unrecoverable broker state or no reliable reset timestamp.
 
-Do not expose refresh tokens, encrypted bundles, raw `auth.json`, or account-management CRUD through this API.
+Remaining percentages are clamped cached account-usage values and may be `null` when telemetry is unavailable. Pi displays the label and both remaining values in its status bar. Do not expose refresh tokens, encrypted bundles, raw `auth.json`, or account-management CRUD through this API.
 
 ### `src/codex_broker/runtime.py` and `src/codex_broker/codex/client.py` — SMALL MODIFICATIONS ONLY IF REQUIRED
 

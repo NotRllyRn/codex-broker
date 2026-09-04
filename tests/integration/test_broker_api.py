@@ -52,7 +52,9 @@ def seed_account(connection: Any, vault: Vault, access_token: str) -> None:
     connection.execute(
         "INSERT INTO account_state VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH',NULL,NULL,1,1,NULL,NULL,NULL,1,1)"
     )
-    connection.execute("INSERT INTO usage_current(account_id) VALUES('internal')")
+    connection.execute(
+        "INSERT INTO usage_current(account_id,short_used_percent_raw,weekly_used_percent_raw) VALUES('internal',10,40)"
+    )
     connection.execute(
         "INSERT INTO credential_bundles VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
@@ -110,9 +112,12 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
         assert response.json() == {
             "status": "ok",
             "account_id": "public",
+            "account_label": "Primary",
             "access_token": access,
             "chatgpt_account_id": "upstream",
             "expires_at": response.json()["expires_at"],
+            "short_remaining_percent": 90,
+            "weekly_remaining_percent": 60,
         }
         assert response.json()["expires_at"].endswith("Z")
         assert "refresh" not in response.text

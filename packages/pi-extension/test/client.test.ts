@@ -76,9 +76,12 @@ test("requires a trusted local CA and bounds responses", async () => {
           JSON.stringify({
             status: "ok",
             account_id: "public",
+            account_label: "Personal",
             access_token: "access",
             chatgpt_account_id: "upstream",
             expires_at: "2099-01-01T00:00:00Z",
+            short_remaining_percent: 80,
+            weekly_remaining_percent: 60,
           }),
         );
       });

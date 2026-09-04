@@ -56,8 +56,12 @@ export default function codexBroker(pi: ExtensionAPI): void {
   let turnId = "";
 
   const broker = (): BrokerClient => (client ??= clientFromEnvironment());
+  const percent = (value: number | null): string =>
+    value === null ? "?" : `${value}%`;
   const show = (ctx: ExtensionContext): void => {
-    const label = lease ? `broker: ${lease.account_id}` : "broker: waiting";
+    const label = lease
+      ? `broker: ${lease.account_label} · 5h ${percent(lease.short_remaining_percent)} · week ${percent(lease.weekly_remaining_percent)}`
+      : "broker: waiting";
     ctx.ui.setStatus(
       STATUS_ID,
       ctx.ui.theme.fg(lease ? "success" : "warning", label),
@@ -184,7 +188,7 @@ export default function codexBroker(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       ctx.ui.notify(
         lease
-          ? `Codex Broker account: ${lease.account_id}`
+          ? `Codex Broker account: ${lease.account_label} · 5h ${percent(lease.short_remaining_percent)} · week ${percent(lease.weekly_remaining_percent)}`
           : "Codex Broker has no active route",
         "info",
       );

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from codex_broker.clock import SystemClock
-from codex_broker.credential_authority import CredentialAuthority
+from codex_broker.credential_authority import CredentialAuthority, Lease
 from codex_broker.database import Database
 from codex_broker.errors import BrokerError
 
@@ -31,9 +31,12 @@ class RouteRequest:
 @dataclass(frozen=True, slots=True)
 class RouteLease:
     account_id: str
+    account_label: str
     access_token: str
     chatgpt_account_id: str
     expires_at_ms: int
+    short_remaining_percent: int | None
+    weekly_remaining_percent: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,12 +73,7 @@ class Router:
             if request.failure_kind == "auth":
                 try:
                     lease = await self.authority.lease(failed, now, force_refresh=True)
-                    return RouteLease(
-                        str(failed["public_token"]),
-                        lease.access_token,
-                        lease.account_id,
-                        lease.expires_at_ms,
-                    )
+                    return self._route_lease(failed, lease)
                 except Exception:
                     await self._mark_auth_required(str(failed["account_id"]), now)
             await self._exclude(key_id, failed, request.failure_kind, now)
@@ -89,12 +87,7 @@ class Router:
         )
         if selected:
             lease = await self.authority.lease(selected, now)
-            return RouteLease(
-                str(selected["public_token"]),
-                lease.access_token,
-                lease.account_id,
-                lease.expires_at_ms,
-            )
+            return self._route_lease(selected, lease)
         next_retry = self._next_retry(rows, now)
         if next_retry is None:
             raise BrokerError(
@@ -124,6 +117,21 @@ class Router:
             ]
 
         return await self.database.transaction(read)
+
+    @staticmethod
+    def _route_lease(account: dict[str, Any], lease: Lease) -> RouteLease:
+        def remaining(value: object) -> int | None:
+            return max(0, min(100, 100 - value)) if isinstance(value, int) else None
+
+        return RouteLease(
+            str(account["public_token"]),
+            str(account["display_name"]),
+            lease.access_token,
+            lease.account_id,
+            lease.expires_at_ms,
+            remaining(account.get("short_used_percent_raw")),
+            remaining(account.get("weekly_used_percent_raw")),
+        )
 
     @staticmethod
     def _exhausted(row: dict[str, Any], now: int) -> bool:

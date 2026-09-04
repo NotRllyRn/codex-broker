@@ -12,9 +12,12 @@ import codexBroker from "../src/index.js";
 const LEASE: Lease = {
   status: "ok",
   account_id: "public",
+  account_label: "Personal",
   access_token: "access",
   chatgpt_account_id: "upstream",
   expires_at: "2099-01-01T00:00:00Z",
+  short_remaining_percent: 80,
+  weekly_remaining_percent: 60,
 };
 
 test("waits for pool reset and resumes automatically", async () => {
@@ -76,6 +79,7 @@ test("routes once per prompt and bounds pre-output retry", async () => {
 
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   const sent: unknown[] = [];
+  const statuses: string[] = [];
   const pi = {
     registerProvider: () => undefined,
     registerCommand: () => undefined,
@@ -89,7 +93,7 @@ test("routes once per prompt and bounds pre-output retry", async () => {
     signal: new AbortController().signal,
     sessionManager: { getSessionId: () => "session" },
     ui: {
-      setStatus: () => undefined,
+      setStatus: (_id: string, value: string) => statuses.push(value),
       theme: { fg: (_color: string, value: string) => value },
     },
   } as unknown as ExtensionContext;
@@ -98,6 +102,7 @@ test("routes once per prompt and bounds pre-output retry", async () => {
     codexBroker(pi);
     await handlers.get("before_agent_start")?.({}, ctx);
     assert.equal(calls.length, 1);
+    assert.equal(statuses.at(-1), "broker: Personal · 5h 80% · week 60%");
     await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
     assert.equal(calls.length, 2);
     assert.equal(calls[1].failed_account_id, "public");

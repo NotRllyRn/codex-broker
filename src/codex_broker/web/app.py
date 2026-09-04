@@ -383,9 +383,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {
                 "status": "ok",
                 "account_id": result.account_id,
+                "account_label": result.account_label,
                 "access_token": result.access_token,
                 "chatgpt_account_id": result.chatgpt_account_id,
                 "expires_at": iso_time(result.expires_at_ms),
+                "short_remaining_percent": result.short_remaining_percent,
+                "weekly_remaining_percent": result.weekly_remaining_percent,
             }
         )
 
