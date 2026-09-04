@@ -10,9 +10,9 @@ The fork remains linked to `NousResearch/hermes-agent` so upstream synchronizati
 | --- | --- |
 | Hermes release reported in production | `v0.21.0` (`v2026.8.31`) |
 | Tested upstream production revision | `b0ab2e163a50d4e6c36507eba955a6067fde6abc` |
-| Integration branch | `codex-broker/v0.21.0-r2` |
-| Integration tag | `codex-broker-v0.21.0-r2` |
-| Tested integration commit | `4c13968c344ac063369921425ef536964a9b1fbb` |
+| Integration branch | `codex-broker/v0.21.0-r3` |
+| Integration tag | `codex-broker-v0.21.0-r3` |
+| Tested integration commit | `f49c08c27a4344ffdbcdd664c53eec1573175adf` |
 | Rolling rebase branch | `codex-broker-next` |
 
 The production Git installer identified itself as Hermes Agent `v0.21.0` while running upstream
@@ -54,7 +54,7 @@ The installer:
    `/home/hermes/.hermes/hermes-agent`);
 2. verifies the immutable fork commit and its expected upstream base;
 3. refuses an unsupported newer or divergent Hermes checkout instead of silently downgrading it;
-4. checks out `codex-broker/v0.21.0-r2` at the exact tested commit;
+4. checks out `codex-broker/v0.21.0-r3` at the exact tested commit;
 5. copies only the public broker CA certificate and writes the three Hermes broker variables;
 6. verifies broker TLS and client-key authentication;
 7. restarts `hermes-gateway.service`; and

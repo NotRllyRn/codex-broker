@@ -10,7 +10,7 @@ Implement this change in the live Hermes checkout, not in Codex Broker.
 
 ## Implementation status
 
-This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r2`, tag `codex-broker-v0.21.0-r2`, commit `4c13968c34`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
+This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r3`, tag `codex-broker-v0.21.0-r3`, commit `f49c08c27a`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
 
 The live v0.21.0 checkout had decomposed several paths since the archived audit, so the implementation was adapted to its current `agent/agent_init.py`, conversation phase modules, client lifecycle, and runtime-provider seams rather than copied by line number. See [`hermes-agent.md`](hermes-agent.md) for installation and future-release maintenance.
 
