@@ -33,7 +33,6 @@ def test_workspace_failure_opens_and_reauthentication_resolves_incident(
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD}, follow_redirects=False)

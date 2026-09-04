@@ -64,7 +64,6 @@ def test_enrollment_refresh_and_dashboard(tmp_path: Path) -> None:
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         ready = client.get("/health/ready")
@@ -306,7 +305,6 @@ def test_checkpoint_failure_remains_blocked_after_restart(tmp_path: Path) -> Non
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})
@@ -387,7 +385,6 @@ def test_export_failure_keeps_managed_account_usable(tmp_path: Path) -> None:
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})
@@ -434,7 +431,6 @@ def test_managed_cancellation_checkpoints_before_returning(tmp_path: Path) -> No
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     app = create_app(settings)
     with TestClient(app) as client:
@@ -487,7 +483,6 @@ def test_managed_identity_mismatch_never_promotes_candidate(tmp_path: Path) -> N
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})
@@ -528,7 +523,6 @@ def test_login_cancellation_cannot_promote_credentials(tmp_path: Path) -> None:
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})
@@ -601,7 +595,6 @@ def test_manual_token_migration_recovers_v4_schema_drift(tmp_path: Path) -> None
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         assert client.get("/health/ready").status_code == 200
@@ -618,7 +611,6 @@ def test_manual_token_login_is_retired(tmp_path: Path) -> None:
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})
@@ -650,7 +642,6 @@ def test_latest_auth_export_survives_restart(tmp_path: Path) -> None:
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        codex_idle_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})

@@ -17,12 +17,10 @@ class Settings(BaseSettings):
     log_dir: Path | None = None
     host: str = "127.0.0.1"
     port: int = Field(default=8787, ge=1, le=65535)
-    timezone: str = "UTC"
     root_path: str = ""
     trusted_proxies: str = ""
     tls_cert_file: Path | None = None
     tls_key_file: Path | None = None
-    tls_ca_file: Path | None = None
     vault_key_file: Path | None = None
     vault_key: str | None = None
     admin_password_file: Path | None = None
@@ -31,13 +29,10 @@ class Settings(BaseSettings):
     session_idle_minutes: int = Field(default=44_640, ge=1)
     session_absolute_hours: int = Field(default=2_160, ge=1)
     usage_poll_seconds: int = Field(default=300, ge=60)
-    usage_timeout_seconds: int = Field(default=15, ge=1)
     usage_refresh_concurrency: int = Field(default=4, ge=1, le=16)
     auth_concurrency: int = Field(default=2, ge=1, le=8)
     process_start_concurrency: int = Field(default=2, ge=1, le=8)
-    codex_idle_seconds: int = Field(default=30, ge=0)  # Deprecated; runtimes are always fresh.
     reset_padding_seconds: int = Field(default=10, ge=0, le=300)
-    default_chatgpt_login_method: Literal["device-code", "browser"] = "device-code"
     # pi-lens-ignore: python-hardcoded-secrets
     browser_oauth_mode: Literal["disabled", "manual", "host-loopback"] = "manual"
     # pi-lens-ignore: python-hardcoded-secrets
