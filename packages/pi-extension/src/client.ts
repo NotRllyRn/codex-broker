@@ -2,6 +2,9 @@ import { readFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { request } from "node:https";
 
+const MAX_RESPONSE_BYTES = 64 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export interface Lease {
   status: "ok";
   account_id: string;
@@ -80,7 +83,16 @@ export class BrokerClient {
         },
         (response: IncomingMessage) => {
           const chunks: Buffer[] = [];
-          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          let size = 0;
+          response.on("data", (chunk: Buffer) => {
+            size += chunk.length;
+            if (size > MAX_RESPONSE_BYTES) {
+              response.destroy(new Error("Broker response is too large"));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on("error", reject);
           response.on("end", () => {
             try {
               const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
@@ -93,6 +105,7 @@ export class BrokerClient {
           });
         },
       );
+      req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error("Broker request timed out")));
       req.on("error", reject);
       req.end(body);
     });
