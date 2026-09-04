@@ -211,6 +211,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# Local upstream source snapshots used for integration audits
+sources/
+
 # PyPI configuration file
 .pypirc
 
