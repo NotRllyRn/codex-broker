@@ -52,14 +52,13 @@ def seed(connection: sqlite3.Connection, *, used: int = 10, reset: int = 9_999_9
             ),
         )
         connection.execute(
-            "INSERT INTO account_state VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO account_state VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 account_id,
                 "VERIFIED",
                 "STOPPED",
                 "HEALTHY",
                 "FRESH",
-                "UNSCHEDULED",
                 None,
                 None,
                 1,

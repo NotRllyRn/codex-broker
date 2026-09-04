@@ -8,11 +8,10 @@
 {% endif %}
 <section class="dash-intro">
   <div>
-    <p class="kicker">Account watch</p>
-    <h1>Every window, with evidence.</h1>
+    <p class="kicker">Credential broker</p>
+    <h1>Codex accounts, one authority.</h1>
     <p class="intro-copy">
-      Monitor short and weekly limits. Codex Broker skips uncertain activation
-      instead of submitting twice.
+      Monitor account capacity and issue short-lived in-memory leases to trusted clients.
     </p>
   </div>
   <div class="intro-actions">
@@ -81,15 +80,9 @@
     {% endfor %}
   </aside>
   <div class="orbit-core">
-    <p>Next eligible activation</p>
-    {% set next = accounts|selectattr('next_activation')|list|first %}
-    <strong
-      >{{ next.next_activation if next else 'Awaiting reset evidence' }}</strong
-    >
-    <span
-      >{{ next.display_name if next else 'Monitoring continues without guessing'
-      }}</span
-    >
+    <p>Routing authority</p>
+    <strong>{{ counts.HEALTHY }} ready</strong>
+    <span>Clients request the best account at every user-turn boundary.</span>
   </div>
   <div class="orbit-accounts">
     {% for account in accounts %}
@@ -124,8 +117,8 @@
         </div>
       </div>
       <footer>
-        <span>{{ account.schedule_confidence|title }} schedule</span
-        ><a href="/accounts/{{ account.public_token }}">Inspect evidence</a>
+        <span>{{ account.auth_state|replace('_',' ')|title }}</span
+        ><a href="/accounts/{{ account.public_token }}">Inspect account</a>
       </footer>
     </article>
     {% endfor %}

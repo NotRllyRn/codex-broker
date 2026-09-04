@@ -55,7 +55,7 @@ def wait_for(client: TestClient, text: str, path: str = "/", timeout: float = 8)
     raise AssertionError(f"{text!r} did not appear at {path}")
 
 
-def test_enrollment_refresh_activation_and_dashboard(tmp_path: Path) -> None:
+def test_enrollment_refresh_and_dashboard(tmp_path: Path) -> None:
     executable = Path(__file__).parents[1] / "fake_codex.py"
     os.chmod(executable, 0o700)
     settings = Settings(
@@ -65,8 +65,6 @@ def test_enrollment_refresh_activation_and_dashboard(tmp_path: Path) -> None:
         admin_password=PASSWORD,
         codex_executable=str(executable),
         codex_idle_seconds=0,
-        activation_safety_delay_seconds=1,
-        activation_jitter_max_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         ready = client.get("/health/ready")
@@ -224,47 +222,6 @@ def test_enrollment_refresh_activation_and_dashboard(tmp_path: Path) -> None:
             "refresh-2",
             "refresh-3",
         ]
-        model_rotation = executable.with_suffix(".rotate-on-model-list")
-        model_rotation.touch()
-        activation = client.post(
-            f"/accounts/{account['public_token']}/activate",
-            data={"csrf_token": csrf},
-            follow_redirects=False,
-        )
-        assert activation.status_code == 303
-        activation_html = wait_for(client, "Succeeded", activation.headers["location"])
-        model_rotation.unlink()
-        assert bundle_auth(settings, "ACTIVE")["checkpoint"] == "model-list"
-        assert "gpt-5.4-mini" in activation_html
-        assert "Minimal · Standard tier" in activation_html
-        with closing(sqlite3.connect(settings.data_dir / "windowkeeper.db")) as connection:
-            model = json.loads(
-                connection.execute(
-                    "SELECT result_json FROM operations WHERE kind='activation.run'"
-                ).fetchone()[0]
-            )
-        assert model == {
-            "activation_id": model["activation_id"],
-            "model": "gpt-5.4-mini",
-            "reasoning_effort": "minimal",
-            "service_tier": "default",
-            "pricing_verified_at": "2026-07-26",
-        }
-        post_activation_export = client.post(
-            export_path,
-            data={"admin_password": PASSWORD, "csrf_token": csrf},
-        )
-        assert (
-            json.loads(post_activation_export.content)["tokens"]["refresh_token"]
-            == "fork-refresh-2"  # noqa: S105
-        )
-        duplicate = client.post(
-            f"/accounts/{account['public_token']}/activate",
-            data={"csrf_token": csrf},
-            follow_redirects=False,
-        )
-        assert duplicate.status_code == 409
-
         rotate_error_marker = executable.with_suffix(".rotate-then-rate-error")
         rotate_error_marker.touch()
         try:
@@ -397,10 +354,6 @@ def test_checkpoint_failure_remains_blocked_after_restart(tmp_path: Path) -> Non
             data={"csrf_token": restarted.cookies["wk_csrf"]},
         )
         assert blocked.status_code == 409
-        with closing(sqlite3.connect(settings.data_dir / "windowkeeper.db")) as connection:
-            assert not connection.execute(
-                "SELECT 1 FROM activation_attempts WHERE state='PLANNED'"
-            ).fetchone()
         recovery = restarted.post(
             f"/accounts/{account['public_token']}/reauthenticate",
             data={
@@ -651,7 +604,7 @@ def test_manual_token_migration_recovers_v4_schema_drift(tmp_path: Path) -> None
     with TestClient(create_app(settings)) as client:
         assert client.get("/health/ready").status_code == 200
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 8
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 9
 
 
 def test_manual_token_login_is_retired(tmp_path: Path) -> None:
@@ -686,7 +639,7 @@ def test_manual_token_login_is_retired(tmp_path: Path) -> None:
         assert client.get("/api/internal/v1/dashboard").json()["data"] == []
 
 
-def test_latest_auth_export_survives_restart_and_activation(tmp_path: Path) -> None:
+def test_latest_auth_export_survives_restart(tmp_path: Path) -> None:
     executable = Path(__file__).parents[1] / "fake_codex.py"
     os.chmod(executable, 0o700)
     settings = Settings(
@@ -696,8 +649,6 @@ def test_latest_auth_export_survives_restart_and_activation(tmp_path: Path) -> N
         admin_password=PASSWORD,
         codex_executable=str(executable),
         codex_idle_seconds=0,
-        activation_safety_delay_seconds=1,
-        activation_jitter_max_seconds=0,
     )
     with TestClient(create_app(settings)) as client:
         login = client.post("/login", data={"password": PASSWORD})
@@ -729,14 +680,7 @@ def test_latest_auth_export_survives_restart_and_activation(tmp_path: Path) -> N
         csrf = client.cookies["wk_csrf"]
         persisted = client.post(export_path, data={"admin_password": PASSWORD, "csrf_token": csrf})
         assert json.loads(persisted.content)["tokens"]["refresh_token"] == "fork-refresh-2"  # noqa: S105
-        activation = client.post(
-            f"/accounts/{account['public_token']}/activate",
-            data={"csrf_token": csrf},
-            follow_redirects=False,
-        )
-        wait_for(client, "Succeeded", activation.headers["location"])
-        rotated = client.post(export_path, data={"admin_password": PASSWORD, "csrf_token": csrf})
-        assert json.loads(rotated.content)["tokens"]["refresh_token"] == "fork-refresh-2"  # noqa: S105
+
 
 
 def test_authentication_csrf_and_readiness_fail_closed(tmp_path: Path) -> None:

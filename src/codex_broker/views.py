@@ -10,7 +10,6 @@ def account_view(account: AccountSummary) -> dict[str, Any]:
     for source, target in (
         ("short_reset_ms", "short_reset"),
         ("weekly_reset_ms", "weekly_reset"),
-        ("next_activation_ms", "next_activation"),
         ("last_refresh_ms", "last_refresh"),
     ):
         value[target] = iso_time(value.pop(source))

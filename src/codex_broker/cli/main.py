@@ -239,7 +239,7 @@ def status(as_json: bool) -> None:
                 lambda connection: [
                     dict(row)
                     for row in connection.execute(
-                        "SELECT a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,s.usage_state,s.activation_state FROM accounts a JOIN account_state s USING(account_id) WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)"
+                        "SELECT a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,s.usage_state FROM accounts a JOIN account_state s USING(account_id) WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)"
                     )
                 ]
             )

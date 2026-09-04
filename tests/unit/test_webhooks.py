@@ -56,11 +56,11 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
             "account_email": "arina@example.test",
             "incident_status": "OPEN",
             "severity": "ERROR",
-            "summary": "Activation outcome could not be proven",
-            "cause_code": "ACTIVATION_AMBIGUOUS",
-            "cause_summary": "Codex completion was not observed",
-            "reason": "Replay is blocked to prevent duplicate usage.",
-            "recommended_action": "Review the latest activation and acknowledge the ambiguity.",
+            "summary": "Authentication must be renewed",
+            "cause_code": "CODEX_AUTH_REQUIRED",
+            "cause_summary": "Codex rejected the credential",
+            "reason": "The managed credential no longer authenticates.",
+            "recommended_action": "Sign in to the account again.",
             "occurrence_count": 2,
             "incident_id": "incident-1",
         },
@@ -90,7 +90,7 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
     assert "How to fix:" in provider_bodies[slack]["text"]
     assert provider_bodies[discord]["content"] == "WINDOWKEEPER · WK-101"
     assert provider_bodies[discord]["allowed_mentions"] == {"parse": []}
-    assert "ACTIVATION_AMBIGUOUS" in provider_bodies[discord]["embeds"][0]["description"]
+    assert "CODEX_AUTH_REQUIRED" in provider_bodies[discord]["embeds"][0]["description"]
     stored = await database.call(
         lambda connection: connection.execute(
             "SELECT encrypted_url FROM webhook_destinations WHERE destination_id=?", (destination,)

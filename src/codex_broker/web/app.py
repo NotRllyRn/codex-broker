@@ -553,22 +553,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         operation = await state(request).services.refresh(public)
         return RedirectResponse(f"/operations/{operation}", 303)
 
-    @app.post("/accounts/{public}/activate")
-    async def activate(request: Request, public: str, csrf_token: str = Form()) -> Response:
-        await require_form(request, csrf_token)
-        operation = await state(request).services.activate(public)
-        return RedirectResponse(f"/operations/{operation}", 303)
-
-    @app.post("/accounts/{public}/ambiguity/acknowledge")
-    async def acknowledge_ambiguity(
-        request: Request,
-        public: str,
-        csrf_token: str = Form(),
-    ) -> Response:
-        await require_form(request, csrf_token)
-        await state(request).services.acknowledge_ambiguity(public)
-        return RedirectResponse(f"/accounts/{public}", 303)
-
     @app.post("/accounts/{public}/reauthenticate")
     async def reauthenticate(
         request: Request,

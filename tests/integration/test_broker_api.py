@@ -45,7 +45,7 @@ def seed_account(connection: Any, vault: Vault, access_token: str) -> None:
         "INSERT INTO accounts VALUES('internal','public','Primary','chatgpt','CHATGPT_DEVICE_CODE','CHATGPT_DEVICE_CODE',NULL,1,'ACTIVE',1,1,NULL)"
     )
     connection.execute(
-        "INSERT INTO account_state VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH','UNSCHEDULED',NULL,NULL,1,1,NULL,NULL,NULL,1,1)"
+        "INSERT INTO account_state VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH',NULL,NULL,1,1,NULL,NULL,NULL,1,1)"
     )
     connection.execute("INSERT INTO usage_current(account_id) VALUES('internal')")
     connection.execute(

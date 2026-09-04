@@ -4,6 +4,7 @@ import json
 import logging
 import secrets
 import sqlite3
+from asyncio import CancelledError
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, cast
@@ -12,10 +13,9 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 
 from .clock import Clock, SystemClock
-from .codex.adapter import PRICING_VERIFIED_AT, LoginInteraction
+from .codex.adapter import LoginInteraction
 from .database import Database
-from .domain.models import AccountSummary, LoginMethod, RawWindow
-from .domain.scheduling import decide_schedule
+from .domain.models import AccountSummary, LoginMethod
 from .domain.usage import normalize_usage
 from .errors import Conflict, WindowkeeperError
 from .ids import new_id, public_token
@@ -24,19 +24,9 @@ from .security import digest
 from .vault import Envelope, Vault
 
 T = TypeVar("T")
-PROMPT = 'Respond with exactly "OK" and perform no other actions.'
-PROMPT_DIGEST = hashlib.sha256(PROMPT.encode()).digest()
 INCIDENT_GUIDANCE = {
-    "activation_ambiguous": (
-        "Codex Broker dispatched an activation but could not prove whether Codex completed it, so replay is blocked to prevent duplicate usage.",
-        "Open the account, review the latest activation operation, then acknowledge the ambiguity to resume scheduling.",
-    ),
-    "activation_safety": (
-        "Codex requested an action outside Codex Broker's read-only, no-tool activation contract.",
-        "Review the activation evidence, verify the pinned Codex release, then acknowledge the safety block only when it is understood.",
-    ),
     "authentication_failed": (
-        "Codex rejected or could not refresh the account credential, so usage refresh and activation cannot continue.",
+        "Codex rejected or could not refresh the account credential, so routing cannot continue.",
         "Open the account and use Replace or repair credentials with device code or browser sign-in.",
     ),
     "credential_checkpoint": (
@@ -84,15 +74,7 @@ class ServiceSettings(Protocol):
     @property
     def auth_concurrency(self) -> int: ...
     @property
-    def activation_concurrency(self) -> int: ...
-    @property
     def usage_poll_seconds(self) -> int: ...
-    @property
-    def activation_safety_delay_seconds(self) -> int: ...
-    @property
-    def activation_jitter_max_seconds(self) -> int: ...
-    @property
-    def estimated_schedule_enabled(self) -> bool: ...
 
 
 class EventPort(Protocol):
@@ -251,50 +233,8 @@ def _integer(value: Any) -> int:
         raise RuntimeError("stored numeric value is invalid") from error
 
 
-def _find_mapping(value: Any, key: str, expected: str) -> dict[str, Any] | None:
-    if isinstance(value, dict):
-        if str(value.get(key, "")) == expected:
-            return value
-        for nested in value.values():
-            if found := _find_mapping(nested, key, expected):
-                return found
-    elif isinstance(value, list):
-        for nested in value:
-            if found := _find_mapping(nested, key, expected):
-                return found
-    return None
-
-
-def _reconciled_result(
-    response: dict[str, Any], turn_id: str | None, activation_id: str
-) -> tuple[str, bool] | None:
-    turn = _find_mapping(response, "id", turn_id) if turn_id else None
-    turn = turn or _find_mapping(response, "clientUserMessageId", activation_id)
-    if not turn:
-        return None
-    status = str(turn.get("status") or turn.get("state") or "").lower()
-    if status not in {"completed", "failed", "cancelled"}:
-        return None
-    encoded = json.dumps(turn, separators=(",", ":")).lower()
-    unsafe = any(marker in encoded for marker in ('"type":"tool', '"type":"approval'))
-    if status != "completed":
-        return status.upper(), unsafe
-
-    text: list[str] = []
-
-    def collect(value: Any) -> None:
-        if isinstance(value, dict):
-            for key, nested in value.items():
-                if key in {"text", "delta", "outputText"} and isinstance(nested, str):
-                    text.append(nested)
-                else:
-                    collect(nested)
-        elif isinstance(value, list):
-            for nested in value:
-                collect(nested)
-
-    collect(turn.get("items", turn))
-    return "".join(text).strip(), unsafe
+def _login_was_cancelled(state: sqlite3.Row | None) -> bool:
+    return state is not None and state[0] == "CANCELLED"
 
 
 @dataclass(slots=True)
@@ -308,7 +248,7 @@ class StoredInteraction:
 
 
 class ApplicationServices:
-    """The application seam used by HTTP, CLI, scheduler, and tests."""
+    """The application seam used by HTTP, CLI, routing, and tests."""
 
     def __init__(
         self,
@@ -331,10 +271,9 @@ class ApplicationServices:
         self._login_tasks: dict[str, asyncio.Task[Any]] = {}
         self._usage_semaphore = asyncio.Semaphore(settings.usage_refresh_concurrency)
         self._auth_semaphore = asyncio.Semaphore(settings.auth_concurrency)
-        self._activation_semaphore = asyncio.Semaphore(settings.activation_concurrency)
         self._browser_login_lock = asyncio.Lock()
         self._credential_locks: dict[str, asyncio.Lock] = {}
-        self.log = logging.getLogger("windowkeeper.services")
+        self.log = logging.getLogger("codex_broker.services")
 
     def _background(self, coroutine: Any) -> asyncio.Task[Any]:
         task = asyncio.create_task(coroutine)
@@ -345,9 +284,7 @@ class ApplicationServices:
     async def reconcile_startup(self) -> None:
         now = self.clock.now_ms()
 
-        def work(
-            connection: sqlite3.Connection,
-        ) -> tuple[list[dict[str, Any]], list[str]]:
+        def work(connection: sqlite3.Connection) -> list[str]:
             checkpoint_accounts = [
                 str(row[0])
                 for row in connection.execute(
@@ -355,62 +292,11 @@ class ApplicationServices:
                 )
             ]
             connection.execute(
-                "UPDATE account_state SET worker_state='CREDENTIAL_QUARANTINED',auth_state='AUTH_REQUIRED',activation_state='UNSCHEDULED',overall_state='ERROR',last_error_code='CREDENTIAL_CHECKPOINT_UNCERTAIN',last_error_summary='Service restarted before credential checkpoint completion',updated_at_ms=?,state_version=state_version+1 WHERE worker_state IN('CREDENTIAL_IN_USE','CREDENTIAL_QUARANTINED')",
+                "UPDATE account_state SET worker_state='CREDENTIAL_QUARANTINED',auth_state='AUTH_REQUIRED',overall_state='ERROR',last_error_code='CREDENTIAL_CHECKPOINT_UNCERTAIN',last_error_summary='Service restarted before credential checkpoint completion',updated_at_ms=?,state_version=state_version+1 WHERE worker_state IN('CREDENTIAL_IN_USE','CREDENTIAL_QUARANTINED')",
                 (now,),
             )
-            for account_id in checkpoint_accounts:
-                connection.execute(
-                    "UPDATE activation_attempts SET state='CANCELLED',completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND state='PLANNED'",
-                    (now, now, account_id),
-                )
-            uncertain = [
-                dict(row)
-                for row in connection.execute(
-                    "SELECT aa.activation_id,aa.account_id,aa.upstream_thread_id,aa.upstream_turn_id,aa.client_user_message_id,a.public_token,a.workspace_constraint,(SELECT operation_id FROM operations o WHERE o.account_id=aa.account_id AND o.kind='activation.run' ORDER BY o.created_at_ms DESC LIMIT 1) AS operation_id FROM activation_attempts aa JOIN accounts a USING(account_id) WHERE aa.state IN('TURN_DISPATCHING','TURN_ACCEPTED','RUNNING')"
-                )
-            ]
             connection.execute(
                 "UPDATE login_attempts SET state='RESTART_REQUIRED',error_code='LOGIN_RESTART_REQUIRED',updated_at_ms=? WHERE state NOT IN ('COMPLETED','CANCELLED','EXPIRED','FAILED_RETRYABLE','FAILED_ACTION_REQUIRED','RESTART_REQUIRED','SUPERSEDED')",
-                (now,),
-            )
-            connection.execute(
-                "UPDATE operations SET state='FAILED',error_code='LOGIN_RESTART_REQUIRED',error_summary='Sign-in must be restarted',completed_at_ms=?,state_version=state_version+1 WHERE kind LIKE 'login.%' AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')",
-                (now,),
-            )
-            ambiguous_accounts = connection.execute(
-                "SELECT DISTINCT account_id FROM activation_attempts WHERE state IN('TURN_DISPATCHING','TURN_ACCEPTED','RUNNING')"
-            ).fetchall()
-            definite_accounts = connection.execute(
-                "SELECT DISTINCT account_id FROM activation_attempts WHERE state IN('QUEUED','THREAD_CREATED')"
-            ).fetchall()
-            connection.execute(
-                "UPDATE activation_attempts SET state='AMBIGUOUS',ambiguity_reason='Service restarted after dispatch began',updated_at_ms=?,completed_at_ms=?,state_version=state_version+1 WHERE state IN('TURN_DISPATCHING','TURN_ACCEPTED','RUNNING')",
-                (now, now),
-            )
-            connection.execute(
-                "UPDATE activation_attempts SET state='FAILED_DEFINITE',ambiguity_reason='Service restarted before dispatch began',updated_at_ms=?,completed_at_ms=?,state_version=state_version+1 WHERE state IN('QUEUED','THREAD_CREATED')",
-                (now, now),
-            )
-            connection.execute(
-                "UPDATE activation_operations SET state='AMBIGUOUS',error_code='ACTIVATION_AMBIGUOUS',error_summary='Service restarted after dispatch began',completed_at_ms=?,updated_at_ms=? WHERE activation_id IN (SELECT activation_id FROM activation_attempts WHERE state='AMBIGUOUS') AND state IN('STARTED','REQUEST_WRITING','AWAITING_RESPONSE','RECONCILING')",
-                (now, now),
-            )
-            connection.execute(
-                "UPDATE activation_operations SET state='FAILED',error_code='SERVICE_RESTARTED',error_summary='Service restarted before dispatch began',completed_at_ms=?,updated_at_ms=? WHERE state IN('STARTED','REQUEST_WRITING','AWAITING_RESPONSE','RECONCILING')",
-                (now, now),
-            )
-            for row in ambiguous_accounts:
-                connection.execute(
-                    "UPDATE account_state SET activation_state='AMBIGUOUS',overall_state='WARNING',last_error_code='ACTIVATION_AMBIGUOUS',last_error_summary='Activation dispatch was interrupted by restart',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?",
-                    (now, row[0]),
-                )
-            for row in definite_accounts:
-                connection.execute(
-                    "UPDATE account_state SET activation_state='UNSCHEDULED',overall_state='WARNING',last_error_code='SERVICE_RESTARTED',last_error_summary='Activation ended before dispatch',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?",
-                    (now, row[0]),
-                )
-            connection.execute(
-                "UPDATE operations SET state='AMBIGUOUS',error_code='ACTIVATION_AMBIGUOUS',error_summary='Activation dispatch was interrupted by restart',completed_at_ms=?,state_version=state_version+1 WHERE kind='activation.run' AND state='RUNNING'",
                 (now,),
             )
             connection.execute(
@@ -421,102 +307,17 @@ class ApplicationServices:
                 "UPDATE webhook_deliveries SET state='RETRY_SCHEDULED',lease_token=NULL,lease_expires_at_ms=NULL,next_attempt_at_ms=? WHERE state='LEASED'",
                 (now,),
             )
-            return uncertain, checkpoint_accounts
+            return checkpoint_accounts
 
-        attempts, checkpoint_accounts = await self.database.transaction(work)
-        reconciled = await asyncio.gather(
-            *(self._reconcile_activation(attempt) for attempt in attempts)
-        )
-        for account_id in checkpoint_accounts:
+        for account_id in await self.database.transaction(work):
             await self.open_incident(
                 account_id,
                 "credential_checkpoint",
                 "ERROR",
                 "Service restarted before credential checkpoint completion",
             )
-        for attempt, succeeded in zip(attempts, reconciled, strict=True):
-            if not succeeded:
-                await self.open_incident(
-                    str(attempt["account_id"]),
-                    "activation_ambiguous",
-                    "ERROR",
-                    "Activation dispatch was interrupted by service restart",
-                )
-
-    async def _reconcile_activation(self, attempt: dict[str, Any]) -> bool:
-        thread_id = attempt.get("upstream_thread_id")
-        operation_id = attempt.get("operation_id")
-        if not thread_id or not operation_id:
-            return False
-        account = {
-            "account_id": str(attempt["account_id"]),
-            "public_token": str(attempt["public_token"]),
-            "workspace_constraint": attempt.get("workspace_constraint"),
-        }
-        try:
-            evidence = await self._run_managed(
-                account, lambda runtime: runtime.adapter.read_thread(str(thread_id))
-            )
-            reconciled = _reconciled_result(
-                evidence,
-                str(attempt["upstream_turn_id"]) if attempt.get("upstream_turn_id") else None,
-                str(attempt["client_user_message_id"]),
-            )
-        except Exception as error:
-            self.log.warning(
-                "activation reconciliation failed",
-                extra={
-                    "event": "activation.reconciliation_failed",
-                    "account_id": account["account_id"],
-                    "error_code": type(error).__name__,
-                },
-            )
-            return False
-        if not reconciled:
-            return False
-        result, unsafe = reconciled
-        if unsafe:
-            await self._ambiguous_activation(
-                account,
-                str(attempt["activation_id"]),
-                str(operation_id),
-                "Reconciliation found a tool or approval item",
-                safety_blocked=True,
-            )
-            return True
-        if result in {"FAILED", "CANCELLED"}:
-            now = self.clock.now_ms()
-
-            def failed(connection: sqlite3.Connection) -> None:
-                connection.execute(
-                    "UPDATE activation_attempts SET state='FAILED_DEFINITE',terminal_status=?,ambiguity_reason=NULL,completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                    (result, now, now, attempt["activation_id"]),
-                )
-                connection.execute(
-                    "UPDATE activation_operations SET state='FAILED',error_code='UPSTREAM_TURN_TERMINAL',error_summary='Reconciliation found a definite terminal turn',completed_at_ms=?,updated_at_ms=? WHERE activation_id=?",
-                    (now, now, attempt["activation_id"]),
-                )
-                connection.execute(
-                    "UPDATE operations SET state='FAILED',error_code='UPSTREAM_TURN_TERMINAL',error_summary='Activation ended without completing',completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?",
-                    (now, operation_id),
-                )
-                connection.execute(
-                    "UPDATE account_state SET activation_state='UNSCHEDULED',overall_state='WARNING',last_error_code='UPSTREAM_TURN_TERMINAL',last_error_summary='Activation ended without completing',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?",
-                    (now, account["account_id"]),
-                )
-
-            await self.database.transaction(failed)
-            return True
-        await self._complete_activation(
-            account,
-            str(attempt["activation_id"]),
-            str(operation_id),
-            result,
-        )
-        return True
 
     def start_background(self) -> None:
-        self._background(self._scheduler_loop())
         self._background(self._usage_loop())
         self._background(self._maintenance_loop())
 
@@ -554,10 +355,6 @@ class ApplicationServices:
                         (retention_cutoff,),
                     )
                     connection.execute(
-                        "DELETE FROM activation_attempts WHERE activation_id IN (SELECT activation_id FROM activation_attempts WHERE state IN('COMPLETED_OK','COMPLETED_WARNING','FAILED_DEFINITE','CANCELLED','AMBIGUOUS_CLOSED') AND updated_at_ms<? ORDER BY updated_at_ms LIMIT 250)",
-                        (resolved_incident_cutoff,),
-                    )
-                    connection.execute(
                         "DELETE FROM incidents WHERE incident_id IN (SELECT incident_id FROM incidents WHERE state='RESOLVED' AND resolved_at_ms<? ORDER BY resolved_at_ms LIMIT 250)",
                         (resolved_incident_cutoff,),
                     )
@@ -565,7 +362,7 @@ class ApplicationServices:
 
                 await self.database.transaction(prune)
                 await self.clock.sleep(3600)
-            except asyncio.CancelledError as cancellation:
+            except CancelledError as cancellation:
                 del cancellation
                 return
             except Exception as error:
@@ -577,83 +374,6 @@ class ApplicationServices:
                     },
                 )
                 await self.clock.sleep(300)
-
-    async def _scheduler_loop(self) -> None:
-        while True:
-            try:
-                await self._run_due_activations()
-                await asyncio.sleep(5)
-            except asyncio.CancelledError as cancellation:
-                del cancellation
-                return
-            except Exception as error:
-                self.log.error(
-                    "scheduler tick failed: %s",
-                    type(error).__name__,
-                    extra={"event": "scheduler.tick_failed"},
-                )
-                await asyncio.sleep(10)
-
-    async def _run_due_activations(self) -> None:
-        now = self.clock.now_ms()
-
-        def claim(connection: sqlite3.Connection) -> list[tuple[dict[str, Any], str, str]]:
-            rows = connection.execute(
-                """SELECT aa.activation_id,a.account_id,a.public_token,a.display_name,a.enabled,s.auth_state
-                FROM activation_attempts aa JOIN accounts a USING(account_id) JOIN account_state s USING(account_id)
-                JOIN usage_current u USING(account_id)
-                WHERE aa.state='PLANNED' AND aa.scheduled_for_ms<=? AND a.enabled=1
-                AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED'
-                AND COALESCE(u.short_used_percent_raw,0)<100
-                AND COALESCE(u.weekly_used_percent_raw,0)<100
-                AND s.activation_state NOT IN('AMBIGUOUS','SAFETY_BLOCKED')
-                AND aa.activation_id=(SELECT candidate.activation_id FROM activation_attempts candidate
-                    WHERE candidate.account_id=aa.account_id AND candidate.state='PLANNED'
-                    AND candidate.scheduled_for_ms<=? ORDER BY candidate.scheduled_for_ms,candidate.created_at_ms LIMIT 1)
-                AND NOT EXISTS(SELECT 1 FROM activation_attempts active WHERE active.account_id=aa.account_id
-                    AND active.state IN('QUEUED','THREAD_CREATED','TURN_DISPATCHING','TURN_ACCEPTED','RUNNING','AMBIGUOUS','SAFETY_BLOCKED'))
-                ORDER BY aa.scheduled_for_ms LIMIT ?""",
-                (now, now, self.settings.activation_concurrency),
-            ).fetchall()
-            claimed: list[tuple[dict[str, Any], str, str]] = []
-            for row in rows:
-                changed = connection.execute(
-                    "UPDATE activation_attempts SET state='QUEUED',updated_at_ms=?,state_version=state_version+1 WHERE activation_id=? AND state='PLANNED'",
-                    (now, row["activation_id"]),
-                ).rowcount
-                if not changed:
-                    continue
-                connection.execute(
-                    "UPDATE account_state SET activation_state='ACTIVATING',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?",
-                    (now, row["account_id"]),
-                )
-                operation_id = new_id()
-                connection.execute(
-                    "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        operation_id,
-                        row["account_id"],
-                        "activation.run",
-                        "SCHEDULED",
-                        "QUEUED",
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        now,
-                        None,
-                        None,
-                        None,
-                        None,
-                        1,
-                    ),
-                )
-                claimed.append((dict(row), str(row["activation_id"]), operation_id))
-            return claimed
-
-        for account, activation_id, operation_id in await self.database.transaction(claim):
-            self._background(self._run_activation(account, activation_id, operation_id))
 
     async def _usage_loop(self) -> None:
         while True:
@@ -670,7 +390,7 @@ class ApplicationServices:
 
                 for account_token in await self.database.call(read):
                     await self.refresh(account_token, "SCHEDULED")
-            except asyncio.CancelledError as cancellation:
+            except CancelledError as cancellation:
                 del cancellation
                 return
             except Exception as error:
@@ -727,14 +447,13 @@ class ApplicationServices:
                 ),
             )
             connection.execute(
-                "INSERT INTO account_state VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO account_state VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     account_id,
                     "ENROLLING",
                     "STOPPED",
                     "STARTING",
                     "UNKNOWN",
-                    "UNSCHEDULED",
                     None,
                     None,
                     None,
@@ -787,11 +506,9 @@ class ApplicationServices:
                 dict(row)
                 for row in connection.execute(
                     """SELECT a.account_id,a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,
-                    s.usage_state,s.activation_state,u.short_used_percent_raw,u.short_resets_at_s,
+                    s.usage_state,u.short_used_percent_raw,u.short_resets_at_s,
                     u.weekly_used_percent_raw,u.weekly_resets_at_s,u.complete_read_at_ms,u.last_error_summary,
                     (SELECT group_concat(l.name, ', ') FROM account_labels al JOIN labels l USING(label_id) WHERE al.account_id=a.account_id) labels,
-                    (SELECT schedule_confidence FROM activation_attempts aa WHERE aa.account_id=a.account_id ORDER BY created_at_ms DESC LIMIT 1) confidence,
-                    (SELECT scheduled_for_ms FROM activation_attempts aa WHERE aa.account_id=a.account_id AND state='PLANNED' ORDER BY created_at_ms DESC LIMIT 1) next_activation,
                     (SELECT kind FROM operations o WHERE o.account_id=a.account_id AND o.state NOT IN('SUCCEEDED','FAILED','CANCELLED') ORDER BY created_at_ms DESC LIMIT 1) active_operation
                     FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id)
                     WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)"""
@@ -812,7 +529,6 @@ class ApplicationServices:
                     overall_state=row["overall_state"],
                     auth_state=row["auth_state"],
                     usage_state=row["usage_state"],
-                    activation_state=row["activation_state"],
                     short_percent=row.get("short_used_percent_raw"),
                     short_reset_ms=(
                         row["short_resets_at_s"] * 1000 if row.get("short_resets_at_s") else None
@@ -821,8 +537,6 @@ class ApplicationServices:
                     weekly_reset_ms=(
                         row["weekly_resets_at_s"] * 1000 if row.get("weekly_resets_at_s") else None
                     ),
-                    schedule_confidence=row.get("confidence") or "UNKNOWN",
-                    next_activation_ms=row.get("next_activation"),
                     last_refresh_ms=row.get("complete_read_at_ms"),
                     active_operation=row.get("active_operation"),
                     evidence=row.get("last_error_summary")
@@ -846,10 +560,6 @@ class ApplicationServices:
                 "SELECT * FROM operations WHERE account_id=? ORDER BY created_at_ms DESC LIMIT 20",
                 (account["account_id"],),
             ).fetchall()
-            activations = connection.execute(
-                "SELECT * FROM activation_attempts WHERE account_id=? ORDER BY created_at_ms DESC LIMIT 20",
-                (account["account_id"],),
-            ).fetchall()
             incidents = connection.execute(
                 "SELECT * FROM incidents WHERE scope_key=? ORDER BY opened_at_ms DESC LIMIT 20",
                 (account["account_id"],),
@@ -869,7 +579,6 @@ class ApplicationServices:
                 "labels": labels,
                 "usage": dict(usage) if usage else {},
                 "operations": [dict(row) for row in operations],
-                "activations": [dict(row) for row in activations],
                 "incidents": [dict(row) for row in incidents],
                 "auth_export": {
                     "available": auth_export is not None,
@@ -1100,7 +809,7 @@ class ApplicationServices:
                     account.get("workspace_constraint"),
                 )
             return runtime, identity, payload
-        except BaseException:
+        except (Exception, CancelledError):
             self.interactions.pop(attempt_id, None)
             await runtime.client.close()
             if authenticated:
@@ -1136,7 +845,7 @@ class ApplicationServices:
                         promotion_task
                     )
                     promoted = promotion_task.result()
-                except BaseException:
+                except (Exception, CancelledError):
                     preserve_task = asyncio.create_task(self.runtime.preserve(source_runtime))
                     await self._await_critical(preserve_task)
                     raise
@@ -1163,20 +872,21 @@ class ApplicationServices:
                     export_error,
                 )
             await self.refresh(account["public_token"], "LOGIN")
-        except asyncio.CancelledError:
+        except CancelledError:
             state = await self.database.call(
                 lambda connection: connection.execute(
                     "SELECT state FROM login_attempts WHERE login_attempt_id=?", (attempt_id,)
                 ).fetchone()
             )
-            if not state or state[0] != "CANCELLED":
-                await self._fail_login(
-                    attempt_id,
-                    operation_id,
-                    "RESTART_REQUIRED",
-                    "LOGIN_RESTART_REQUIRED",
-                    "Sign-in was interrupted",
-                )
+            if _login_was_cancelled(state):
+                raise
+            await self._fail_login(
+                attempt_id,
+                operation_id,
+                "RESTART_REQUIRED",
+                "LOGIN_RESTART_REQUIRED",
+                "Sign-in was interrupted",
+            )
             raise
         except WindowkeeperError as error:
             self.log.warning("login rejected", extra={"event": "login.rejected"})
@@ -1395,12 +1105,8 @@ class ApplicationServices:
                 )
                 return
             connection.execute(
-                "UPDATE account_state SET worker_state='CREDENTIAL_QUARANTINED',auth_state='AUTH_REQUIRED',activation_state='UNSCHEDULED',overall_state='ERROR',last_error_code='CREDENTIAL_CHECKPOINT_FAILED',last_error_summary='Credential recovery is required',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?",
+                "UPDATE account_state SET worker_state='CREDENTIAL_QUARANTINED',auth_state='AUTH_REQUIRED',overall_state='ERROR',last_error_code='CREDENTIAL_CHECKPOINT_FAILED',last_error_summary='Credential recovery is required',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?",
                 (now, account_id),
-            )
-            connection.execute(
-                "UPDATE activation_attempts SET state='CANCELLED',completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND state='PLANNED'",
-                (now, now, account_id),
             )
 
         await self.database.transaction(work)
@@ -1493,8 +1199,9 @@ class ApplicationServices:
         while not task.done():
             try:
                 await asyncio.shield(task)
-            except asyncio.CancelledError as error:
-                cancellation = cancellation or error
+            except CancelledError as error:
+                if cancellation is None:
+                    cancellation = error
         if task.cancelled():
             raise asyncio.CancelledError
         failure = task.exception()
@@ -1515,7 +1222,7 @@ class ApplicationServices:
             runtime = await self.runtime.start_fresh(
                 account_id, source, account.get("workspace_constraint")
             )
-        except BaseException:
+        except (Exception, CancelledError):
             await self._credential_use_finished(account_id, safe=True)
             raise
         result: T | None = None
@@ -1524,7 +1231,7 @@ class ApplicationServices:
         async with runtime.lock:
             try:
                 result = await call(runtime)
-            except BaseException as error:
+            except (Exception, CancelledError) as error:
                 primary_error = error
 
             async def checkpoint() -> None:
@@ -1541,7 +1248,7 @@ class ApplicationServices:
             try:
                 cancellation = await self._await_critical(checkpoint_task)
                 primary_error = primary_error or cancellation
-            except BaseException as error:
+            except (Exception, CancelledError) as error:
                 checkpoint_error = error
 
         cleanup_task = asyncio.create_task(
@@ -1552,13 +1259,15 @@ class ApplicationServices:
         try:
             cancellation = await self._await_critical(cleanup_task)
             primary_error = primary_error or cancellation
-        except BaseException as error:
-            checkpoint_error = checkpoint_error or error
+        except (Exception, CancelledError) as error:
+            if checkpoint_error is None:
+                checkpoint_error = error
             preserve_task = asyncio.create_task(self.runtime.preserve(runtime))
             try:
                 cancellation = await self._await_critical(preserve_task)
-                primary_error = primary_error or cancellation
-            except BaseException as ignored:
+                if primary_error is None:
+                    primary_error = cancellation
+            except (Exception, CancelledError) as ignored:
                 del ignored
 
         state_task = asyncio.create_task(
@@ -1567,8 +1276,9 @@ class ApplicationServices:
         try:
             cancellation = await self._await_critical(state_task)
             primary_error = primary_error or cancellation
-        except BaseException as error:
-            checkpoint_error = checkpoint_error or error
+        except (Exception, CancelledError) as error:
+            if checkpoint_error is None:
+                checkpoint_error = error
 
         if checkpoint_error is not None:
             incident_task = asyncio.create_task(
@@ -1582,7 +1292,7 @@ class ApplicationServices:
             try:
                 cancellation = await self._await_critical(incident_task)
                 primary_error = primary_error or cancellation
-            except BaseException as ignored:
+            except (Exception, CancelledError) as ignored:
                 del ignored
             raise WindowkeeperError(
                 "CREDENTIAL_CHECKPOINT_FAILED",
@@ -1615,7 +1325,7 @@ class ApplicationServices:
             runtime = await self.runtime.start_fresh(
                 account_id, source, account.get("workspace_constraint")
             )
-        except BaseException:
+        except (Exception, CancelledError):
             await self._credential_use_finished(account_id, safe=True)
             raise
         try:
@@ -1655,26 +1365,28 @@ class ApplicationServices:
             if cancellation:
                 raise cancellation
             return identity, installed
-        except BaseException as primary_error:
+        except (Exception, CancelledError) as primary_error:
             close_failed = False
             close_task = asyncio.create_task(runtime.client.close())
             try:
                 await self._await_critical(close_task)
-            except BaseException as ignored:
+            except (Exception, CancelledError) as ignored:
                 del ignored
                 close_failed = True
-            safe = state == "EXPORT" and not close_failed
+            safe = state == "EXPORT"
+            if close_failed:
+                safe = False
             cleanup_task = asyncio.create_task(
                 self.runtime.archive(runtime) if safe else self.runtime.preserve(runtime)
             )
             try:
                 await self._await_critical(cleanup_task)
-            except BaseException as ignored:
+            except (Exception, CancelledError) as ignored:
                 del ignored
             state_task = asyncio.create_task(self._credential_use_finished(account_id, safe=safe))
             try:
                 await self._await_critical(state_task)
-            except BaseException as ignored:
+            except (Exception, CancelledError) as ignored:
                 del ignored
             raise primary_error
 
@@ -1816,7 +1528,7 @@ class ApplicationServices:
             )
             if auth_failure or checkpoint_failure:
                 connection.execute(
-                    "UPDATE account_state SET auth_state='AUTH_REQUIRED',usage_state='STALE',activation_state='UNSCHEDULED',overall_state=?,last_error_code=?,last_error_summary=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
+                    "UPDATE account_state SET auth_state='AUTH_REQUIRED',usage_state='STALE',overall_state=?,last_error_code=?,last_error_summary=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                     (
                         "ERROR" if checkpoint_failure else "ACTION_REQUIRED",
                         error_code,
@@ -1830,11 +1542,6 @@ class ApplicationServices:
                 connection.execute(
                     "UPDATE account_state SET usage_state='STALE',overall_state=?,last_error_code=?,last_error_summary=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                     (overall, error_code, summary, now, account["account_id"]),
-                )
-            if auth_failure or action_required or checkpoint_failure:
-                connection.execute(
-                    "UPDATE activation_attempts SET state='CANCELLED',completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND state='PLANNED'",
-                    (now, now, account["account_id"]),
                 )
 
         await self.database.transaction(failed)
@@ -1922,7 +1629,7 @@ class ApplicationServices:
                 ),
             )
             connection.execute(
-                "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN activation_state IN('AMBIGUOUS','SAFETY_BLOCKED') THEN 'WARNING' WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=CASE WHEN activation_state IN('AMBIGUOUS','SAFETY_BLOCKED') THEN last_error_code END,last_error_summary=CASE WHEN activation_state IN('AMBIGUOUS','SAFETY_BLOCKED') THEN last_error_summary END,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
+                "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                 (now, account["account_id"]),
             )
             connection.execute(
@@ -1931,657 +1638,8 @@ class ApplicationServices:
             )
 
         await self.database.transaction(work)
-        await self.plan(account["public_token"], normalized.short)
         self.events.publish(
             "account.updated", {"resource_id": account["public_token"], "state": "FRESH"}
-        )
-
-    async def plan(self, public: str, short_override: RawWindow | None = None) -> None:
-        account = await self._account_row(public)
-
-        def read(
-            connection: sqlite3.Connection,
-        ) -> tuple[dict[str, Any] | None, set[str], tuple[int, ...], bool, int | None, int]:
-            usage = connection.execute(
-                "SELECT * FROM usage_current WHERE account_id=?", (account["account_id"],)
-            ).fetchone()
-            keys = {
-                str(row[0])
-                for row in connection.execute(
-                    "SELECT window_key FROM activation_attempts WHERE account_id=?",
-                    (account["account_id"],),
-                )
-            }
-            reset_evidence = tuple(
-                _integer(row[0])
-                for row in connection.execute(
-                    "SELECT basis_reset_at_s FROM activation_attempts WHERE account_id=? AND basis_reset_at_s IS NOT NULL",
-                    (account["account_id"],),
-                )
-            )
-            ambiguous = bool(
-                connection.execute(
-                    "SELECT 1 FROM activation_attempts WHERE account_id=? AND state IN('AMBIGUOUS','SAFETY_BLOCKED','TURN_DISPATCHING','TURN_ACCEPTED','RUNNING')",
-                    (account["account_id"],),
-                ).fetchone()
-            )
-            last = connection.execute(
-                "SELECT completed_at_ms FROM activation_attempts WHERE account_id=? AND state='COMPLETED_OK' ORDER BY completed_at_ms DESC LIMIT 1",
-                (account["account_id"],),
-            ).fetchone()
-            observations = 0
-            if usage and usage["short_duration_minutes"]:
-                for row in connection.execute(
-                    "SELECT raw_shape_summary_json FROM usage_snapshots WHERE account_id=? AND success=1 ORDER BY completed_at_ms DESC LIMIT 2",
-                    (account["account_id"],),
-                ):
-                    try:
-                        normalized = json.loads(row[0] or "{}")
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-                    if normalized.get("short_duration_minutes") == usage["short_duration_minutes"]:
-                        observations += 1
-            return (
-                dict(usage) if usage else None,
-                keys,
-                reset_evidence,
-                ambiguous,
-                _integer(last[0]) if last else None,
-                observations,
-            )
-
-        usage, keys, reset_evidence, ambiguous, last, observations = await self.database.call(read)
-        short = short_override
-        if not short and usage and usage.get("short_duration_minutes"):
-            short = RawWindow(
-                str(usage.get("short_raw_slot") or "short"),
-                usage.get("short_used_percent_raw"),
-                usage.get("short_duration_minutes"),
-                usage.get("short_resets_at_s"),
-            )
-        weekly = None
-        if usage and usage.get("weekly_duration_minutes"):
-            weekly = RawWindow(
-                str(usage.get("weekly_raw_slot") or "weekly"),
-                usage.get("weekly_used_percent_raw"),
-                usage.get("weekly_duration_minutes"),
-                usage.get("weekly_resets_at_s"),
-            )
-        decision = decide_schedule(
-            account_id=account["account_id"],
-            enabled=bool(account["enabled"]),
-            auth_verified=account["auth_state"] == "VERIFIED",
-            short=short,
-            weekly=weekly,
-            now_ms=self.clock.now_ms(),
-            safety_delay_seconds=self.settings.activation_safety_delay_seconds,
-            jitter_max_seconds=self.settings.activation_jitter_max_seconds,
-            existing_window_keys=keys,
-            ambiguous_predecessor=ambiguous,
-            last_successful_activation_ms=last,
-            consistent_observations=observations,
-            estimated_enabled=self.settings.estimated_schedule_enabled,
-        )
-        if not decision.window_key or decision.window_key in keys or not decision.run_at_ms:
-            return
-        if decision.basis_reset_at_s and any(
-            abs(decision.basis_reset_at_s - reset_at_s) <= 60 for reset_at_s in reset_evidence
-        ):
-            return
-        activation_id = new_id()
-        now = self.clock.now_ms()
-
-        def create(connection: sqlite3.Connection) -> bool:
-            if connection.execute(
-                "SELECT 1 FROM activation_attempts WHERE account_id=? AND state IN('AMBIGUOUS','SAFETY_BLOCKED','TURN_DISPATCHING','TURN_ACCEPTED','RUNNING')",
-                (account["account_id"],),
-            ).fetchone():
-                return False
-            connection.execute(
-                "INSERT INTO activation_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    activation_id,
-                    account["account_id"],
-                    decision.window_key,
-                    "SCHEDULED",
-                    1,
-                    PROMPT_DIGEST,
-                    decision.source,
-                    decision.confidence,
-                    decision.basis_reset_at_s,
-                    decision.basis_duration_minutes,
-                    decision.run_at_ms,
-                    "PLANNED",
-                    None,
-                    None,
-                    activation_id,
-                    None,
-                    None,
-                    None,
-                    now,
-                    now,
-                    None,
-                    1,
-                ),
-            )
-            connection.execute(
-                "UPDATE account_state SET activation_state=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
-                (f"{decision.confidence}_SCHEDULE", now, account["account_id"]),
-            )
-            return True
-
-        if not await self.database.transaction(create):
-            return
-        self.events.publish(
-            "account.updated", {"resource_id": public, "next_activation_ms": decision.run_at_ms}
-        )
-
-    async def activate(self, public: str, trigger: str = "MANUAL") -> str:
-        account = await self._account_row(public)
-        if not account["enabled"] or account["auth_state"] != "VERIFIED":
-            raise Conflict(
-                "ACTIVATION_NOT_ELIGIBLE", "Enable and authenticate the account before activation"
-            )
-        if account["activation_state"] in {"AMBIGUOUS", "SAFETY_BLOCKED"}:
-            raise Conflict(
-                "ACTIVATION_SAFETY_BLOCKED", "Resolve the ambiguous predecessor before activation"
-            )
-        operation_id = await self._create_operation(
-            account["account_id"], "activation.run", trigger
-        )
-        now = self.clock.now_ms()
-
-        activation_id = new_id()
-
-        def create(connection: sqlite3.Connection) -> tuple[str, bool]:
-            active = connection.execute(
-                "SELECT activation_id FROM activation_attempts WHERE account_id=? AND state IN('QUEUED','THREAD_CREATED','TURN_DISPATCHING','TURN_ACCEPTED','RUNNING','AMBIGUOUS','SAFETY_BLOCKED') ORDER BY created_at_ms LIMIT 1",
-                (account["account_id"],),
-            ).fetchone()
-            if active:
-                return str(active[0]), False
-            planned = connection.execute(
-                "SELECT activation_id FROM activation_attempts WHERE account_id=? AND state='PLANNED' ORDER BY scheduled_for_ms,created_at_ms LIMIT 1",
-                (account["account_id"],),
-            ).fetchone()
-            if planned:
-                changed = connection.execute(
-                    "UPDATE activation_attempts SET state='QUEUED',trigger=?,scheduled_for_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=? AND state='PLANNED'",
-                    (trigger, now, now, planned[0]),
-                ).rowcount
-                return str(planned[0]), bool(changed)
-            usage = connection.execute(
-                "SELECT short_resets_at_s,short_duration_minutes FROM usage_current WHERE account_id=?",
-                (account["account_id"],),
-            ).fetchone()
-            reset_at_s = _integer(usage[0]) if usage and usage[0] else None
-            duration_minutes = _integer(usage[1]) if usage and usage[1] else None
-            key = (
-                f"reported:{reset_at_s}"
-                if reset_at_s and reset_at_s * 1000 > now
-                else f"manual:unknown:{now // 86_400_000}"
-            )
-            existing = connection.execute(
-                "SELECT activation_id,state FROM activation_attempts WHERE account_id=? AND (window_key=? OR (? IS NOT NULL AND basis_reset_at_s BETWEEN ? AND ?)) ORDER BY created_at_ms LIMIT 1",
-                (
-                    account["account_id"],
-                    key,
-                    reset_at_s,
-                    (reset_at_s - 60) if reset_at_s else 0,
-                    (reset_at_s + 60) if reset_at_s else 0,
-                ),
-            ).fetchone()
-            if existing:
-                selected = str(existing[0])
-                if existing[1] != "PLANNED":
-                    return selected, False
-                changed = connection.execute(
-                    "UPDATE activation_attempts SET state='QUEUED',scheduled_for_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=? AND state='PLANNED'",
-                    (now, now, selected),
-                ).rowcount
-                return selected, bool(changed)
-            connection.execute(
-                "INSERT INTO activation_attempts VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    activation_id,
-                    account["account_id"],
-                    key,
-                    trigger,
-                    1,
-                    PROMPT_DIGEST,
-                    "MANUAL" if trigger == "MANUAL" else "REPORTED_RESET",
-                    "CONFIRMED" if trigger != "MANUAL" else "OPERATOR",
-                    reset_at_s,
-                    duration_minutes,
-                    now,
-                    "QUEUED",
-                    None,
-                    None,
-                    activation_id,
-                    None,
-                    None,
-                    None,
-                    now,
-                    now,
-                    None,
-                    1,
-                ),
-            )
-            return activation_id, True
-
-        try:
-            activation_id, admitted = await self.database.transaction(create)
-        except sqlite3.IntegrityError as error:
-            await self._fail_operation(
-                operation_id, "ACTIVATION_DUPLICATE", "This window already has an activation"
-            )
-            raise Conflict(
-                "ACTIVATION_DUPLICATE", "This window already has an activation"
-            ) from error
-        if not admitted:
-            await self._fail_operation(
-                operation_id, "ACTIVATION_DUPLICATE", "This window already has an activation"
-            )
-            raise Conflict("ACTIVATION_DUPLICATE", "This window already has an activation")
-        await self.database.call(
-            lambda connection: connection.execute(
-                "UPDATE operations SET result_json=? WHERE operation_id=?",
-                (json.dumps({"activation_id": activation_id}), operation_id),
-            )
-        )
-        self._background(self._run_activation(account, activation_id, operation_id))
-        return operation_id
-
-    async def _run_activation(
-        self, account: dict[str, Any], activation_id: str, operation_id: str
-    ) -> None:
-        try:
-            await self._operation_state(
-                operation_id, "RUNNING", "STARTING_RUNTIME", "Starting activation"
-            )
-            if not await self.database.call(
-                lambda connection: self._activation_eligible(
-                    connection, account["account_id"], activation_id
-                )
-            ):
-                raise Conflict(
-                    "ACTIVATION_NOT_ELIGIBLE", "Account became ineligible before activation"
-                )
-            async with self._activation_semaphore:
-                result = await self._run_managed(
-                    account,
-                    lambda runtime: self._perform_activation(
-                        runtime, account, activation_id, operation_id
-                    ),
-                )
-            await self._complete_activation(account, activation_id, operation_id, result)
-        except BaseException as error:
-            await self._handle_activation_error(account, activation_id, operation_id, error)
-
-    def _activation_eligible(
-        self, connection: sqlite3.Connection, account_id: str, activation_id: str
-    ) -> bool:
-        row = connection.execute(
-            "SELECT a.enabled,a.deleted_at_ms,s.auth_state,s.activation_state,aa.state,"
-            "u.short_used_percent_raw,u.weekly_used_percent_raw "
-            "FROM accounts a JOIN account_state s USING(account_id) "
-            "JOIN activation_attempts aa USING(account_id) "
-            "JOIN usage_current u USING(account_id) "
-            "WHERE a.account_id=? AND aa.activation_id=?",
-            (account_id, activation_id),
-        ).fetchone()
-        return bool(
-            row
-            and row[0]
-            and row[1] is None
-            and row[2] == "VERIFIED"
-            and row[3] not in {"AMBIGUOUS", "SAFETY_BLOCKED"}
-            and row[4] in {"QUEUED", "THREAD_CREATED"}
-            and (row[5] is None or _integer(row[5]) < 100)
-            and (row[6] is None or _integer(row[6]) < 100)
-        )
-
-    async def _perform_activation(
-        self,
-        runtime: Any,
-        account: dict[str, Any],
-        activation_id: str,
-        operation_id: str,
-    ) -> str:
-        model = await runtime.adapter.activation_model()
-        thread_id = await runtime.adapter.create_thread(str(runtime.workspace), model)
-        now = self.clock.now_ms()
-
-        def thread_created(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "UPDATE activation_attempts SET state='THREAD_CREATED',upstream_thread_id=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                (thread_id, now, activation_id),
-            )
-            connection.execute(
-                "UPDATE operations SET result_json=? WHERE operation_id=?",
-                (
-                    json.dumps(
-                        {
-                            "activation_id": activation_id,
-                            "model": model.model,
-                            "reasoning_effort": model.effort,
-                            "service_tier": "default",
-                            "pricing_verified_at": PRICING_VERIFIED_AT,
-                        }
-                    ),
-                    operation_id,
-                ),
-            )
-            connection.execute(
-                "INSERT INTO activation_operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    new_id(),
-                    activation_id,
-                    "SUBMIT",
-                    1,
-                    "STARTED",
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    thread_id,
-                    None,
-                    None,
-                    None,
-                    None,
-                    now,
-                    now,
-                ),
-            )
-
-        await self.database.transaction(thread_created)
-        if not await self.database.call(
-            lambda connection: self._activation_eligible(
-                connection, account["account_id"], activation_id
-            )
-        ):
-            raise Conflict(
-                "ACTIVATION_NOT_ELIGIBLE",
-                "Account became ineligible before activation submission",
-            )
-        dispatch_started = self.clock.now_ms()
-
-        def mark_dispatching(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "UPDATE activation_attempts SET state='TURN_DISPATCHING',updated_at_ms=?,state_version=state_version+1 WHERE activation_id=? AND state='THREAD_CREATED'",
-                (dispatch_started, activation_id),
-            )
-            connection.execute(
-                "UPDATE activation_operations SET state='REQUEST_WRITING',write_started_at_ms=?,updated_at_ms=? WHERE activation_id=? AND state='STARTED'",
-                (dispatch_started, dispatch_started, activation_id),
-            )
-
-        await self.database.transaction(mark_dispatching)
-        turn_id, _ = await runtime.adapter.start_turn(thread_id, activation_id, PROMPT, model)
-        await self._accept_turn(activation_id, turn_id)
-        return await self._await_turn(runtime.adapter.client.notifications(), turn_id)
-
-    async def _handle_activation_error(
-        self,
-        account: dict[str, Any],
-        activation_id: str,
-        operation_id: str,
-        error: BaseException,
-    ) -> None:
-        not_eligible = (
-            isinstance(error, WindowkeeperError) and error.code == "ACTIVATION_NOT_ELIGIBLE"
-        )
-        if not_eligible:
-            now = self.clock.now_ms()
-
-            def pause_if_exhausted(connection: sqlite3.Connection) -> bool:
-                row = connection.execute(
-                    "SELECT aa.state,aa.schedule_confidence,u.short_used_percent_raw,u.weekly_used_percent_raw FROM activation_attempts aa JOIN usage_current u USING(account_id) WHERE aa.activation_id=?",
-                    (activation_id,),
-                ).fetchone()
-                if not row:
-                    return False
-                exhausted = any(value is not None and _integer(value) >= 100 for value in row[2:])
-                if row[0] not in {"QUEUED", "THREAD_CREATED"} or not exhausted:
-                    return str(row[0]) == "CANCELLED"
-                connection.execute(
-                    "UPDATE activation_attempts SET state='PLANNED',upstream_thread_id=NULL,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                    (now, activation_id),
-                )
-                connection.execute(
-                    "DELETE FROM activation_operations WHERE activation_id=? AND state='STARTED'",
-                    (activation_id,),
-                )
-                connection.execute(
-                    "UPDATE operations SET state='CANCELLED',progress_code='USAGE_EXHAUSTED',progress_summary='Waiting for usage to reset',completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?",
-                    (now, operation_id),
-                )
-                schedule_state = (
-                    "ESTIMATED_SCHEDULE" if str(row[1]) == "ESTIMATED" else "CONFIRMED_SCHEDULE"
-                )
-                connection.execute(
-                    "UPDATE account_state SET activation_state=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
-                    (schedule_state, now, account["account_id"]),
-                )
-                return True
-
-            if await self.database.transaction(pause_if_exhausted):
-                return
-        safety_blocked = False
-        definitely_failed = False
-        if isinstance(error, WindowkeeperError):
-            safety_blocked = error.code == "ACTIVATION_SAFETY_VIOLATION"
-            definitely_failed = error.code in {
-                "ACTIVATION_UPSTREAM_FAILED",
-                "CODEX_RPC_REJECTED",
-                "CODEX_AUTH_REQUIRED",
-            }
-        await self._ambiguous_activation(
-            account,
-            activation_id,
-            operation_id,
-            str(error)[:200],
-            safety_blocked=safety_blocked,
-            definitely_failed=definitely_failed,
-        )
-        if isinstance(error, asyncio.CancelledError):
-            raise error
-
-    async def _await_turn(self, notifications: Any, turn_id: str) -> str:
-        text = ""
-        try:
-            async with asyncio.timeout(300):
-                async for event in notifications:
-                    method = str(event.get("method", ""))
-                    raw_params = event.get("params")
-                    params = raw_params if isinstance(raw_params, dict) else {}
-                    item = params.get("item")
-                    item_type = str(item.get("type", "")) if isinstance(item, dict) else ""
-                    safety_evidence = f"{method}/{item_type}".lower()
-                    if any(
-                        marker in safety_evidence
-                        for marker in (
-                            "commandexecution",
-                            "filechange",
-                            "toolcall",
-                            "requestapproval",
-                            "requestuserinput",
-                        )
-                    ):
-                        raise WindowkeeperError(
-                            "ACTIVATION_SAFETY_VIOLATION",
-                            "Activation requested a forbidden action",
-                        )
-                    turn = params.get("turn")
-                    event_turn_id = (
-                        turn.get("id") if isinstance(turn, dict) else params.get("turnId")
-                    )
-                    if event_turn_id != turn_id:
-                        continue
-                    if method in {"item/agentMessage/delta", "item/agentMessageDelta"}:
-                        text += str(params.get("delta", ""))
-                    if method == "turn/completed":
-                        status = str(turn.get("status")) if isinstance(turn, dict) else "completed"
-                        if status == "completed":
-                            return text.strip()
-                        raise WindowkeeperError(
-                            "ACTIVATION_UPSTREAM_FAILED",
-                            f"Codex turn ended with status {status}",
-                        )
-        except TimeoutError as error:
-            raise TimeoutError("activation did not reach a terminal state") from error
-        raise TimeoutError("Codex notification stream closed before activation completed")
-
-    async def _accept_turn(self, activation_id: str, turn_id: str) -> None:
-        now = self.clock.now_ms()
-
-        def work(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "UPDATE activation_attempts SET state='TURN_ACCEPTED',upstream_turn_id=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                (turn_id, now, activation_id),
-            )
-            connection.execute(
-                "UPDATE activation_operations SET state='AWAITING_RESPONSE',upstream_turn_id=?,write_completed_at_ms=?,accepted_at_ms=?,updated_at_ms=? WHERE activation_id=? AND state IN('STARTED','REQUEST_WRITING')",
-                (turn_id, now, now, now, activation_id),
-            )
-
-        await self.database.transaction(work)
-
-    async def _complete_activation(
-        self, account: dict[str, Any], activation_id: str, operation_id: str, result: str
-    ) -> None:
-        now = self.clock.now_ms()
-        normalized = "COMPLETED_OK" if result == "OK" else "COMPLETED_WARNING"
-
-        def work(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "UPDATE activation_attempts SET state=?,normalized_result=?,terminal_status='COMPLETED',ambiguity_reason=NULL,completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                (normalized, normalized, now, now, activation_id),
-            )
-            connection.execute(
-                "UPDATE activation_operations SET state='COMPLETED',error_code=NULL,error_summary=NULL,completed_at_ms=?,updated_at_ms=? WHERE activation_id=?",
-                (now, now, activation_id),
-            )
-            connection.execute(
-                "UPDATE activation_attempts SET state='CANCELLED',ambiguity_reason='Superseded by successful activation',completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND activation_id<>? AND state='PLANNED'",
-                (now, now, account["account_id"], activation_id),
-            )
-            connection.execute(
-                "UPDATE operations SET state='SUCCEEDED',progress_code=?,progress_summary=?,error_code=NULL,error_summary=NULL,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?",
-                (
-                    normalized,
-                    "Activation completed"
-                    if result == "OK"
-                    else "Activation completed with an unexpected response",
-                    now,
-                    operation_id,
-                ),
-            )
-            connection.execute(
-                "UPDATE account_state SET activation_state=?,overall_state=?,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
-                (
-                    "UNSCHEDULED" if result == "OK" else "WARNING",
-                    "HEALTHY" if result == "OK" else "WARNING",
-                    now,
-                    account["account_id"],
-                ),
-            )
-
-        await self.database.transaction(work)
-        self.events.publish(
-            "account.updated", {"resource_id": account["public_token"], "activation": normalized}
-        )
-
-    async def _ambiguous_activation(
-        self,
-        account: dict[str, Any],
-        activation_id: str,
-        operation_id: str,
-        reason: str,
-        *,
-        safety_blocked: bool = False,
-        definitely_failed: bool = False,
-    ) -> None:
-        now = self.clock.now_ms()
-        safe_reason = str(redact(reason))[:200]
-
-        def work(connection: sqlite3.Connection) -> str:
-            row = connection.execute(
-                "SELECT state FROM activation_attempts WHERE activation_id=?", (activation_id,)
-            ).fetchone()
-            state = (
-                "AMBIGUOUS"
-                if not definitely_failed
-                and row
-                and row[0]
-                in {"TURN_DISPATCHING", "TURN_ACCEPTED", "RUNNING", "AMBIGUOUS", "SAFETY_BLOCKED"}
-                else "FAILED_DEFINITE"
-            )
-            connection.execute(
-                "UPDATE activation_attempts SET state=?,ambiguity_reason=?,updated_at_ms=?,completed_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                (state, safe_reason, now, now, activation_id),
-            )
-            connection.execute(
-                "UPDATE activation_operations SET state=?,error_code=?,error_summary=?,completed_at_ms=?,updated_at_ms=? WHERE activation_id=? AND state IN('STARTED','REQUEST_WRITING','AWAITING_RESPONSE','RECONCILING')",
-                (
-                    "AMBIGUOUS" if state == "AMBIGUOUS" else "FAILED",
-                    "ACTIVATION_SAFETY_VIOLATION"
-                    if safety_blocked
-                    else ("ACTIVATION_AMBIGUOUS" if state == "AMBIGUOUS" else "ACTIVATION_FAILED"),
-                    safe_reason,
-                    now,
-                    now,
-                    activation_id,
-                ),
-            )
-            connection.execute(
-                "UPDATE operations SET state=?,error_code=?,error_summary=?,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?",
-                (
-                    "AMBIGUOUS" if state == "AMBIGUOUS" else "FAILED",
-                    "ACTIVATION_SAFETY_VIOLATION"
-                    if safety_blocked
-                    else ("ACTIVATION_AMBIGUOUS" if state == "AMBIGUOUS" else "ACTIVATION_FAILED"),
-                    safe_reason,
-                    now,
-                    operation_id,
-                ),
-            )
-            connection.execute(
-                "UPDATE account_state SET activation_state=?,overall_state=?,last_error_code=?,last_error_summary=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
-                (
-                    "SAFETY_BLOCKED"
-                    if safety_blocked
-                    else ("AMBIGUOUS" if state == "AMBIGUOUS" else "UNSCHEDULED"),
-                    "WARNING" if state == "AMBIGUOUS" else "ERROR",
-                    "ACTIVATION_SAFETY_VIOLATION"
-                    if safety_blocked
-                    else ("ACTIVATION_AMBIGUOUS" if state == "AMBIGUOUS" else "ACTIVATION_FAILED"),
-                    safe_reason,
-                    now,
-                    account["account_id"],
-                ),
-            )
-            return state
-
-        state = await self.database.transaction(work)
-        if state == "AMBIGUOUS":
-            await self.open_incident(
-                account["account_id"],
-                "activation_safety" if safety_blocked else "activation_ambiguous",
-                "ERROR",
-                "Activation requested a forbidden action"
-                if safety_blocked
-                else "Activation outcome could not be proven",
-            )
-        self.events.publish(
-            "account.updated",
-            {
-                "resource_id": account["public_token"],
-                "activation": "SAFETY_BLOCKED"
-                if safety_blocked
-                else ("AMBIGUOUS" if state == "AMBIGUOUS" else "FAILED_DEFINITE"),
-            },
         )
 
     async def open_incident(self, account_id: str, kind: str, severity: str, summary: str) -> str:
@@ -2737,35 +1795,6 @@ class ApplicationServices:
 
         return await self.database.call(work)
 
-    async def acknowledge_ambiguity(self, public: str) -> None:
-        account = await self._account_row(public)
-        now = self.clock.now_ms()
-
-        def work(connection: sqlite3.Connection) -> bool:
-            changed = connection.execute(
-                "UPDATE activation_attempts SET state='AMBIGUOUS_CLOSED',updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND state IN('AMBIGUOUS','SAFETY_BLOCKED')",
-                (now, account["account_id"]),
-            ).rowcount
-            if changed:
-                connection.execute(
-                    "UPDATE activation_attempts SET state='CANCELLED',ambiguity_reason='Discarded after ambiguity review',completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND state='PLANNED'",
-                    (now, now, account["account_id"]),
-                )
-                connection.execute(
-                    "UPDATE account_state SET activation_state='UNSCHEDULED',overall_state='WARNING',last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
-                    (now, account["account_id"]),
-                )
-            return bool(changed)
-
-        if not await self.database.transaction(work):
-            raise Conflict("ACTIVATION_NOT_AMBIGUOUS", "No ambiguous activation is open")
-        await self.resolve_incident(account["account_id"], "activation_ambiguous")
-        await self.resolve_incident(account["account_id"], "activation_safety")
-        await self.plan(public)
-        self.events.publish(
-            "account.updated", {"resource_id": public, "activation": "AMBIGUOUS_CLOSED"}
-        )
-
     async def set_labels(self, public: str, labels: list[str]) -> None:
         account = await self._account_row(public)
         clean = sorted({" ".join(value.split()) for value in labels if value.strip()})
@@ -2809,21 +1838,10 @@ class ApplicationServices:
                 "UPDATE account_state SET overall_state=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                 ("STARTING" if enabled else "DISABLED", now, account["account_id"]),
             )
-            if not enabled:
-                connection.execute(
-                    "UPDATE activation_attempts SET state='CANCELLED',completed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=? AND state IN('PLANNED','QUEUED','THREAD_CREATED')",
-                    (now, now, account["account_id"]),
-                )
-                connection.execute(
-                    "UPDATE operations SET state='CANCELLED',progress_code='ACCOUNT_DISABLED',progress_summary='Account was disabled',completed_at_ms=?,state_version=state_version+1 WHERE account_id=? AND kind='activation.run' AND state='QUEUED'",
-                    (now, account["account_id"]),
-                )
 
         await self.database.transaction(work)
         if not enabled:
             await self.runtime.stop(account["account_id"])
-        elif account["auth_state"] == "VERIFIED":
-            await self.plan(public)
         self.events.publish("account.updated", {"resource_id": public, "enabled": enabled})
 
     async def delete_account(self, public: str, confirmation: str) -> None:
@@ -2926,17 +1944,6 @@ class ApplicationServices:
             return bool(changed)
 
         return await self.database.transaction(work)
-
-    async def _activation_state(self, activation_id: str, state: str) -> None:
-        now = self.clock.now_ms()
-
-        def work(connection: sqlite3.Connection) -> None:
-            connection.execute(
-                "UPDATE activation_attempts SET state=?,updated_at_ms=?,state_version=state_version+1 WHERE activation_id=?",
-                (state, now, activation_id),
-            )
-
-        await self.database.transaction(work)
 
     async def _operation_state(
         self, operation_id: str, state: str, code: str, summary: str

@@ -35,13 +35,9 @@ class Settings(BaseSettings):
     usage_timeout_seconds: int = Field(default=15, ge=1)
     usage_refresh_concurrency: int = Field(default=4, ge=1, le=16)
     auth_concurrency: int = Field(default=2, ge=1, le=8)
-    activation_concurrency: int = Field(default=3, ge=1, le=8)
     process_start_concurrency: int = Field(default=2, ge=1, le=8)
     codex_idle_seconds: int = Field(default=30, ge=0)  # Deprecated; runtimes are always fresh.
-    activation_safety_delay_seconds: int = Field(default=60, ge=1)
-    activation_jitter_max_seconds: int = Field(default=30, ge=0, le=300)
     reset_padding_seconds: int = Field(default=10, ge=0, le=300)
-    estimated_schedule_enabled: bool = True
     default_chatgpt_login_method: Literal["device-code", "browser"] = "device-code"
     # pi-lens-ignore: python-hardcoded-secrets
     browser_oauth_mode: Literal["disabled", "manual", "host-loopback"] = "manual"

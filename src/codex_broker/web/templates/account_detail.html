@@ -10,30 +10,6 @@ Codex Broker{% endblock %} {% block content %}
     %}
   </p>
 </section>
-{% if detail.account.activation_state in ['AMBIGUOUS', 'SAFETY_BLOCKED'] %}
-<section class="danger-zone">
-  <h2>
-    {{ 'Safety block' if detail.account.activation_state == 'SAFETY_BLOCKED'
-    else 'Ambiguous activation' }} requires review
-  </h2>
-  <p>
-    Codex Broker will never resend this window. After checking upstream
-    evidence, acknowledge the block to allow future windows to be scheduled.
-  </p>
-  <form
-    method="post"
-    action="/accounts/{{ detail.account.public_token }}/ambiguity/acknowledge"
-    data-confirm="Acknowledge this ambiguous activation without retrying it?"
-  >
-    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
-      class="danger-button"
-      type="submit"
-    >
-      Acknowledge without retry
-    </button>
-  </form>
-</section>
-{% endif %}
 <section class="account-evidence-grid">
   <article>
     <h2>Authentication</h2>
@@ -122,18 +98,6 @@ Codex Broker{% endblock %} {% block content %}
   </form>
   <form
     method="post"
-    action="/accounts/{{ detail.account.public_token }}/activate"
-    data-confirm="Manual activation consumes usage. Continue?"
-  >
-    <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
-      class="primary-button"
-      type="submit"
-    >
-      Activate once
-    </button>
-  </form>
-  <form
-    method="post"
     action="/accounts/{{ detail.account.public_token }}/enabled"
   >
     <input type="hidden" name="csrf_token" value="{{ csrf }}" /><input
@@ -200,25 +164,6 @@ Codex Broker{% endblock %} {% block content %}
   </form>
 </section>
 <section class="detail-section">
-  <h2>Recent activations</h2>
-  {% if detail.activations %}
-  <div class="data-list">
-    {% for item in detail.activations %}
-    <article>
-      <strong>{{ item.state|replace('_',' ')|title }}</strong
-      ><span>{{ item.window_key }}</span
-      ><small
-        >{{ item.schedule_confidence|title }} via {{
-        item.schedule_source|replace('_',' ')|lower }}</small
-      >
-    </article>
-    {% endfor %}
-  </div>
-  {% else %}
-  <p class="subtle">No activation attempts are recorded.</p>
-  {% endif %}
-</section>
-<section class="detail-section">
   <h2>Recent operations</h2>
   {% if detail.operations %}
   <div class="data-list">
@@ -238,7 +183,7 @@ Codex Broker{% endblock %} {% block content %}
 <section class="danger-zone">
   <h2>Delete account</h2>
   <p>
-    Stops scheduling and removes the active encrypted credential. Operational
+    Disables routing and removes the active encrypted credential. Operational
     history remains anonymized.
   </p>
   <form

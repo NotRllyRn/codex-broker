@@ -1,15 +1,12 @@
 import hashlib
-from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import pytest
 
-from codex_broker.codex.adapter import CodexAdapter, select_activation_model
 from codex_broker.errors import WindowkeeperError
 from codex_broker.redaction import redact, sanitize_url
 from codex_broker.services import (
-    ApplicationServices,
     browser_contract,
     validate_callback,
     verify_identity,
@@ -29,109 +26,6 @@ def test_browser_callback_contract_and_state() -> None:
     with pytest.raises(WindowkeeperError) as oversized:
         browser_contract(auth + "&padding=" + "x" * 17_000, (1455, 1457))
     assert oversized.value.code == "CODEX_BROWSER_AUTH_CONTRACT_CHANGED"
-
-
-@pytest.mark.asyncio
-async def test_activation_accepts_the_real_codex_terminal_event_shape() -> None:
-    async def notifications() -> AsyncIterator[dict[str, object]]:
-        yield {
-            "method": "item/agentMessage/delta",
-            "params": {"turnId": "turn-1", "delta": "OK"},
-        }
-        yield {
-            "method": "turn/completed",
-            "params": {
-                "threadId": "thread-1",
-                "turn": {"id": "turn-1", "status": "completed"},
-            },
-        }
-
-    services = object.__new__(ApplicationServices)
-    assert await services._await_turn(notifications(), "turn-1") == "OK"
-
-
-@pytest.mark.asyncio
-async def test_activation_rejects_any_tool_item() -> None:
-    async def notifications() -> AsyncIterator[dict[str, object]]:
-        yield {
-            "method": "item/started",
-            "params": {
-                "turnId": "turn-1",
-                "item": {"type": "commandExecution", "id": "unsafe-item"},
-            },
-        }
-
-    services = object.__new__(ApplicationServices)
-    with pytest.raises(WindowkeeperError) as caught:
-        await services._await_turn(notifications(), "turn-1")
-    assert caught.value.code == "ACTIVATION_SAFETY_VIOLATION"
-
-
-def test_activation_model_is_selected_by_verified_cost_not_catalog_order() -> None:
-    models = [
-        {
-            "model": "gpt-5.6-sol",
-            "hidden": False,
-            "inputModalities": ["text"],
-            "supportedReasoningEfforts": [{"reasoningEffort": "low"}],
-        },
-        {
-            "model": "gpt-5.4-mini",
-            "hidden": False,
-            "inputModalities": ["text"],
-            "supportedReasoningEfforts": [
-                {"reasoningEffort": "minimal"},
-                {"reasoningEffort": "low"},
-            ],
-        },
-    ]
-    assert select_activation_model(models).model == "gpt-5.4-mini"
-    assert select_activation_model(models).effort == "minimal"
-
-
-@pytest.mark.asyncio
-async def test_activation_model_reads_every_catalog_page() -> None:
-    class Client:
-        cursors: list[str | None] = []
-
-        async def request(self, method: str, params: dict[str, Any]) -> tuple[dict[str, Any], None]:
-            assert method == "model/list"
-            cursor = cast(str | None, params.get("cursor"))
-            self.cursors.append(cursor)
-            model = "gpt-5.6-sol" if cursor is None else "gpt-5.4-mini"
-            return (
-                {
-                    "data": [
-                        {
-                            "model": model,
-                            "hidden": False,
-                            "inputModalities": ["text"],
-                            "supportedReasoningEfforts": [{"reasoningEffort": "low"}],
-                        }
-                    ],
-                    "nextCursor": "page-2" if cursor is None else None,
-                },
-                None,
-            )
-
-    client = Client()
-    selected = await CodexAdapter(cast(Any, client)).activation_model()
-    assert selected.model == "gpt-5.4-mini"
-    assert client.cursors == [None, "page-2"]
-
-
-def test_activation_model_fails_closed_without_comparable_pricing() -> None:
-    with pytest.raises(RuntimeError, match="unambiguously cheapest verified pricing"):
-        select_activation_model(
-            [
-                {
-                    "model": "unpriced-preview",
-                    "hidden": False,
-                    "inputModalities": ["text"],
-                    "supportedReasoningEfforts": [{"reasoningEffort": "low"}],
-                }
-            ]
-        )
 
 
 def test_chatgpt_identity_accepts_nullable_email_but_rejects_mismatch() -> None:
