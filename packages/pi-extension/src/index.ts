@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { streamSimple as streamCodex } from "@earendil-works/pi-ai/api/openai-codex-responses";
+import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 import { BrokerClient, failureKind, type Lease, type RouteInput } from "./client.js";
@@ -6,27 +8,19 @@ import { BrokerClient, failureKind, type Lease, type RouteInput } from "./client
 const STATUS_ID = "codex-broker";
 
 function clientFromEnvironment(): BrokerClient {
-  const required = [
-    "CODEX_BROKER_URL",
-    "CODEX_BROKER_CLIENT_KEY",
-    "CODEX_BROKER_CA_CERT",
-    "CODEX_BROKER_CLIENT_CERT",
-    "CODEX_BROKER_CLIENT_KEY_FILE",
-  ] as const;
+  const required = ["CODEX_BROKER_URL", "CODEX_BROKER_CLIENT_KEY"] as const;
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length) throw new Error(`Missing ${missing.join(", ")}`);
   return new BrokerClient(
     process.env.CODEX_BROKER_URL!,
     process.env.CODEX_BROKER_CLIENT_KEY!,
-    process.env.CODEX_BROKER_CA_CERT!,
-    process.env.CODEX_BROKER_CLIENT_CERT!,
-    process.env.CODEX_BROKER_CLIENT_KEY_FILE!,
+    process.env.CODEX_BROKER_CA_CERT,
   );
 }
 
 function sleep(seconds: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, Math.max(1, Math.min(seconds, 60)) * 1_000);
+    const timer = setTimeout(resolve, Math.max(1, seconds) * 1_000);
     signal?.addEventListener(
       "abort",
       () => {
@@ -42,9 +36,11 @@ export default function codexBroker(pi: ExtensionAPI): void {
   let client: BrokerClient | undefined;
   let lease: Lease | undefined;
   let codexActive = false;
+  let meaningfulOutput = false;
   let retried = false;
   let retryTurn = false;
   let retryQueued = false;
+  let turnId = "";
 
   const broker = (): BrokerClient => (client ??= clientFromEnvironment());
   const show = (ctx: ExtensionContext): void => {
@@ -72,25 +68,36 @@ export default function codexBroker(pi: ExtensionAPI): void {
   };
 
   const reroute = async (ctx: ExtensionContext, kind: string): Promise<boolean> => {
-    if (!lease || retried) return false;
+    if (!lease || retried || meaningfulOutput) return false;
     retried = true;
     const replacement = await route(
       ctx,
       {
         session_id: ctx.sessionManager.getSessionId(),
-        turn_id: randomUUID(),
+        turn_id: turnId,
         preferred_account_id: lease.account_id,
         failed_account_id: lease.account_id,
         failure_kind: kind,
       },
-      false,
+      true,
     );
     return Boolean(replacement);
   };
 
-  pi.on("input", () => {
-    retried = false;
-    retryQueued = false;
+  pi.registerProvider("openai-codex", {
+    apiKey: "broker-managed",
+    streamSimple: (
+      model: Model<Api>,
+      context: Context,
+      options?: SimpleStreamOptions,
+    ) => {
+      if (!lease) throw new Error("Codex Broker did not issue a lease");
+      return streamCodex(
+        model as Model<"openai-codex-responses">,
+        context,
+        { ...options, apiKey: lease.access_token, maxRetries: 0 },
+      );
+    },
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
@@ -100,21 +107,19 @@ export default function codexBroker(pi: ExtensionAPI): void {
       retryTurn = false;
       return;
     }
+    meaningfulOutput = false;
+    retried = false;
+    retryQueued = false;
+    turnId = randomUUID();
     await route(
       ctx,
       {
         session_id: ctx.sessionManager.getSessionId(),
-        turn_id: randomUUID(),
+        turn_id: turnId,
         preferred_account_id: lease?.account_id,
       },
       true,
     );
-  });
-
-  pi.on("before_provider_headers", (event) => {
-    if (!codexActive || !lease) return;
-    event.headers.authorization = `Bearer ${lease.access_token}`;
-    event.headers["chatgpt-account-id"] = lease.chatgpt_account_id;
   });
 
   pi.on("after_provider_response", async (event, ctx) => {
@@ -122,14 +127,16 @@ export default function codexBroker(pi: ExtensionAPI): void {
     if (kind && (await reroute(ctx, kind))) retryQueued = true;
   });
 
-  pi.on("tool_result", async (event, ctx) => {
-    if (!codexActive || !event.isError) return;
-    const text = event.content
-      .filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join("\n");
-    const kind = failureKind(0, text);
-    if (kind) await reroute(ctx, kind);
+  pi.on("message_update", (event) => {
+    if (codexActive && event.assistantMessageEvent.type.endsWith("_delta")) {
+      meaningfulOutput = true;
+    }
+  });
+
+  pi.on("message_end", async (event, ctx) => {
+    if (!codexActive || event.message.role !== "assistant" || meaningfulOutput) return;
+    const kind = failureKind(0, event.message.errorMessage ?? "");
+    if (kind && (await reroute(ctx, kind))) retryQueued = true;
   });
 
   pi.on("agent_end", () => {

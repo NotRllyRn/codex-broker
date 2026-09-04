@@ -4,7 +4,7 @@ import test from "node:test";
 import { BrokerClient, failureKind } from "../src/client.js";
 
 test("requires TLS", () => {
-  assert.throws(() => new BrokerClient("http://broker", "key", "ca", "cert", "file"), /HTTPS/);
+  assert.throws(() => new BrokerClient("http://broker", "key"), /HTTPS/);
 });
 
 test("classifies only retryable failures", () => {

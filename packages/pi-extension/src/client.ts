@@ -25,15 +25,34 @@ export interface RouteInput {
   failure_kind?: string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isLease(value: unknown): value is Lease {
+  return isRecord(value)
+    && value.status === "ok"
+    && typeof value.account_id === "string"
+    && typeof value.access_token === "string"
+    && typeof value.chatgpt_account_id === "string"
+    && typeof value.expires_at === "string";
+}
+
+function isWait(value: unknown): value is Wait {
+  return isRecord(value)
+    && value.status === "wait"
+    && typeof value.code === "string"
+    && (typeof value.next_retry_at === "string" || value.next_retry_at === null)
+    && typeof value.retry_after_seconds === "number";
+}
+
 export class BrokerClient {
   readonly url: URL;
 
   constructor(
     url: string,
     private readonly apiKey: string,
-    private readonly caPath: string,
-    private readonly certPath: string,
-    private readonly keyPath: string,
+    private readonly caPath?: string,
   ) {
     try {
       this.url = new URL(url);
@@ -45,19 +64,13 @@ export class BrokerClient {
 
   async route(input: RouteInput, signal?: AbortSignal): Promise<Lease | Wait> {
     const body = JSON.stringify(input);
-    const [ca, cert, key] = await Promise.all([
-      readFile(this.caPath),
-      readFile(this.certPath),
-      readFile(this.keyPath),
-    ]);
+    const ca = this.caPath ? await readFile(this.caPath) : undefined;
     return new Promise((resolve, reject) => {
       const req = request(
         new URL("/api/v1/route", this.url),
         {
           method: "POST",
           ca,
-          cert,
-          key,
           signal,
           headers: {
             authorization: `Bearer ${this.apiKey}`,
@@ -70,9 +83,10 @@ export class BrokerClient {
           response.on("data", (chunk: Buffer) => chunks.push(chunk));
           response.on("end", () => {
             try {
-              const value = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Lease | Wait;
-              if (response.statusCode === 200 || response.statusCode === 429) resolve(value);
-              else reject(new Error(`Broker returned ${response.statusCode}: ${JSON.stringify(value)}`));
+              const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              if (response.statusCode === 200 && isLease(value)) resolve(value);
+              else if (response.statusCode === 429 && isWait(value)) resolve(value);
+              else reject(new Error(`Invalid broker response (${response.statusCode ?? "unknown"})`));
             } catch (error) {
               reject(error);
             }

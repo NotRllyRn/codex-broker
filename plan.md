@@ -95,9 +95,8 @@ codex-broker/
 │   ├── router.py                  # NEW: account selection + retry timestamps
 │   ├── client_auth.py             # NEW: machine/client access keys
 │   └── ...                        # existing service, UI, scheduler, vault, etc.
-├── adapters/
-│   ├── pi/                        # small Pi 0.84.4 extension package
-│   └── hermes/                    # create ONLY if Phase 0 compatibility spike passes
+├── packages/
+│   └── pi-extension/              # small Pi 0.84.4 extension package
 ├── tests/
 ├── docs/
 ├── Dockerfile
@@ -658,8 +657,8 @@ No HTTP redirect is necessary for the machine API. The normal documented endpoin
 
 The Pi 0.84.4 provider and extension APIs are the starting point; no relay code is available or needed.
 
-Target package directory: `adapters/pi/`  
-Suggested package name: `codex-broker-pi`
+Target package directory: `packages/pi-extension/`  
+Package name: `@codex-broker/pi-extension`
 
 Pi's current extension API exposes `before_agent_start` after each submitted user prompt and `agent_start`/`agent_end` once per user prompt. It also supports custom providers. That gives a clean per-user-turn lease boundary.
 
@@ -699,20 +698,20 @@ Build directly against Pi 0.84.4; there is no relay source to port.
 
 Minimal package:
 
-- `index.ts` — extension lifecycle, one lease fetch in `before_agent_start`, in-memory current/preferred account state, and status command;
-- `src/broker.ts` — tiny HTTPS `/api/v1/route` client with strict response validation, timeout/abort support, and optional CA file;
-- `src/provider.ts` — register a distinct `codex-broker` provider using Pi's exported `openai-codex-responses` stream implementation and supply the in-memory lease token as `SimpleStreamOptions.apiKey`;
-- `src/types.ts` — broker lease/wait/error/config types.
+- `src/index.ts` — extension lifecycle, one lease fetch in `before_agent_start`, in-memory current/preferred account state, status command, and a narrow override of the built-in `openai-codex` provider;
+- `src/client.ts` — tiny HTTPS `/api/v1/route` client, broker types, strict response validation, abort support, and optional CA file.
+
+The provider override delegates to Pi's exported `openai-codex-responses` stream and replaces `SimpleStreamOptions.apiKey` with the in-memory lease token. This keeps Pi's model catalog and Codex wire implementation while avoiding its OAuth store and refresh path.
 
 Do not rely on `before_provider_headers` to replace Codex auth: Pi 0.84.4's Codex adapter applies its `Authorization` and `chatgpt-account-id` headers after additional headers and derives account id from the JWT. A provider stream wrapper is the supported minimal seam.
 
 Pi's built-in provider retry repeats a failed request with the same already-resolved options. The adapter must disable transport retries for broker-routed 401/429 and own a bounded pre-output replacement attempt. Do not promise post-output continuation in v1 unless an end-to-end test proves it against Pi 0.84.4; the source archive contains no prior relay implementation to preserve. On a streamed failure after meaningful output, fail clearly and never replay automatically.
 
-Adapter configuration should be only:
+Adapter configuration is only:
 
-- broker HTTPS URL;
-- broker client key;
-- optional CA certificate path if not installed in OS trust.
+- `CODEX_BROKER_URL`;
+- `CODEX_BROKER_CLIENT_KEY`;
+- optional `CODEX_BROKER_CA_CERT` when the local CA is not installed in OS trust.
 
 No refresh token, account list, selection policy, or quota state lives in Pi.
 
@@ -1058,7 +1057,7 @@ If any gate fails, do not ship the Hermes adapter.
 
 ## Phase 4 — Pi adapter
 
-1. Create the small Pi package in `adapters/pi/` against 0.84.4.
+1. Create the small Pi package in `packages/pi-extension/` against 0.84.4.
 2. Add no local vault, refresh, account pool, or persistent access token.
 3. Add broker HTTPS client and per-user-turn in-memory lease.
 4. Implement bounded pre-output failover and fail-closed post-output behavior.
@@ -1086,7 +1085,7 @@ If any gate fails, do not ship the Hermes adapter.
 # 15. Devil's-advocate risks
 
 | Risk | Decision |
-|---|---|
+| --- | --- |
 | Broker becomes a single point of failure | Accept. New turns fail cleanly instead of risking credential corruption. Existing in-flight turn can finish. HA is YAGNI. |
 | Client-key revocation cannot revoke an already-issued OpenAI access token | Accept/document for v1. A full proxy would solve it but adds major data-plane complexity. |
 | Cached usage can be a few minutes stale | Accept. Background polling stays; force refresh on reported quota failure. No fake reservation system. |
