@@ -8,9 +8,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
-from codex_broker.clock import SystemClock
-from codex_broker.errors import BrokerError
-from codex_broker.ids import new_id
+from .clock import SystemClock
+from .errors import BrokerError
+from .ids import new_id
 
 T = TypeVar("T")
 PREFIX = "cbk_"
