@@ -10,7 +10,7 @@ Codex Broker is a central Codex authentication, quota, and account-routing servi
 - Stable account routing with preferred-account affinity and exact pool-reset responses.
 - Hashed, revocable client keys for the machine API.
 - A small Pi extension under [`packages/pi-extension`](packages/pi-extension/README.md).
-- An external Hermes implementation specification under [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md).
+- A version-pinned Hermes fork submodule under [`integrations/hermes-agent`](integrations/hermes-agent), with its implementation specification retained under [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md).
 - One Orbit dashboard, persistent administrator sessions, CSRF protection, incidents, webhooks, and sanitized logs.
 - Direct TLS for same-network deployment.
 
@@ -78,7 +78,7 @@ The extension requests one in-memory lease per user turn and never stores refres
 
 ## Hermes
 
-Hermes cannot be safely integrated as a plugin against the audited snapshot because its relevant hooks fail open and native Codex refresh would conflict with broker ownership. Apply and live-test [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md) in the actual Hermes checkout. Do not deploy the integration until its acceptance gate passes.
+Hermes requires a small core integration because its plugin hooks fail open at the credential boundary. The tested fork is pinned as a Git submodule and can be installed on a compatible Git-based Hermes installation with [`scripts/install-hermes-integration.sh`](scripts/install-hermes-integration.sh). See [`docs/integrations/hermes-agent.md`](docs/integrations/hermes-agent.md) for installation, exact version pins, and the rebase workflow.
 
 ## Operations
 

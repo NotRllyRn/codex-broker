@@ -39,6 +39,7 @@ packages = ["src/codex_broker"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
+testpaths = ["tests"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
 filterwarnings = [

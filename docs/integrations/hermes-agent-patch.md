@@ -8,7 +8,11 @@ Implement this change in the live Hermes checkout, not in Codex Broker.
 - Source archive SHA-256: `216dda97a3fa29637268d225e62229b92118c27a2e80d639d0e15aa12ef0b2eb`
 - Broker contract: `POST /api/v1/route` in Codex Broker `plan.md`
 
-Rebase the paths below if the live checkout moved. Do not copy files blindly by line number.
+## Implementation status
+
+This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0`, tag `codex-broker-v0.21.0`, commit `da7102a9e0`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
+
+The live v0.21.0 checkout had decomposed several paths since the archived audit, so the implementation was adapted to its current `agent/agent_init.py`, conversation phase modules, client lifecycle, and runtime-provider seams rather than copied by line number. See [`hermes-agent.md`](hermes-agent.md) for installation and future-release maintenance.
 
 ## Static audit result
 

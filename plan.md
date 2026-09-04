@@ -1,6 +1,6 @@
 # Codex Broker — Rewrite and Monorepo Plan
 
-Status: **implemented on this branch; production-volume and live Hermes validation remain external release gates**
+Status: **implemented; production-volume validation remains an external release gate, and the tested Hermes fork is pinned in this monorepo**
 Date: 2026-09-03  
 Inputs audited:
 
@@ -8,7 +8,7 @@ Inputs audited:
 - `sources/pi-0.84.4.zip` — current Pi monorepo source and extension/provider APIs;
 - `sources/hermes-agent-2026.8.31.zip` — current Hermes source, plugin hooks, middleware, provider runtime, and credential pools.
 
-There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. References to porting those repositories were removed: the Pi package is a small extension built directly against Pi 0.84.4, while Hermes changes are specified in a patch document for implementation and live validation in the external Hermes checkout.
+There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0` commit; the original patch specification remains the behavioral contract.
 
 ## 1. Decision
 
@@ -47,7 +47,7 @@ YAGNI is a hard requirement for this rewrite. Do **not** add:
 - quota reservations or predicted token accounting;
 - automatic HA/failover of the broker;
 - refresh tokens in Pi or Hermes;
-- separate Git repositories nested inside the main repository;
+- vendored or untracked nested Git clones (the reviewed Hermes fork is an explicit pinned submodule);
 - automatic activation/model turns or reset-time model submissions.
 
 A full inference proxy would make Codex Broker own SSE/streaming, cancellation, backpressure, request replay semantics, and upstream protocol changes. Pi Relay already demonstrates why post-output failover is application-specific. The broker should remain a **control plane**, not become the data plane unless a later requirement makes that necessary.
@@ -74,7 +74,7 @@ A full inference proxy would make Codex Broker own SSE/streaming, cancellation, 
                                             |
    Pi calls Codex directly <----------------+
 
-   Hermes + adapter follows the same model if the compatibility spike passes.
+   Hermes + core integration follows the same lease model.
 ```
 
 Refresh tokens never leave Codex Broker. Access tokens are handed to authenticated LAN clients and used directly against Codex.
@@ -87,7 +87,7 @@ For the intended trusted home-LAN deployment, accept this limitation and documen
 
 ## 4. Repository shape
 
-This is one Git monorepo with independently installable adapter packages, **not three nested Git repositories**.
+This is one Git monorepo with an independently installable Pi package and one explicit Hermes Git submodule. The submodule is a reproducible source pin, not vendored source or an unmanaged nested clone.
 
 ```text
 codex-broker/
@@ -98,6 +98,8 @@ codex-broker/
 │   └── ...                        # existing service, UI, usage, vault, etc.
 ├── packages/
 │   └── pi-extension/              # small Pi 0.84.4 extension package
+├── integrations/
+│   └── hermes-agent/              # pinned Git submodule of the maintained fork
 ├── tests/
 ├── docs/
 ├── Dockerfile
@@ -720,9 +722,9 @@ No refresh token, account list, selection policy, or quota state lives in Pi.
 
 ---
 
-# 9. Hermes external patch: compatibility-gated
+# 9. Hermes core integration: version-pinned fork
 
-No Hermes adapter is implemented in this repository. Write `docs/integrations/hermes-agent-patch.md` for the maintainer of the live Hermes checkout and pin it to the audited `hermes-agent-2026.8.31` source snapshot.
+The reviewed Hermes core integration is maintained in `NotRllyRn/hermes-agent-codex-broker` and pinned here at `integrations/hermes-agent`. `docs/integrations/hermes-agent-patch.md` remains its behavioral and security specification; `docs/integrations/hermes-agent.md` records installation and maintenance.
 
 The archived source has no uploaded `hermes-codex-pool` plugin to evolve. Native credential-pool ownership must not be used for broker leases.
 
@@ -735,11 +737,11 @@ The static audit found that a plugin-only implementation is **not safe** in this
 - initialization still resolves Hermes's native Codex OAuth pool unless an explicit key is supplied;
 - the built-in HTTP 401 branch invokes Hermes's own Codex credential refresh.
 
-Therefore, `docs/integrations/hermes-agent-patch.md` specifies a small fail-closed core patch against exact audited source paths. No Hermes package is added here.
+Therefore, `docs/integrations/hermes-agent-patch.md` specifies a small fail-closed core patch. The fork implements that patch, while the submodule pins its exact reviewed source without packaging Hermes inside Codex Broker.
 
-## External Hermes core patch
+## Hermes core patch
 
-The external implementer must:
+The fork implements these requirements:
 
 1. add `agent/codex_broker.py`, a synchronous HTTPS client and in-memory per-turn lease manager;
 2. change all `openai-codex` branches in `hermes_cli/runtime_provider.py` to use a non-secret initialization sentinel in broker mode rather than native credentials;
@@ -751,7 +753,7 @@ The external implementer must:
 8. discard access-token state at every turn exit and preserve only the non-secret preferred account ID;
 9. skip `_try_refresh_codex_client_credentials()` and every native Codex pool read/write while broker mode is active.
 
-The patch document pins the source archive hash, lists concrete methods and source locations, defines tests, and provides a twelve-step live acceptance procedure. Ship only after those tests pass against the live Hermes revision.
+The fork's `codex-broker/v0.21.0` branch and `codex-broker-v0.21.0` tag pin the integration commit `da7102a9e0` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
 
 ## Existing Hermes plugin files to retire
 
@@ -1018,7 +1020,7 @@ Implementation status at the current branch:
 
 - phases 0-6 are implemented by the incremental commits after `d4d336b`;
 - the Pi package exists at `packages/pi-extension/` and passes its Node tests and type check;
-- the Hermes work is intentionally specification-only at `docs/integrations/hermes-agent-patch.md` pending live-checkout validation;
+- the Hermes core integration is live-tested, maintained in a fork, and pinned at `integrations/hermes-agent`;
 - migrations 007-009 add client routing and remove legacy activation state while preserving migrations 001-006 for direct upgrades;
 - the synthetic pre-rewrite migration fixture proves sentinel/credential compatibility and managed checkpointing without relogin;
 - a production data-volume copy drill and the live Hermes gate remain release operations because those external checkouts/data are not in this repository.
@@ -1027,7 +1029,7 @@ Implementation status at the current branch:
 
 1. Add migration fixture/backups and record current baseline tests.
 2. Complete the Hermes static source audit and write the external live-spike procedure.
-3. Do not create `adapters/hermes/`; live proof and any Hermes core patch happen in the external checkout.
+3. Do not create `adapters/hermes/`; implement the core patch in the dedicated fork and pin its tested commit as a submodule.
 
 ## Phase 1 — rename safely
 
@@ -1062,13 +1064,13 @@ Implementation status at the current branch:
 4. Implement bounded pre-output failover and fail-closed post-output behavior.
 5. Test against the broker with a trusted local CA.
 
-## Phase 5 — Hermes patch specification
+## Phase 5 — Hermes fork integration
 
-1. Write `docs/integrations/hermes-agent-patch.md` against the audited source paths and public contracts.
-2. Specify no native credential pool or refresh-token persistence.
-3. Specify per-turn broker lease, request-header injection, failure reporting, and bounded retry/wait behavior.
-4. Include live compatibility commands and pass/fail gates for the external implementer.
-5. Do not create `adapters/hermes/` in this repository.
+1. Keep `docs/integrations/hermes-agent-patch.md` as the security and behavior contract.
+2. Maintain the core patch in `NotRllyRn/hermes-agent-codex-broker`, with no native credential-pool or refresh-token persistence.
+3. Pin each tested production release branch through `integrations/hermes-agent`.
+4. Provide a version-checking installer and documented rebase/release process.
+5. Do not create a second adapter or vendor Hermes source into this repository.
 
 ## Phase 6 — cleanup/release
 
@@ -1184,7 +1186,7 @@ The rewrite is done only when all of these statements are true:
 - Existing Windowkeeper accounts appear in Codex Broker after upgrade with **no account relogins**.
 - Only Codex Broker ever persists or rotates a refresh token.
 - Pi has no refresh tokens and asks the broker on every user turn.
-- Hermes has no refresh tokens if its public-plugin compatibility gate passes; otherwise no Hermes package is shipped yet.
+- Hermes broker mode bypasses native refresh tokens and credential pools through the pinned core integration.
 - Concurrent requests cannot fork a refresh-token lineage.
 - Quota exhaustion reroutes to another account automatically.
 - Total pool exhaustion returns an exact padded retry timestamp and clients wait/resume automatically.

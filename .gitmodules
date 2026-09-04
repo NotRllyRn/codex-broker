@@ -1,3 +1,4 @@
 [submodule "integrations/hermes-agent"]
 	path = integrations/hermes-agent
 	url = https://github.com/NotRllyRn/hermes-agent-codex-broker.git
+	branch = codex-broker/v0.21.0
