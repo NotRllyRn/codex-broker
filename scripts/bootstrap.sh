@@ -3,6 +3,7 @@ set -eu
 
 ip=${1:-}
 [ -n "$ip" ] || { echo "usage: $0 <broker-local-ip>" >&2; exit 2; }
+python3 -c 'import ipaddress,sys; ipaddress.ip_address(sys.argv[1])' "$ip" 2>/dev/null || { echo "broker-local-ip must be an IP address" >&2; exit 2; }
 command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 [ ! -e .env ] || { echo ".env already exists; refusing to overwrite secrets" >&2; exit 1; }
 [ ! -e deployment/certs ] || { echo "deployment/certs already exists; refusing to overwrite certificates" >&2; exit 1; }
