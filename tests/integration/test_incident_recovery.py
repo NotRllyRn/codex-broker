@@ -65,7 +65,7 @@ def test_workspace_failure_opens_and_reauthentication_resolves_incident(
                     ).fetchone()[0]
                 )
             )
-        assert opened["notification"]["code"] == "WK-101"
+        assert opened["notification"]["code"] == "CB-101"
         assert opened["data"]["account_name"] == "Repairable"
         assert opened["data"]["cause_code"]
         assert "Replace or repair credentials" in opened["data"]["recommended_action"]
@@ -103,6 +103,6 @@ def test_workspace_failure_opens_and_reauthentication_resolves_incident(
                     ).fetchone()[0]
                 )
             )
-        assert resolved["notification"]["code"] == "WK-103"
+        assert resolved["notification"]["code"] == "CB-103"
         assert resolved["data"]["incident_status"] == "RESOLVED"
         assert resolved["data"]["occurrence_count"] == 1

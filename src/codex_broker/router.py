@@ -1,5 +1,7 @@
 # pyright: reportMissingImports=false
 
+"""Select an eligible account for each client turn and report authoritative pool waits."""
+
 import math
 import sqlite3
 from dataclasses import dataclass

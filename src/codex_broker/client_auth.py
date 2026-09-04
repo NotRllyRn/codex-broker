@@ -1,5 +1,7 @@
 # pyright: reportMissingImports=false
 
+"""Create and verify independently revocable, hash-only machine client keys."""
+
 import hashlib
 import hmac
 import secrets

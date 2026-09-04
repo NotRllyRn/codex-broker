@@ -20,10 +20,10 @@ from codex_broker.vault import Vault
 RETRY_SECONDS = (60, 300, 1_800, 7_200, 21_600, 43_200, 86_400, 86_400)
 DESTINATION_KINDS = {"generic", "slack", "discord"}
 EVENT_CODES = {
-    "incident.opened": "WK-101",
-    "incident.updated": "WK-102",
-    "incident.resolved": "WK-103",
-    "codex-broker.test": "WK-900",
+    "incident.opened": "CB-101",
+    "incident.updated": "CB-102",
+    "incident.resolved": "CB-103",
+    "codex-broker.test": "CB-900",
 }
 EVENT_TITLES = {
     "incident.opened": "INCIDENT OPENED",
@@ -276,7 +276,7 @@ class WebhookDispatcher:
             "occurred_at": datetime.fromtimestamp(now / 1000, UTC).isoformat(),
             "notification": {
                 "source": "CODEX_BROKER",
-                "code": EVENT_CODES.get(event_type, "WK-999"),
+                "code": EVENT_CODES.get(event_type, "CB-999"),
                 "title": EVENT_TITLES.get(event_type, event_type.replace(".", " ").upper()),
             },
             "data": redact(data),

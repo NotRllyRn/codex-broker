@@ -73,7 +73,7 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
     generic_body = json.loads(bytes(row[0]))
     assert generic_body["notification"] == {
         "source": "CODEX_BROKER",
-        "code": "WK-101",
+        "code": "CB-101",
         "title": "INCIDENT OPENED",
     }
     assert generic_body["data"]["account_name"] == "Arina"
@@ -85,10 +85,10 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
         ).fetchall()
     )
     provider_bodies = {item[0]: json.loads(bytes(item[1])) for item in provider_rows}
-    assert provider_bodies[slack]["blocks"][0]["text"]["text"] == "CODEX BROKER · WK-101"
+    assert provider_bodies[slack]["blocks"][0]["text"]["text"] == "CODEX BROKER · CB-101"
     assert "Arina &lt;arina@example.test&gt;" in provider_bodies[slack]["blocks"][1]["text"]["text"]
     assert "How to fix:" in provider_bodies[slack]["text"]
-    assert provider_bodies[discord]["content"] == "CODEX BROKER · WK-101"
+    assert provider_bodies[discord]["content"] == "CODEX BROKER · CB-101"
     assert provider_bodies[discord]["allowed_mentions"] == {"parse": []}
     assert "CODEX_AUTH_REQUIRED" in provider_bodies[discord]["embeds"][0]["description"]
     stored = await database.call(
@@ -114,7 +114,7 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
             )
         )
     )
-    assert test_body["notification"]["code"] == "WK-900"
+    assert test_body["notification"]["code"] == "CB-900"
     assert "No action required" in test_body["data"]["recommended_action"]
     for event_type in ("incident.updated", "incident.resolved"):
         await dispatcher.emit(
@@ -129,5 +129,5 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
         ).fetchall()
     )
     event_codes = {row[0]: json.loads(bytes(row[1]))["notification"]["code"] for row in event_rows}
-    assert event_codes == {"incident.updated": "WK-102", "incident.resolved": "WK-103"}
+    assert event_codes == {"incident.updated": "CB-102", "incident.resolved": "CB-103"}
     await database.close()

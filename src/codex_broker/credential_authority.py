@@ -1,5 +1,7 @@
 # pyright: reportMissingImports=false
 
+"""Issue access-only leases while serializing every refresh-capable credential use."""
+
 import base64
 import json
 from collections.abc import Callable
