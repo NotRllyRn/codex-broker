@@ -12,6 +12,7 @@ from typing import Any, cast
 
 from fastapi.testclient import TestClient
 
+from codex_broker.clock import iso_time
 from codex_broker.config import Settings
 from codex_broker.database import Database
 from codex_broker.router import RouteLease, RouteRequest
@@ -115,6 +116,23 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
         }
         assert response.json()["expires_at"].endswith("Z")
         assert "refresh" not in response.text
+        reset = int(time.time()) + 30
+        portal.call(
+            state.database.transaction,
+            lambda connection: connection.execute(
+                "UPDATE usage_current SET short_used_percent_raw=100,short_resets_at_s=?",
+                (reset,),
+            ),
+        )
+        waiting = client.post(
+            "/api/v1/route",
+            headers={"Authorization": f"Bearer {issued.token}"},
+            json={"session_id": "session", "turn_id": "waiting"},
+        )
+        assert waiting.status_code == 429
+        assert waiting.json()["next_retry_at"] == iso_time(reset * 1000 + 10_000)
+        assert int(waiting.headers["retry-after"]) == waiting.json()["retry_after_seconds"]
+
         client.cookies.clear()
         assert (
             client.get(
