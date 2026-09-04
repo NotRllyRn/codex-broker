@@ -3,7 +3,7 @@ import type { IncomingMessage } from "node:http";
 import { request } from "node:https";
 
 const MAX_RESPONSE_BYTES = 64 * 1024;
-const REQUEST_TIMEOUT_MS = 15_000;
+const REQUEST_TIMEOUT_MS = 60_000;
 
 export interface Lease {
   status: "ok";
