@@ -1,6 +1,6 @@
 # Codex Broker — Rewrite and Monorepo Plan
 
-Status: **audited implementation specification; execution tracked by Git commits**  
+Status: **implemented on this branch; production-volume and live Hermes validation remain external release gates**
 Date: 2026-09-03  
 Inputs audited:
 
@@ -988,7 +988,7 @@ Migration 009 is destructive only to removed activation history. Rollback to sof
 - broker can return same account on successive turns;
 - fresh decision still occurs every turn;
 - pre-output quota failover retries with new lease;
-- post-output failure uses continuation, not blind replay;
+- post-output failure surfaces clearly and is never replayed automatically;
 - pool-exhausted waits until broker timestamp and auto-resumes;
 - revoked broker key fails clearly;
 - no refresh token exists in adapter files/state/logs.
@@ -1013,10 +1013,12 @@ If any gate fails, do not ship the Hermes adapter.
 
 Implementation status at the current branch:
 
-- phases 0-5 are implemented in commits `2be34cf` through `2f21b1d`;
-- the Pi package exists at `packages/pi-extension/` and passes its Node tests;
+- phases 0-6 are implemented by the incremental commits after `d4d336b`;
+- the Pi package exists at `packages/pi-extension/` and passes its Node tests and type check;
 - the Hermes work is intentionally specification-only at `docs/integrations/hermes-agent-patch.md` pending live-checkout validation;
-- phase 6 is in progress; migration 009 removes the legacy activation tables/state while preserving migrations 001-008 for upgrade compatibility.
+- migrations 007-009 add client routing and remove legacy activation state while preserving migrations 001-006 for direct upgrades;
+- the synthetic pre-rewrite migration fixture proves sentinel/credential compatibility and managed checkpointing without relogin;
+- a production data-volume copy drill and the live Hermes gate remain release operations because those external checkouts/data are not in this repository.
 
 ## Phase 0 — freeze behavior + Hermes spike
 
@@ -1040,7 +1042,7 @@ Implementation status at the current branch:
 
 ## Phase 3 — central broker core
 
-1. Add migration 007.
+1. Add migrations 007-008.
 2. Add `client_auth.py` + Settings key UI.
 3. Add `credential_authority.py` over existing ACTIVE/checkpoint machinery.
 4. Add `router.py` with stable preferred/next-available selection.
@@ -1073,8 +1075,8 @@ Implementation status at the current branch:
 4. Archive/delete obsolete Windowkeeper and old plugin planning docs.
 5. Verify no old product-name strings remain except intentional storage/crypto compatibility identifiers.
 6. Run full Python and Pi tests/type checks.
-7. Test upgrade from a copy of the real existing data volume.
-8. Cut the first Codex Broker release only after zero-relogin migration is proven.
+7. Test upgrade from a copy of the real existing data volume (external release drill; synthetic 001-006 fixture is automated here).
+8. Cut the first Codex Broker release only after zero-relogin migration is proven (release not performed by this implementation task).
 
 ---
 
