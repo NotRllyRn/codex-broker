@@ -8,7 +8,7 @@ Inputs audited:
 - `sources/pi-0.84.4.zip` — current Pi monorepo source and extension/provider APIs;
 - `sources/hermes-agent-2026.8.31.zip` — current Hermes source, plugin hooks, middleware, provider runtime, and credential pools.
 
-There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0` commit; the original patch specification remains the behavioral contract.
+There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r2` commit; the original patch specification remains the behavioral contract.
 
 ## 1. Decision
 
@@ -484,7 +484,9 @@ Success `200`:
   "chatgpt_account_id": "<upstream-account-id>",
   "expires_at": "RFC3339 timestamp",
   "short_remaining_percent": 83,
-  "weekly_remaining_percent": 61
+  "weekly_remaining_percent": 61,
+  "short_resets_at": "RFC3339 timestamp or null",
+  "weekly_resets_at": "RFC3339 timestamp or null"
 }
 ```
 
@@ -505,7 +507,7 @@ Other status codes:
 - `429` no account currently has usage and a reset is known;
 - `503` vault/runtime/unrecoverable broker state or no reliable reset timestamp.
 
-Remaining percentages are clamped cached account-usage values and may be `null` when telemetry is unavailable. Pi displays the label and both remaining values in its status bar. Do not expose refresh tokens, encrypted bundles, raw `auth.json`, or account-management CRUD through this API.
+Remaining percentages are clamped cached account-usage values and may be `null` when telemetry is unavailable. Future reset timestamps are returned only while still applicable. Pi and Hermes display the account label, both remaining values, and compact reset countdowns. Do not expose refresh tokens, encrypted bundles, raw `auth.json`, or account-management CRUD through this API.
 
 ### `src/codex_broker/runtime.py` and `src/codex_broker/codex/client.py` — SMALL MODIFICATIONS ONLY IF REQUIRED
 
@@ -683,7 +685,7 @@ This exactly meets the requested “ask every new user turn” behavior without 
 
 Use conservative failure behavior:
 
-- **before meaningful model output:** a quota/auth failure may request another lease and retry once;
+- **before meaningful model output:** each quota/auth failure reports the failed account, obtains another lease, and resumes until an account succeeds or the broker pool is exhausted;
 - **after meaningful model output:** do not replay automatically. Surface the failure; a future continuation design requires separate proof.
 
 On quota/auth failure, the adapter calls `/api/v1/route` again with `failed_account_id` + `failure_kind`.
@@ -710,7 +712,7 @@ The provider override delegates to Pi's exported `openai-codex-responses` stream
 
 Do not rely on `before_provider_headers` to replace Codex auth: Pi 0.84.4's Codex adapter applies its `Authorization` and `chatgpt-account-id` headers after additional headers and derives account id from the JWT. A provider stream wrapper is the supported minimal seam.
 
-Pi's built-in provider retry repeats a failed request with the same already-resolved options. The adapter must disable transport retries for broker-routed 401/429 and own a bounded pre-output replacement attempt. Do not promise post-output continuation in v1 unless an end-to-end test proves it against Pi 0.84.4; the source archive contains no prior relay implementation to preserve. On a streamed failure after meaningful output, fail clearly and never replay automatically.
+Pi's built-in provider retry repeats a failed request with the same already-resolved options. The adapter disables transport retries for broker-routed 401/429 and owns the pre-output replacement chain. Each account can fail only once in that chain, preventing cycles while allowing the request to traverse the available pool and wait for a broker-reported reset. On a streamed failure after meaningful output, fail clearly and never replay automatically.
 
 Adapter configuration is only:
 
@@ -748,12 +750,13 @@ The fork implements these requirements:
 3. attach the manager in `agent/agent_init.py` and disable the native Codex credential pool;
 4. obtain one lease per `(session_id, turn_id)` in `agent/conversation_loop.py`, apply it by atomically rebuilding the Codex client, and reuse it for inner tool-loop requests;
 5. use the existing `on_first_delta` callback as the no-replay boundary;
-6. replace a pre-output 401/403/quota failure at most once through the existing outer retry loop;
+6. replace pre-output 401/403/quota failures through the existing outer retry loop until an account succeeds or each returned account has failed once;
 7. wait on the broker's exact pool-reset timestamp and remain interruptible;
-8. discard access-token state at every turn exit and preserve only the non-secret preferred account ID;
+8. announce the selected account label and usage before each attempt and expose `/broker-status` for the session's last route;
+9. discard access-token state at every turn exit and preserve only non-secret preferred-account and display-status metadata;
 9. skip `_try_refresh_codex_client_credentials()` and every native Codex pool read/write while broker mode is active.
 
-The fork's `codex-broker/v0.21.0` branch and `codex-broker-v0.21.0` tag pin the integration commit `da7102a9e0` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
+The fork's `codex-broker/v0.21.0-r2` branch and matching tag pin integration commit `4c13968c34` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
 
 ## Existing Hermes plugin files to retire
 
@@ -992,7 +995,7 @@ Migration 009 is destructive only to removed activation history. Rollback to sof
 - one broker request per **user prompt**, not per tool-loop iteration;
 - broker can return same account on successive turns;
 - fresh decision still occurs every turn;
-- pre-output quota failover retries with new lease;
+- pre-output quota failover traverses distinct accounts until one succeeds;
 - post-output failure surfaces clearly and is never replayed automatically;
 - pool-exhausted waits until broker timestamp and auto-resumes;
 - revoked broker key fails clearly;
@@ -1006,7 +1009,8 @@ Live test against a pinned current Hermes revision/version:
 - broker called once per user turn;
 - middleware changes actual Codex auth header;
 - multi-tool turn keeps one turn lease unless failure occurs;
-- quota failure reroutes and resumes safely;
+- repeated quota failures reroute across distinct accounts and resume safely;
+- each selected route emits a pre-request account/usage status and `/broker-status` reports it;
 - all-exhausted wait/resume works;
 - no private `agent.*` credential mutation imports.
 

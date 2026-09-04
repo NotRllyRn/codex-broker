@@ -10,9 +10,9 @@ The fork remains linked to `NousResearch/hermes-agent` so upstream synchronizati
 | --- | --- |
 | Hermes release reported in production | `v0.21.0` (`v2026.8.31`) |
 | Tested upstream production revision | `b0ab2e163a50d4e6c36507eba955a6067fde6abc` |
-| Integration branch | `codex-broker/v0.21.0` |
-| Integration tag | `codex-broker-v0.21.0` |
-| Tested integration commit | `da7102a9e072fcfec58bd782b9483a69524477fa` |
+| Integration branch | `codex-broker/v0.21.0-r2` |
+| Integration tag | `codex-broker-v0.21.0-r2` |
+| Tested integration commit | `4c13968c344ac063369921425ef536964a9b1fbb` |
 | Rolling rebase branch | `codex-broker-next` |
 
 The production Git installer identified itself as Hermes Agent `v0.21.0` while running upstream
@@ -54,19 +54,22 @@ The installer:
    `/home/hermes/.hermes/hermes-agent`);
 2. verifies the immutable fork commit and its expected upstream base;
 3. refuses an unsupported newer or divergent Hermes checkout instead of silently downgrading it;
-4. checks out `codex-broker/v0.21.0` at the exact tested commit;
+4. checks out `codex-broker/v0.21.0-r2` at the exact tested commit;
 5. copies only the public broker CA certificate and writes the three Hermes broker variables;
 6. verifies broker TLS and client-key authentication;
 7. restarts `hermes-gateway.service`; and
 8. restores the previous checkout and configuration if validation or startup fails.
+
+This pin adds cycle-safe pre-output account failover, an account/usage pre-message before each
+provider attempt, and gateway `/broker-status`. Hermes continues across distinct broker accounts
+until one succeeds or the broker waits for the exact pool reset.
 
 Override `HERMES_AGENT_DIR` or `HERMES_GATEWAY_SERVICE` only for a nonstandard installation. The
 broker server certificate and private key must remain on the broker host.
 
 ## Maintain across Hermes releases
 
-Published `codex-broker/vX.Y.Z` branches and `codex-broker-vX.Y.Z` tags are immutable production
-pins. Rebase only `codex-broker-next` while adapting to a new Hermes release:
+Published `codex-broker/vX.Y.Z[-rN]` branches and matching tags are immutable production pins. Rebase only `codex-broker-next` while adapting to a new Hermes release:
 
 ```bash
 cd integrations/hermes-agent
@@ -82,9 +85,9 @@ Once validated, create a new release-specific branch and tag, then update the su
 the four constants at the top of `scripts/install-hermes-integration.sh`:
 
 ```bash
-git switch -c codex-broker/vX.Y.Z
-git tag -a codex-broker-vX.Y.Z -m "Codex Broker integration for Hermes Agent vX.Y.Z"
-git push origin codex-broker/vX.Y.Z codex-broker-vX.Y.Z
+git switch -c codex-broker/vX.Y.Z-rN
+git tag -a codex-broker-vX.Y.Z-rN -m "Codex Broker integration rN for Hermes Agent vX.Y.Z"
+git push origin codex-broker/vX.Y.Z-rN codex-broker-vX.Y.Z-rN
 ```
 
 Never move an existing integration tag. This preserves rollback and lets each production host use a

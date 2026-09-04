@@ -10,7 +10,7 @@ Implement this change in the live Hermes checkout, not in Codex Broker.
 
 ## Implementation status
 
-This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0`, tag `codex-broker-v0.21.0`, commit `da7102a9e0`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
+This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r2`, tag `codex-broker-v0.21.0-r2`, commit `4c13968c34`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
 
 The live v0.21.0 checkout had decomposed several paths since the archived audit, so the implementation was adapted to its current `agent/agent_init.py`, conversation phase modules, client lifecycle, and runtime-provider seams rather than copied by line number. See [`hermes-agent.md`](hermes-agent.md) for installation and future-release maintenance.
 
@@ -48,14 +48,20 @@ Minimal state:
 @dataclass(frozen=True)
 class Lease:
     account_id: str              # broker public account ID
+    account_label: str
     access_token: str
     chatgpt_account_id: str
     expires_at: str
+    short_remaining_percent: int | None
+    weekly_remaining_percent: int | None
+    short_resets_at: str | None
+    weekly_resets_at: str | None
 
 class CodexBrokerLeaseManager:
     _lease_by_turn: dict[tuple[str, str], Lease]
     _preferred_by_session: dict[str, str]  # non-secret affinity only
-    _failed_turns: set[tuple[str, str]]    # bounds failover to one
+    _status_by_session: dict[str, BrokerStatus]  # non-secret display metadata
+    _failed_accounts_by_turn: dict[tuple[str, str], set[str]]
     _lock: threading.RLock
 ```
 
@@ -76,7 +82,7 @@ HTTP behavior:
 - validate every response field and never include the response body in an exception or log;
 - on `status=wait`, sleep until the broker's `next_retry_at`/`retry_after_seconds`, checking interruption at least once per second, then call `/route` again;
 - fail closed on broker errors: no request may use the placeholder or a previous turn's lease;
-- erase turn leases at turn completion; retain only the preferred broker account ID for session affinity.
+- erase turn leases at turn completion; retain only the preferred account ID and non-secret account/usage display metadata for session affinity and `/broker-status`.
 
 `apply_to_agent()` must update the active Codex client atomically:
 
@@ -133,24 +139,26 @@ Place this before `pre_api_request` and `run_llm_execution_middleware`, after re
 
 The current `_stop_spinner()` callback is passed as `on_first_delta`. Extend it to set a local `attempt_output_started = True`; reset that flag before every physical provider attempt. This is the replay boundary. Never broker-reroute an attempt after the first model delta.
 
-### Bounded failure replacement
+### Cycle-safe failure replacement
 
 After `classify_api_error()` (around line 4880), before the built-in Codex OAuth-refresh branch around line 5052:
 
 - map HTTP 401/403 to `auth`;
 - map account quota/usage exhaustion and terminal HTTP 429 to `quota`;
 - ignore generic transport and server failures;
-- if broker mode is active, no output started, and this turn has not failed over, call `replace_failed_lease()`;
+- if broker mode is active and no output started, call `replace_failed_lease()`;
 - when it returns a lease, apply it and `continue` the existing outer retry loop without incrementing the normal retry budget;
+- remember failed public account IDs for the current turn and stop if the broker returns one of them again, preventing cycles without limiting the number of distinct accounts;
 - when all accounts are exhausted, the manager waits for the broker timestamp and then returns a lease;
-- when broker access fails, abort the turn clearly instead of falling through to native Codex refresh;
-- after one replacement failure, use normal terminal error handling; never request a third account in the same user turn.
+- when broker access fails, abort the turn clearly instead of falling through to native Codex refresh.
 
 In broker mode, skip `_try_refresh_codex_client_credentials(force=True)` unconditionally. Codex Broker is the only refresh-token owner.
 
-### Cleanup
+### Status and cleanup
 
-Call `discard_turn()` from the existing turn-finalization path on success, error, and interruption. Keep only the non-secret preferred account ID.
+After each initial or replacement lease is applied, emit a lifecycle status before the model request containing the account label, remaining 5-hour/weekly percentages, and compact reset countdowns. Register gateway `/broker-status` to show the last selected route for that session without making a new lease request.
+
+Call `discard_turn()` from the existing turn-finalization path on success, error, and interruption. Keep only non-secret preferred-account and display-status metadata.
 
 ## Modify `agent/codex_headers.py`
 
@@ -186,17 +194,20 @@ Add focused tests rather than copying the entire broker implementation:
   - exact wait timestamp is honored and interruption cancels wait;
   - preferred account is reused on a new turn;
   - replacement includes `failed_account_id` and `failure_kind`;
-  - only one replacement is allowed per turn.
+  - replacement can traverse distinct accounts but stops on a repeated failed account;
+  - parsed account labels, usage, and reset timestamps are available only as non-secret status metadata.
 - `tests/run_agent/test_codex_broker_runtime.py`
   - initializes with no Hermes Codex OAuth credential or pool entry;
   - one `/route` call per user turn, not per tool-loop request;
   - actual Responses request carries leased Authorization and account ID;
   - 401 before output rebuilds the client and retries once;
-  - terminal quota 429 before output changes account and retries once;
+  - repeated terminal quota 429 responses before output traverse distinct accounts;
   - any first delta prevents automatic replay;
   - pool wait resumes after broker reset;
   - broker outage fails closed;
   - native `_try_refresh_codex_client_credentials` is never called;
+  - each selected lease emits its account status before the request;
+  - `/broker-status` reports the last session route without exposing credentials;
   - turn cleanup removes access-token state.
 - Extend `tests/agent/test_codex_cloudflare_headers.py` for explicit broker account identity and case-insensitive override.
 - Extend credential-pool tests to prove broker mode performs zero pool reads/writes while native mode is unchanged.
