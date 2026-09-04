@@ -34,7 +34,7 @@ rm "$certs"/*.csr "$certs"/*.ext "$certs"/*.srl
 chmod 600 .env "$certs"/*.key
 
 echo "Bootstrap complete."
-echo "Broker URL: https://$ip"
+echo "Broker URL: https://$ip:8787"
 echo "Admin password: $admin_password"
 echo "Install $certs/ca.crt on trusted client hosts."
 echo "Next: docker compose up --build -d"

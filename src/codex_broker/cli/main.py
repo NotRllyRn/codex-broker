@@ -70,7 +70,7 @@ def cli() -> None:
 @click.option("--host", default=None, help="Override the configured bind host.")
 @click.option("--port", type=int, default=None, help="Override the configured bind port.")
 def serve(host: str | None, port: int | None) -> None:
-    """Run the authenticated dashboard and scheduler."""
+    """Run the authenticated dashboard and credential broker."""
     settings = _settings()
     bind_host = host or settings.host
     try:

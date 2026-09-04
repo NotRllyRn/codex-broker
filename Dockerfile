@@ -28,6 +28,6 @@ ENV WINDOWKEEPER_DATA_DIR=/data \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 EXPOSE 8787
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health/live', timeout=2)"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["python","-c","import socket; socket.create_connection(('127.0.0.1', 8787), 2).close()"]
 ENTRYPOINT ["python","-m","codex_broker.container_entrypoint"]
 CMD ["serve"]
