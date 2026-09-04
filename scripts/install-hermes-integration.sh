@@ -11,11 +11,27 @@ url=${HERMES_CODEX_BROKER_URL:-${CODEX_BROKER_URL:-}}
 key=${HERMES_CODEX_BROKER_CLIENT_KEY:-${CODEX_BROKER_CLIENT_KEY:-}}
 ca_source=${HERMES_CODEX_BROKER_CA_CERT:-${CODEX_BROKER_CA_CERT:-}}
 
-[ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
-[ -d "$target/.git" ] || { echo "Hermes git installation not found at $target" >&2; exit 1; }
-[ -n "$url" ] && [ -n "$key" ] || { echo "export CODEX_BROKER_URL and CODEX_BROKER_CLIENT_KEY" >&2; exit 1; }
-case "$url" in https://*) ;; *) echo "Codex Broker URL must use HTTPS" >&2; exit 1;; esac
-[ -z "$ca_source" ] || [ -f "$ca_source" ] || { echo "Codex Broker CA certificate not found" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || {
+    echo "run as root" >&2
+    exit 1
+}
+[ -d "$target/.git" ] || {
+    echo "Hermes git installation not found at $target" >&2
+    exit 1
+}
+[ -n "$url" ] && [ -n "$key" ] || {
+    echo "export CODEX_BROKER_URL and CODEX_BROKER_CLIENT_KEY" >&2
+    exit 1
+}
+case "$url" in https://*) ;; *)
+    echo "Codex Broker URL must use HTTPS" >&2
+    exit 1
+    ;;
+esac
+[ -z "$ca_source" ] || [ -f "$ca_source" ] || {
+    echo "Codex Broker CA certificate not found" >&2
+    exit 1
+}
 
 owner=$(stat -c %U "$target")
 group=$(id -gn "$owner")
@@ -24,8 +40,14 @@ env_file=$home/.hermes/.env
 cert_dir=$home/.hermes/certs
 cert_file=$cert_dir/codex-broker-ca.crt
 python=$target/venv/bin/python
-[ -x "$python" ] || { echo "Hermes virtual environment not found at $python" >&2; exit 1; }
-[ -z "$(runuser -u "$owner" -- git -C "$target" status --porcelain)" ] || { echo "Hermes checkout has uncommitted changes" >&2; exit 1; }
+[ -x "$python" ] || {
+    echo "Hermes virtual environment not found at $python" >&2
+    exit 1
+}
+[ -z "$(runuser -u "$owner" -- git -C "$target" status --porcelain)" ] || {
+    echo "Hermes checkout has uncommitted changes" >&2
+    exit 1
+}
 
 work=$(mktemp -d)
 chmod 700 "$work"
@@ -35,8 +57,14 @@ env_existed=0
 cert_existed=0
 changed=0
 success=0
-[ ! -f "$env_file" ] || { cp -p "$env_file" "$work/env"; env_existed=1; }
-[ ! -f "$cert_file" ] || { cp -p "$cert_file" "$work/ca.crt"; cert_existed=1; }
+[ ! -f "$env_file" ] || {
+    cp -p "$env_file" "$work/env"
+    env_existed=1
+}
+[ ! -f "$cert_file" ] || {
+    cp -p "$cert_file" "$work/ca.crt"
+    cert_existed=1
+}
 
 rollback() {
     status=$?
@@ -88,7 +116,7 @@ fi
 [ -e "$env_file" ] || install -o "$owner" -g "$group" -m 0600 /dev/null "$env_file"
 
 BROKER_URL=$url BROKER_KEY=$key BROKER_CA=$ca_value ENV_FILE=$env_file \
-runuser -u "$owner" -p -- "$python" - <<'PY'
+    runuser -u "$owner" -p -- "$python" - <<'PY'
 import os
 from pathlib import Path
 
@@ -118,6 +146,9 @@ chmod 600 "$env_file"
 
 systemctl restart "$service"
 sleep 8
-systemctl is-active --quiet "$service" || { echo "Hermes gateway failed to start" >&2; exit 1; }
+systemctl is-active --quiet "$service" || {
+    echo "Hermes gateway failed to start" >&2
+    exit 1
+}
 success=1
 echo "Hermes Codex Broker integration installed: v0.21.0 @ $pinned_commit"
