@@ -82,6 +82,8 @@ test("requires a trusted local CA and bounds responses", async () => {
             expires_at: "2099-01-01T00:00:00Z",
             short_remaining_percent: 80,
             weekly_remaining_percent: 60,
+            short_resets_at: "2099-01-01T00:00:00Z",
+            weekly_resets_at: "2099-01-02T00:00:00Z",
           }),
         );
       });

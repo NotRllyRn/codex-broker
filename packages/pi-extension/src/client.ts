@@ -14,6 +14,8 @@ export interface Lease {
   expires_at: string;
   short_remaining_percent: number | null;
   weekly_remaining_percent: number | null;
+  short_resets_at: string | null;
+  weekly_resets_at: string | null;
 }
 
 export interface Wait {
@@ -47,7 +49,11 @@ function isLease(value: unknown): value is Lease {
     (typeof value.short_remaining_percent === "number" ||
       value.short_remaining_percent === null) &&
     (typeof value.weekly_remaining_percent === "number" ||
-      value.weekly_remaining_percent === null)
+      value.weekly_remaining_percent === null) &&
+    (typeof value.short_resets_at === "string" ||
+      value.short_resets_at === null) &&
+    (typeof value.weekly_resets_at === "string" ||
+      value.weekly_resets_at === null)
   );
 }
 

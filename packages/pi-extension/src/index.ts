@@ -50,7 +50,8 @@ export default function codexBroker(pi: ExtensionAPI): void {
   let lease: Lease | undefined;
   let codexActive = false;
   let meaningfulOutput = false;
-  let retried = false;
+  let failureHandled = false;
+  const failedAccounts = new Set<string>();
   let retryTurn = false;
   let retryQueued = false;
   let turnId = "";
@@ -58,10 +59,23 @@ export default function codexBroker(pi: ExtensionAPI): void {
   const broker = (): BrokerClient => (client ??= clientFromEnvironment());
   const percent = (value: number | null): string =>
     value === null ? "?" : `${value}%`;
+  const window = (remaining: number | null, reset: string | null): string => {
+    const minutes = Math.max(
+      0,
+      Math.ceil((Date.parse(reset ?? "") - Date.now()) / 60_000),
+    );
+    const duration =
+      minutes >= 1_440
+        ? `${Math.floor(minutes / 1_440)}d ${Math.floor((minutes % 1_440) / 60)}h`
+        : minutes >= 60
+          ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+          : `${minutes}m`;
+    return `${percent(remaining)}${reset ? ` (resets ${duration})` : ""}`;
+  };
+  const status = (value: Lease): string =>
+    `${value.account_label} · 5h ${window(value.short_remaining_percent, value.short_resets_at)} · week ${window(value.weekly_remaining_percent, value.weekly_resets_at)}`;
   const show = (ctx: ExtensionContext): void => {
-    const label = lease
-      ? `broker: ${lease.account_label} · 5h ${percent(lease.short_remaining_percent)} · week ${percent(lease.weekly_remaining_percent)}`
-      : "broker: waiting";
+    const label = lease ? `broker: ${status(lease)}` : "broker: waiting";
     ctx.ui.setStatus(
       STATUS_ID,
       ctx.ui.theme.fg(lease ? "success" : "warning", label),
@@ -91,8 +105,15 @@ export default function codexBroker(pi: ExtensionAPI): void {
     ctx: ExtensionContext,
     kind: string,
   ): Promise<boolean> => {
-    if (!lease || retried || meaningfulOutput) return false;
-    retried = true;
+    if (
+      !lease ||
+      failureHandled ||
+      meaningfulOutput ||
+      failedAccounts.has(lease.account_id)
+    )
+      return false;
+    failureHandled = true;
+    failedAccounts.add(lease.account_id);
     const replacement = await route(
       ctx,
       {
@@ -129,10 +150,13 @@ export default function codexBroker(pi: ExtensionAPI): void {
     if (!codexActive) return;
     if (retryTurn) {
       retryTurn = false;
+      meaningfulOutput = false;
+      failureHandled = false;
       return;
     }
     meaningfulOutput = false;
-    retried = false;
+    failureHandled = false;
+    failedAccounts.clear();
     retryQueued = false;
     turnId = randomUUID();
     await route(
@@ -171,8 +195,7 @@ export default function codexBroker(pi: ExtensionAPI): void {
     pi.sendMessage(
       {
         customType: "codex-broker-retry",
-        content:
-          "The broker changed accounts. Retry the interrupted request once.",
+        content: "The broker changed accounts. Resume the interrupted request.",
         display: true,
       },
       { deliverAs: "followUp", triggerTurn: true },
@@ -188,7 +211,7 @@ export default function codexBroker(pi: ExtensionAPI): void {
     handler: async (_args, ctx) => {
       ctx.ui.notify(
         lease
-          ? `Codex Broker account: ${lease.account_label} · 5h ${percent(lease.short_remaining_percent)} · week ${percent(lease.weekly_remaining_percent)}`
+          ? `Codex Broker account: ${status(lease)}`
           : "Codex Broker has no active route",
         "info",
       );

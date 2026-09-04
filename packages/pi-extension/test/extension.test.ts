@@ -18,6 +18,8 @@ const LEASE: Lease = {
   expires_at: "2099-01-01T00:00:00Z",
   short_remaining_percent: 80,
   weekly_remaining_percent: 60,
+  short_resets_at: new Date(Date.now() + 121 * 60_000).toISOString(),
+  weekly_resets_at: new Date(Date.now() + 51 * 60 * 60_000).toISOString(),
 };
 
 test("waits for pool reset and resumes automatically", async () => {
@@ -64,14 +66,15 @@ test("waits for pool reset and resumes automatically", async () => {
   }
 });
 
-test("routes once per prompt and bounds pre-output retry", async () => {
+test("keeps replacing exhausted accounts before output", async () => {
   const originalRoute = BrokerClient.prototype.route;
   const calls: RouteInput[] = [];
   BrokerClient.prototype.route = async (input) => {
     calls.push(input);
     return {
       ...LEASE,
-      account_id: calls.length === 2 ? "replacement" : "public",
+      account_id:
+        ["public", "replacement", "third"][calls.length - 1] ?? "last",
     };
   };
   process.env.CODEX_BROKER_URL = "https://broker.test";
@@ -102,7 +105,10 @@ test("routes once per prompt and bounds pre-output retry", async () => {
     codexBroker(pi);
     await handlers.get("before_agent_start")?.({}, ctx);
     assert.equal(calls.length, 1);
-    assert.equal(statuses.at(-1), "broker: Personal · 5h 80% · week 60%");
+    assert.equal(
+      statuses.at(-1),
+      "broker: Personal · 5h 80% (resets 2h 1m) · week 60% (resets 2d 3h)",
+    );
     await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
     assert.equal(calls.length, 2);
     assert.equal(calls[1].failed_account_id, "public");
@@ -112,9 +118,13 @@ test("routes once per prompt and bounds pre-output retry", async () => {
     assert.equal(sent.length, 1);
     await handlers.get("before_agent_start")?.({}, ctx);
     assert.equal(calls.length, 2);
-
-    await handlers.get("before_agent_start")?.({}, ctx);
+    await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
     assert.equal(calls.length, 3);
+    assert.equal(calls[2].failed_account_id, "replacement");
+    handlers.get("agent_end")?.({}, ctx);
+    assert.equal(sent.length, 2);
+    await handlers.get("before_agent_start")?.({}, ctx);
+
     handlers.get("message_update")?.(
       { assistantMessageEvent: { type: "text_delta" } },
       ctx,
