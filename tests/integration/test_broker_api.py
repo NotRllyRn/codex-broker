@@ -1,9 +1,11 @@
 # pyright: reportMissingImports=false
 
+import asyncio
 import base64
 import hashlib
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 from typing import Any
@@ -11,7 +13,8 @@ from typing import Any
 from fastapi.testclient import TestClient
 
 from codex_broker.config import Settings
-from codex_broker.vault import Vault, generate_key
+from codex_broker.database import Database
+from codex_broker.vault import Vault, decode_key, generate_key
 from codex_broker.web.app import create_app
 
 PASSWORD = "correct horse battery staple"  # noqa: S105
@@ -111,3 +114,89 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
         }
         assert response.json()["expires_at"].endswith("Z")
         assert "refresh" not in response.text
+
+
+def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
+    migrations = Path(__file__).parents[2] / "src" / "codex_broker" / "migrations"
+    old_migrations = tmp_path / "old-migrations"
+    old_migrations.mkdir()
+    for migration in sorted(migrations.glob("00[1-6]_*.sql")):
+        shutil.copy2(migration, old_migrations)
+
+    key = generate_key()
+    database_path = tmp_path / "data" / "windowkeeper.db"
+    old = Database(database_path, old_migrations)
+    old.start()
+    instance = asyncio.run(
+        old.call(lambda connection: str(connection.execute("SELECT instance_uuid FROM instance_metadata").fetchone()[0]))
+    )
+    vault = Vault(decode_key(key), instance)
+    access = jwt(
+        {
+            "exp": int(time.time()) + 3600,
+            ACCOUNT_CLAIM: {"chatgpt_account_id": "upstream-old"},
+        }
+    )
+
+    def seed(connection: Any) -> None:
+        envelope = vault.encrypt("internal-old", credential(access))
+        connection.execute(
+            "INSERT INTO vault_state VALUES(1,?,?,?,1)",
+            (vault.key_id, b"legacy", vault.seal_text("vault-sentinel", f"windowkeeper:{instance}")),
+        )
+        connection.execute(
+            "INSERT INTO accounts VALUES('internal-old','public-old','Existing','chatgpt','CHATGPT_DEVICE_CODE','CHATGPT_DEVICE_CODE',NULL,1,'ACTIVE',1,1,NULL)"
+        )
+        connection.execute(
+            "INSERT INTO account_state VALUES('internal-old','VERIFIED','STOPPED','HEALTHY','FRESH','UNSCHEDULED',NULL,NULL,1,1,NULL,NULL,NULL,1,1)"
+        )
+        connection.execute("INSERT INTO usage_current(account_id) VALUES('internal-old')")
+        connection.execute(
+            "INSERT INTO credential_bundles VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                envelope.bundle_id,
+                envelope.account_id,
+                "ACTIVE",
+                1,
+                1,
+                envelope.key_id,
+                envelope.nonce,
+                envelope.ciphertext,
+                envelope.aad,
+                "test",
+                1,
+                1,
+                None,
+            ),
+        )
+
+    asyncio.run(old.transaction(seed))
+    asyncio.run(old.close())
+
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        runtime_dir=tmp_path / "run",
+        vault_key=key,
+        admin_password=PASSWORD,
+        codex_executable=str(Path(__file__).parents[1] / "fake_codex.py"),
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        login = client.post("/login", data={"password": PASSWORD})
+        client.cookies.update(login.cookies)
+        dashboard = client.get("/api/internal/v1/dashboard").json()["data"]
+        assert dashboard[0]["display_name"] == "Existing"
+        state = app.state.windowkeeper
+        assert client.portal is not None
+        issued = client.portal.call(state.client_keys.create, "Migration test")
+        response = client.post(
+            "/api/v1/route",
+            headers={"Authorization": f"Bearer {issued.token}"},
+            json={"session_id": "session", "turn_id": "turn"},
+        )
+        assert response.json()["access_token"] == access
+        columns = client.portal.call(
+            state.database.call,
+            lambda connection: [row[1] for row in connection.execute("PRAGMA table_info(account_state)")],
+        )
+        assert "activation_state" not in columns
