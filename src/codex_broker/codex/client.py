@@ -60,7 +60,7 @@ class AppServerClient:
         try:
             await client.request(
                 "initialize",
-                {"clientInfo": {"name": "windowkeeper", "version": "0.1.0"}, "capabilities": {}},
+                {"clientInfo": {"name": "codex-broker", "version": "0.1.0"}, "capabilities": {}},
                 timeout=timeout,
             )
             await client.notify("initialized", {})

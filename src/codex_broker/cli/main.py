@@ -174,7 +174,7 @@ def version_command(as_json: bool) -> None:
         click.echo(
             json.dumps(
                 {
-                    "api_version": "windowkeeper.dev/cli/v1",
+                    "api_version": "codex-broker.dev/cli/v1",
                     "kind": "Version",
                     "data": {"version": VERSION},
                 }
@@ -205,7 +205,7 @@ def health(as_json: bool) -> None:
             click.echo(
                 json.dumps(
                     {
-                        "api_version": "windowkeeper.dev/cli/v1",
+                        "api_version": "codex-broker.dev/cli/v1",
                         "kind": "Health",
                         "data": {"status": "unavailable", "error": type(error).__name__},
                     }
@@ -215,7 +215,7 @@ def health(as_json: bool) -> None:
             click.echo("Codex Broker service is unavailable.", err=True)
         raise click.exceptions.Exit(5) from error
     payload = {
-        "api_version": "windowkeeper.dev/cli/v1",
+        "api_version": "codex-broker.dev/cli/v1",
         "kind": "Health",
         "data": data,
     }

@@ -23,13 +23,13 @@ EVENT_CODES = {
     "incident.opened": "WK-101",
     "incident.updated": "WK-102",
     "incident.resolved": "WK-103",
-    "windowkeeper.test": "WK-900",
+    "codex-broker.test": "WK-900",
 }
 EVENT_TITLES = {
     "incident.opened": "INCIDENT OPENED",
     "incident.updated": "INCIDENT UPDATED",
     "incident.resolved": "INCIDENT RESOLVED",
-    "windowkeeper.test": "WEBHOOK TEST",
+    "codex-broker.test": "WEBHOOK TEST",
 }
 
 
@@ -43,7 +43,7 @@ def _notification_text(event: dict[str, Any]) -> str:
     account = _text(data.get("account_name") or event["subject"])
     email = _text(data.get("account_email"))
     lines = [
-        f"WINDOWKEEPER · {notification['code']}",
+        f"CODEX BROKER · {notification['code']}",
         str(notification["title"]),
         "",
         f"Account: {account}{f' <{email}>' if email else ''}",
@@ -268,14 +268,14 @@ class WebhookDispatcher:
         event_id = new_id()
         now = self.clock.now_ms()
         event = {
-            "schema": "windowkeeper.webhook/v1",
+            "schema": "codex-broker.webhook/v1",
             "event_id": event_id,
             "event_type": event_type,
             "subject": subject,
             "occurred_at_ms": now,
             "occurred_at": datetime.fromtimestamp(now / 1000, UTC).isoformat(),
             "notification": {
-                "source": "WINDOWKEEPER",
+                "source": "CODEX_BROKER",
                 "code": EVENT_CODES.get(event_type, "WK-999"),
                 "title": EVENT_TITLES.get(event_type, event_type.replace(".", " ").upper()),
             },
@@ -323,7 +323,7 @@ class WebhookDispatcher:
 
     async def test(self, destination_id: str) -> str:
         return await self.emit(
-            "windowkeeper.test",
+            "codex-broker.test",
             f"destination:{destination_id}",
             {
                 "destination_id": destination_id,
@@ -379,10 +379,10 @@ class WebhookDispatcher:
         headers = {
             "Content-Type": delivery["content_type"],
             "User-Agent": "codex-broker/0.1",
-            "X-Windowkeeper-Event-ID": delivery["event_id"],
+            "X-Codex-Broker-Event-ID": delivery["event_id"],
         }
         if secret:
-            headers["X-Windowkeeper-Signature"] = (
+            headers["X-Codex-Broker-Signature"] = (
                 "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
             )
         status: int | None = None

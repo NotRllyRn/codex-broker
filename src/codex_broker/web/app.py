@@ -124,7 +124,7 @@ def _templates() -> Environment:
 def problem(error: WindowkeeperError, request: Request) -> JSONResponse:
     return JSONResponse(
         {
-            "type": f"urn:windowkeeper:problem:{error.code.lower().replace('_', '-')}",
+            "type": f"urn:codex-broker:problem:{error.code.lower().replace('_', '-')}",
             "title": error.code.replace("_", " ").title(),
             "status": error.status,
             "detail": error.detail,
@@ -660,7 +660,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             Response(
                 body + ("\n" if body else ""),
                 media_type="application/x-ndjson",
-                headers={"Content-Disposition": "attachment; filename=windowkeeper-logs.jsonl"},
+                headers={"Content-Disposition": "attachment; filename=codex-broker-logs.jsonl"},
             ),
             no_store=True,
         )
@@ -774,7 +774,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_dashboard(request: Request) -> dict[str, Any]:
         await require_session(request)
         return {
-            "api_version": "windowkeeper.dev/internal/v1",
+            "api_version": "codex-broker.dev/internal/v1",
             "kind": "Dashboard",
             "data": [account_view(account) for account in await state(request).services.accounts()],
         }
@@ -783,7 +783,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_operation(request: Request, operation_id: str) -> dict[str, Any]:
         await require_session(request)
         return {
-            "api_version": "windowkeeper.dev/internal/v1",
+            "api_version": "codex-broker.dev/internal/v1",
             "kind": "Operation",
             "data": await state(request).services.operation(operation_id),
         }
@@ -800,7 +800,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return _security_headers(
             JSONResponse(
                 {
-                    "api_version": "windowkeeper.dev/internal/v1",
+                    "api_version": "codex-broker.dev/internal/v1",
                     "kind": "LoginInteraction",
                     "data": value,
                 }

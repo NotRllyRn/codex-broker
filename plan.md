@@ -604,25 +604,26 @@ Keeping the old lock name has an extra safety benefit: an old Windowkeeper binar
 
 Existing `credential_bundles` already enforces one `ACTIVE` row per account and contains encrypted credentials. Do not copy/re-enroll them. Codex Broker reads the same rows using the same vault key and immediately becomes their owner.
 
-`007_client_api_keys.sql` is additive; no credential rows change during schema migration.
+Migrations 007 and 008 add client keys and temporary account exclusions. Migration 009 drops only the retired activation tables and `account_state.activation_state`; no account or credential row is copied, re-enrolled, or rewritten.
 
 ## Upgrade procedure
 
 1. Stop old Windowkeeper.
 2. Back up the data volume + vault key.
 3. Start Codex Broker against the **same** volume and vault key.
-4. Apply additive migration `007`.
+4. Apply migrations 007-009; retain the automatic pre-v9 database backup.
 5. Verify vault sentinel with the unchanged legacy format.
 6. Decrypt/read every existing `ACTIVE` credential without writing it.
 7. Display existing accounts and usage.
-8. Perform one controlled usage refresh on one account and verify checkpoint promotion.
-9. Only then enable Pi/Hermes broker consumers.
+8. Confirm only retired activation schema/history was removed.
+9. Perform one controlled usage refresh on one account and verify checkpoint promotion.
+10. Only then enable Pi/Hermes broker consumers.
 
 Expected result: **zero ChatGPT account sign-ins required.**
 
 ## Rollback
 
-Because the first migration is additive and preserves all credential formats, the old Windowkeeper image should be able to boot on the same database while ignoring the new client-key table. Never run old and new binaries concurrently.
+Migrations preserve every credential format, but migration 009 removes schema expected by old Windowkeeper. Roll back by restoring the automatic pre-v9 database backup, then start the old image with the same vault key. Never run old and new binaries concurrently.
 
 ---
 

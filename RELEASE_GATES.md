@@ -31,7 +31,7 @@ Required coverage includes:
 
 Record the pinned Codex package version, `codex --version`, executable SHA-256, App Server initialization/login/rate-limit response shapes, callback ports, and credential-file allowlist. Test upgrades independently from broker behavior changes.
 
-Historical compatibility identifiers must remain stable: `windowkeeper.db`, lock/volume names, vault sentinel and HKDF/AAD strings, cookie name, and persisted webhook/log schema identifiers.
+Historical compatibility identifiers must remain stable: `windowkeeper.db`, lock/volume names, vault sentinel and HKDF/AAD strings, cookie name, and existing persisted rows. New CLI, webhook, log, and problem-schema values use Codex Broker branding.
 
 ## Live security and deployment
 

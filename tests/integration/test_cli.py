@@ -85,7 +85,7 @@ def test_cli_initialization_vault_verification_and_version(tmp_path: Path) -> No
     version = runner.invoke(cli, ["version", "--json"], env=environment)
     assert version.exit_code == 0, version.output
     payload = json.loads(version.output)
-    assert payload["api_version"] == "windowkeeper.dev/cli/v1"
+    assert payload["api_version"] == "codex-broker.dev/cli/v1"
     assert payload["data"]["version"]
 
     executable = tmp_path / "fake_codex.py"

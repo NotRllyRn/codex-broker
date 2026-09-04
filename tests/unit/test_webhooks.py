@@ -72,7 +72,7 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
     )
     generic_body = json.loads(bytes(row[0]))
     assert generic_body["notification"] == {
-        "source": "WINDOWKEEPER",
+        "source": "CODEX_BROKER",
         "code": "WK-101",
         "title": "INCIDENT OPENED",
     }
@@ -85,10 +85,10 @@ async def test_webhook_body_is_immutable_and_destination_is_encrypted(tmp_path: 
         ).fetchall()
     )
     provider_bodies = {item[0]: json.loads(bytes(item[1])) for item in provider_rows}
-    assert provider_bodies[slack]["blocks"][0]["text"]["text"] == "WINDOWKEEPER · WK-101"
+    assert provider_bodies[slack]["blocks"][0]["text"]["text"] == "CODEX BROKER · WK-101"
     assert "Arina &lt;arina@example.test&gt;" in provider_bodies[slack]["blocks"][1]["text"]["text"]
     assert "How to fix:" in provider_bodies[slack]["text"]
-    assert provider_bodies[discord]["content"] == "WINDOWKEEPER · WK-101"
+    assert provider_bodies[discord]["content"] == "CODEX BROKER · WK-101"
     assert provider_bodies[discord]["allowed_mentions"] == {"parse": []}
     assert "CODEX_AUTH_REQUIRED" in provider_bodies[discord]["embeds"][0]["description"]
     stored = await database.call(

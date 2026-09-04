@@ -34,7 +34,7 @@ class LogBook(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         event = redact(
             {
-                "schema": "windowkeeper.log/v1",
+                "schema": "codex-broker.log/v1",
                 "ts": datetime.now(UTC).isoformat(),
                 "level": record.levelname,
                 "event": getattr(record, "event", record.name),
@@ -134,7 +134,7 @@ class LogBook(logging.Handler):
                 if self._dropped:
                     batch.append(
                         {
-                            "schema": "windowkeeper.log/v1",
+                            "schema": "codex-broker.log/v1",
                             "ts": datetime.now(UTC).isoformat(),
                             "level": "WARNING",
                             "event": "log.queue_overflow",
