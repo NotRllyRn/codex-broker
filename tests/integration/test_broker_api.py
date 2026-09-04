@@ -115,6 +115,24 @@ def test_machine_api_authenticates_and_returns_access_only_lease(tmp_path: Path)
         }
         assert response.json()["expires_at"].endswith("Z")
         assert "refresh" not in response.text
+        client.cookies.clear()
+        assert (
+            client.get(
+                "/api/internal/v1/dashboard",
+                headers={"Authorization": f"Bearer {issued.token}"},
+                follow_redirects=False,
+            ).status_code
+            == 401
+        )
+        portal.call(state.client_keys.revoke, issued.key_id)
+        assert (
+            client.post(
+                "/api/v1/route",
+                headers={"Authorization": f"Bearer {issued.token}"},
+                json={"session_id": "session", "turn_id": "revoked"},
+            ).status_code
+            == 401
+        )
 
 
 def test_concurrent_near_expiry_routes_refresh_once(tmp_path: Path) -> None:

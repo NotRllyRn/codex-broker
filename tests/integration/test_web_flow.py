@@ -718,6 +718,7 @@ def test_authentication_csrf_and_readiness_fail_closed(tmp_path: Path) -> None:
         raw_key = re.search(r"<code>(cbk_[^<]+)</code>", key_page.text).group(1)  # type: ignore[union-attr]
         assert "Copy this key now" in key_page.text
         assert raw_key not in client.get("/settings").text
+        assert raw_key not in client.get("/logs/export").text
         assert (
             client.post(
                 "/settings/webhooks",

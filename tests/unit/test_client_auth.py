@@ -25,5 +25,7 @@ async def test_client_keys_are_hashed_authenticated_and_revoked(tmp_path: Path) 
         assert await service.revoke(issued.key_id)
         with pytest.raises(WindowkeeperError, match="Client authentication failed"):
             await service.authenticate(issued.token)
+        assert await service.delete_revoked(issued.key_id)
+        assert await service.list() == []
     finally:
         await database.close()
