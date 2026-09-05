@@ -10,7 +10,7 @@ Implement this change in the live Hermes checkout, not in Codex Broker.
 
 ## Implementation status
 
-This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r3`, tag `codex-broker-v0.21.0-r3`, commit `f49c08c27a`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
+This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r4`, tag `codex-broker-v0.21.0-r4`, commit `f36440d7dd`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
 
 The live v0.21.0 checkout had decomposed several paths since the archived audit, so the implementation was adapted to its current `agent/agent_init.py`, conversation phase modules, client lifecycle, and runtime-provider seams rather than copied by line number. See [`hermes-agent.md`](hermes-agent.md) for installation and future-release maintenance.
 
@@ -135,9 +135,9 @@ if agent.provider == "openai-codex" and agent._codex_broker is not None:
 
 Place this before `pre_api_request` and `run_llm_execution_middleware`, after request identity is known. `lease_for_turn()` must return the same in-memory lease for inner tool-loop calls but perform a new broker call for the next user turn.
 
-### Track safe retry boundary
+### Track continuation boundary
 
-The current `_stop_spinner()` callback is passed as `on_first_delta`. Extend it to set a local `attempt_output_started = True`; reset that flag before every physical provider attempt. This is the replay boundary. Never broker-reroute an attempt after the first model delta.
+The current `_stop_spinner()` callback is passed as `on_first_delta`. Extend it to record that output started and reset that flag before every physical provider attempt. Before-output failures may replay normally. For a quota/auth failure after visible output, append the captured partial assistant text and a synthetic continuation instruction to the in-memory request before rerouting, so the replacement account continues rather than repeats the response. Other post-output failures remain blocked.
 
 ### Cycle-safe failure replacement
 
@@ -146,8 +146,9 @@ After `classify_api_error()` (around line 4880), before the built-in Codex OAuth
 - map HTTP 401/403 to `auth`;
 - map account quota/usage exhaustion and terminal HTTP 429 to `quota`;
 - ignore generic transport and server failures;
-- if broker mode is active and no output started, call `replace_failed_lease()`;
-- when it returns a lease, apply it and `continue` the existing outer retry loop without incrementing the normal retry budget;
+- in broker mode, call `replace_failed_lease()` for quota/auth failures before or after output;
+- after output, preserve the visible partial response and append `Continue exactly where the interrupted response stopped without repeating prior output.` to the request projection;
+- when replacement returns a lease, apply it and `continue` the existing outer retry loop without incrementing the normal retry budget;
 - remember failed public account IDs for the current turn and stop if the broker returns one of them again, preventing cycles without limiting the number of distinct accounts;
 - when all accounts are exhausted, the manager waits for the broker timestamp and then returns a lease;
 - when broker access fails, abort the turn clearly instead of falling through to native Codex refresh.
@@ -201,8 +202,9 @@ Add focused tests rather than copying the entire broker implementation:
   - one `/route` call per user turn, not per tool-loop request;
   - actual Responses request carries leased Authorization and account ID;
   - 401 before output rebuilds the client and retries once;
-  - repeated terminal quota 429 responses before output traverse distinct accounts;
-  - any first delta prevents automatic replay;
+  - repeated terminal quota 429 responses traverse distinct accounts;
+  - post-output quota/auth failure preserves the partial assistant response and continues without repeating it;
+  - non-account failures after the first delta remain blocked;
   - pool wait resumes after broker reset;
   - broker outage fails closed;
   - native `_try_refresh_codex_client_credentials` is never called;
@@ -224,7 +226,7 @@ Use a local HTTPS test server and generated test CA. Do not weaken TLS in tests 
 6. Submit a second prompt; verify a fresh broker request with the previous account as preference.
 7. Force account A to return 401 before output; verify exactly one broker failure report and account B request.
 8. Force a quota response before output; verify account B is selected.
-9. Force a failure after a streamed delta; verify no replay occurs.
+9. Force a quota response after a streamed delta; verify account B continues from the partial response without repeating it.
 10. Exhaust every account; verify Hermes waits until the broker-provided timestamp and resumes.
 11. Revoke the Hermes broker key; verify the next turn fails before any OpenAI request.
 12. Search Hermes state, logs, config, and credential pools for the leased token; it must not exist after turn cleanup.

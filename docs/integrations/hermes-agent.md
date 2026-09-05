@@ -10,9 +10,9 @@ The fork remains linked to `NousResearch/hermes-agent` so upstream synchronizati
 | --- | --- |
 | Hermes release reported in production | `v0.21.0` (`v2026.8.31`) |
 | Tested upstream production revision | `b0ab2e163a50d4e6c36507eba955a6067fde6abc` |
-| Integration branch | `codex-broker/v0.21.0-r3` |
-| Integration tag | `codex-broker-v0.21.0-r3` |
-| Tested integration commit | `f49c08c27a4344ffdbcdd664c53eec1573175adf` |
+| Integration branch | `codex-broker/v0.21.0-r4` |
+| Integration tag | `codex-broker-v0.21.0-r4` |
+| Tested integration commit | `f36440d7ddb9658ea1010aa62023ef90b1afefae` |
 | Rolling rebase branch | `codex-broker-next` |
 
 The production Git installer identified itself as Hermes Agent `v0.21.0` while running upstream
@@ -54,15 +54,17 @@ The installer:
    `/home/hermes/.hermes/hermes-agent`);
 2. verifies the immutable fork commit and its expected upstream base;
 3. refuses an unsupported newer or divergent Hermes checkout instead of silently downgrading it;
-4. checks out `codex-broker/v0.21.0-r3` at the exact tested commit;
+4. checks out `codex-broker/v0.21.0-r4` at the exact tested commit;
 5. copies only the public broker CA certificate and writes the three Hermes broker variables;
 6. verifies broker TLS and client-key authentication;
 7. restarts `hermes-gateway.service`; and
 8. restores the previous checkout and configuration if validation or startup fails.
 
-This pin adds cycle-safe pre-output account failover, an account/usage pre-message before each
-provider attempt, and gateway `/broker-status`. Hermes continues across distinct broker accounts
-until one succeeds or the broker waits for the exact pool reset.
+This pin adds cycle-safe account failover, an account/usage pre-message before each provider
+attempt, and gateway `/broker-status`. Hermes continues across distinct broker accounts until one
+succeeds or the broker waits for the exact pool reset. If quota/auth fails after visible output,
+Hermes preserves that partial response and asks the replacement account to continue without
+repeating it.
 
 Override `HERMES_AGENT_DIR` or `HERMES_GATEWAY_SERVICE` only for a nonstandard installation. The
 broker server certificate and private key must remain on the broker host.

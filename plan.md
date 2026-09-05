@@ -8,7 +8,7 @@ Inputs audited:
 - `sources/pi-0.84.4.zip` — current Pi monorepo source and extension/provider APIs;
 - `sources/hermes-agent-2026.8.31.zip` — current Hermes source, plugin hooks, middleware, provider runtime, and credential pools.
 
-There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r3` commit; the original patch specification remains the behavioral contract.
+There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r4` commit; the original patch specification remains the behavioral contract.
 
 ## 1. Decision
 
@@ -751,14 +751,14 @@ The fork implements these requirements:
 2. change all `openai-codex` branches in `hermes_cli/runtime_provider.py` to use a non-secret initialization sentinel in broker mode rather than native credentials;
 3. attach the manager in `agent/agent_init.py` and disable the native Codex credential pool;
 4. obtain one lease per `(session_id, turn_id)` in `agent/conversation_loop.py`, apply it by atomically rebuilding the Codex client, and reuse it for inner tool-loop requests;
-5. use the existing `on_first_delta` callback as the no-replay boundary;
-6. replace pre-output 401/403/quota failures through the existing outer retry loop until an account succeeds or each returned account has failed once;
+5. use the existing `on_first_delta` callback to distinguish replay from continuation;
+6. replace 401/403/quota failures through the existing outer retry loop until an account succeeds or each returned account has failed once, preserving partial output and injecting a no-repeat continuation instruction when output already started;
 7. wait on the broker's exact pool-reset timestamp and remain interruptible;
 8. announce the selected account label and usage before each attempt and expose `/broker-status` for the session's last route;
 9. discard access-token state at every turn exit and preserve only non-secret preferred-account and display-status metadata;
 10. skip `_try_refresh_codex_client_credentials()` and every native Codex pool read/write while broker mode is active.
 
-The fork's `codex-broker/v0.21.0-r3` branch and matching tag pin integration commit `f49c08c27a` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
+The fork's `codex-broker/v0.21.0-r4` branch and matching tag pin integration commit `f36440d7dd` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
 
 ## Existing Hermes plugin files to retire
 

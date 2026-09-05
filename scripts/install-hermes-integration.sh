@@ -2,8 +2,8 @@
 set -eu
 
 fork_url=https://github.com/NotRllyRn/hermes-agent-codex-broker.git
-fork_ref=codex-broker/v0.21.0-r3
-pinned_commit=f49c08c27a4344ffdbcdd664c53eec1573175adf
+fork_ref=codex-broker/v0.21.0-r4
+pinned_commit=f36440d7ddb9658ea1010aa62023ef90b1afefae
 upstream_base=b0ab2e163a50d4e6c36507eba955a6067fde6abc
 target=${HERMES_AGENT_DIR:-/home/hermes/.hermes/hermes-agent}
 service=${HERMES_GATEWAY_SERVICE:-hermes-gateway.service}
@@ -90,7 +90,7 @@ runuser -u "$owner" -- git -C "$target" fetch --no-tags "$fork_url" "$fork_ref"
     echo "fork branch no longer matches the reviewed pin" >&2
     exit 1
 }
-[ "$(runuser -u "$owner" -- git -C "$target" rev-parse FETCH_HEAD~4)" = "$upstream_base" ] || {
+[ "$(runuser -u "$owner" -- git -C "$target" rev-parse FETCH_HEAD~5)" = "$upstream_base" ] || {
     echo "fork branch has an unexpected upstream base" >&2
     exit 1
 }
@@ -151,4 +151,4 @@ systemctl is-active --quiet "$service" || {
     exit 1
 }
 success=1
-echo "Hermes Codex Broker integration installed: v0.21.0-r3 @ $pinned_commit"
+echo "Hermes Codex Broker integration installed: v0.21.0-r4 @ $pinned_commit"
