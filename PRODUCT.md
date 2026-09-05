@@ -29,7 +29,7 @@ One hardened Docker-first Python process runs on a trusted Linux host. Same-netw
 - Machine leases contain access token, upstream account ID, public broker account ID, and expiry—never refresh tokens.
 - SQLite with one owning process; AES-256-GCM vault envelopes; temporary plaintext runtime directories.
 - One Orbit dashboard, persistent administrator sessions, CSRF, incidents, webhooks, and sanitized logs.
-- Automatic activation/model turns are removed.
+- Legacy activation controls/history are removed; a fixed minimal ephemeral pulse keeps idle short/weekly windows active.
 - WCAG 2.2 AA target.
 
 ## Product principles

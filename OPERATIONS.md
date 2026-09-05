@@ -33,7 +33,7 @@ Each account has one mutable encrypted `ACTIVE` credential. Every authenticated 
 
 An optional `EXPORT` is an immutable manual snapshot. Normal usage, routing, and reauthentication never replace it. Do not distribute one export to multiple independent refresh-token writers.
 
-Automatic activation/model turns are not part of Codex Broker.
+A fixed minimal ephemeral turn pulses each verified account at startup and at its earliest pool reset. This keeps short/weekly reset clocks active without restoring legacy activation controls or arbitrary scheduled inference. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
 
 ## Client keys
 
@@ -78,5 +78,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; rollback to software expecting those tables requires restoring the pre-v9 backup.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state. Rollback to software expecting the old tables requires restoring the pre-v9 backup.
 6. Do not require account relogin for a normal upgrade.

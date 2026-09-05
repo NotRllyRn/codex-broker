@@ -8,6 +8,7 @@ Codex Broker is a central Codex authentication, quota, and account-routing servi
 - Device-code and managed browser sign-in.
 - Opaque `auth.json` checkpointing after every broker-owned authenticated runtime.
 - Stable account routing with preferred-account affinity and exact pool-reset responses.
+- Minimal ephemeral window pulses that keep every verified account's short and weekly reset clocks active.
 - Hashed, revocable client keys for the machine API.
 - A small Pi extension under [`packages/pi-extension`](packages/pi-extension/README.md).
 - A version-pinned Hermes fork submodule under [`integrations/hermes-agent`](integrations/hermes-agent), with its implementation specification retained under [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md).
@@ -16,7 +17,7 @@ Codex Broker is a central Codex authentication, quota, and account-routing servi
 
 Codex Broker is a control plane, not an inference proxy. Clients call Codex directly with short-lived leased access tokens. Revoking a broker key prevents future leases but cannot revoke an already-issued upstream token before its expiry.
 
-The former automatic activation/model-turn scheduler is intentionally removed. Broker-owned model turns spend quota, complicate credential mutation, and are not required for routing.
+The legacy activation subsystem and its controls are removed. A fixed low-cost pulse runs once per earliest pool reset to keep otherwise idle short and weekly windows active; it uses the existing isolated runtime and credential checkpoint path.
 
 ## Local development
 
@@ -91,6 +92,8 @@ codex-broker password-set
 ```
 
 The administrator can enroll, reauthenticate, enable, disable, refresh, and delete accounts; download the immutable manual export; manage client keys and webhooks; inspect operations/incidents; and export sanitized logs. Password prompts are limited to sign-in and password change. Other browser mutations require the administrator session and CSRF token.
+
+Window pulses are enabled by default. They use one minimal ephemeral turn per account at startup and again at the earliest reported short/weekly reset. Optional controls are `WINDOWKEEPER_WINDOW_PULSE_ENABLED`, `WINDOWKEEPER_WINDOW_PULSE_POLL_SECONDS`, `WINDOWKEEPER_WINDOW_PULSE_RETRY_SECONDS`, and `WINDOWKEEPER_WINDOW_PULSE_CONCURRENCY`.
 
 ## Security boundary
 

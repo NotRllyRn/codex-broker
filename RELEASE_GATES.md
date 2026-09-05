@@ -15,7 +15,7 @@ npm --prefix packages/pi-extension run check
 
 Required coverage includes:
 
-- migrations through 009, foreign keys, idempotency, and credential-generation preservation;
+- migrations through 010, foreign keys, idempotency, and credential-generation preservation;
 - upgrade from a pre-rename database without account relogin;
 - vault mismatch, verification, rotation, backup, and restore;
 - managed credential checkpointing after success, RPC failure, cancellation, and restart;
@@ -25,7 +25,7 @@ Required coverage includes:
 - persistent administrator sessions, CSRF, logout/password-change revocation, and Orbit-only UI;
 - non-loopback TLS startup guard and trusted/untrusted CA behavior;
 - Pi one-lease-per-user-turn behavior, bounded pre-output failover, wait/resume, and no secret persistence;
-- absence of activation endpoints, scheduler code, activation tables after migration 009, and broker-owned model turns.
+- absence of legacy activation endpoints/tables and correct coalesced minimal window pulses with retry and credential checkpointing.
 
 ## Compatibility
 

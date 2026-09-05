@@ -19,7 +19,7 @@ Rename **Windowkeeper** to **Codex Broker**.
 - Short description: **Central Codex auth, quota, and account-routing service.**
 - Optional tagline: **One credential authority for every Codex client.**
 
-The product stops being a usage-window activation supervisor and becomes the **single authority for Codex account credentials**. The former automatic activation/model-turn feature is removed: it spends quota, adds an unnecessary token-mutating runtime, and is not needed for usage tracking or routing.
+The product becomes the **single authority for Codex account credentials**. The legacy activation supervisor, manual activation controls, and activation history are removed. A narrowly scoped broker-owned window pulse remains: one minimal ephemeral turn starts each idle short/weekly window and repeats at the earliest reset so every enrolled pool's reset clock stays active.
 
 The architectural invariant is:
 
@@ -48,7 +48,7 @@ YAGNI is a hard requirement for this rewrite. Do **not** add:
 - automatic HA/failover of the broker;
 - refresh tokens in Pi or Hermes;
 - vendored or untracked nested Git clones (the reviewed Hermes fork is an explicit pinned submodule);
-- automatic activation/model turns or reset-time model submissions.
+- arbitrary scheduled inference or configurable activation prompts/models; only the fixed minimal window pulse described below is allowed.
 
 A full inference proxy would make Codex Broker own SSE/streaming, cancellation, backpressure, request replay semantics, and upstream protocol changes. Pi Relay already demonstrates why post-output failover is application-specific. The broker should remain a **control plane**, not become the data plane unless a later requirement makes that necessary.
 
@@ -401,6 +401,20 @@ The current code already has useful invariants:
 
 Preserve those.
 
+### Minimal window pulse
+
+Keep every verified account's short and weekly pools active without restoring the legacy activation subsystem:
+
+1. Migration 010 adds only `window_pulse_state`, keyed by account, with last attempt/success, next pulse time, and a sanitized error code.
+2. A new installation or migrated account receives one pulse because it has no pulse state.
+3. Use `model/list` to choose a visible text-capable `mini` model when available, use its lowest advertised reasoning effort, and submit the fixed prompt `Reply OK.` in an ephemeral thread on the default service tier.
+4. Wait for terminal turn completion, then read complete rate limits and checkpoint the possibly rotated credential through `_run_managed()`.
+5. Set the next pulse to the earliest future short/weekly `resetsAt`; a single short-window pulse also keeps the weekly window active.
+6. If Codex does not report a future reset or the pulse fails, retry only after the configured cooldown. Coalesce with other active account operations and bound concurrency.
+7. Persist each attempt as a `window.pulse` operation. Do not restore activation routes, controls, history, arbitrary prompts, or model configuration.
+
+Displays derive a countdown from the fixed upstream reset timestamp; no database counter is decremented. Periodic usage reads continue to refresh percentages while pulses ensure an unused pool has a real fixed reset timestamp rather than a sliding `now + duration` estimate.
+
 Refactor credential payload/refresh/promotion helpers behind `CredentialAuthority` so these broker-internal operations share the same mutation lock:
 
 - periodic usage refresh;
@@ -611,14 +625,14 @@ Keeping the old lock name has an extra safety benefit: an old Windowkeeper binar
 
 Existing `credential_bundles` already enforces one `ACTIVE` row per account and contains encrypted credentials. Do not copy/re-enroll them. Codex Broker reads the same rows using the same vault key and immediately becomes their owner.
 
-Migrations 007 and 008 add client keys and temporary account exclusions. Migration 009 drops only the retired activation tables and `account_state.activation_state`; no account or credential row is copied, re-enrolled, or rewritten.
+Migrations 007 and 008 add client keys and temporary account exclusions. Migration 009 drops only the retired activation tables and `account_state.activation_state`. Migration 010 adds the minimal replacement `window_pulse_state`; no account or credential row is copied, re-enrolled, or rewritten.
 
 ## Upgrade procedure
 
 1. Stop old Windowkeeper.
 2. Back up the data volume + vault key.
 3. Start Codex Broker against the **same** volume and vault key.
-4. Apply migrations 007-009; retain the automatic pre-v9 database backup.
+4. Apply migrations 007-010; retain the automatic pre-v9 database backup.
 5. Verify vault sentinel with the unchanged legacy format.
 6. Decrypt/read every existing `ACTIVE` credential without writing it.
 7. Display existing accounts and usage.
@@ -890,7 +904,7 @@ README sections:
 5. Create client access key.
 6. Install Pi adapter.
 7. Hermes fork integration only after version-specific compatibility and live acceptance pass.
-8. Removal of legacy automatic activation.
+8. Minimal automatic window pulses and removal of the legacy activation subsystem.
 9. Backup/recovery.
 10. Security limitations, especially issued access-token revocation.
 
@@ -927,7 +941,7 @@ Create a fixture representing an actual pre-rewrite Windowkeeper installation:
 
 Test that Codex Broker:
 
-1. applies migrations 007-009;
+1. applies migrations 007-010;
 2. removes activation tables/state without touching account or credential rows;
 3. verifies the old sentinel;
 4. decrypts all old ACTIVE credentials;
@@ -1023,7 +1037,7 @@ Implementation status at the current branch:
 - phases 0-6 are implemented by the incremental commits after `d4d336b`;
 - the Pi package exists at `packages/pi-extension/` and passes its Node tests and type check;
 - the Hermes core integration is live-tested, maintained in a fork, and pinned at `integrations/hermes-agent`;
-- migrations 007-009 add client routing and remove legacy activation state while preserving migrations 001-006 for direct upgrades;
+- migrations 007-010 add client routing, remove legacy activation state, and add minimal window-pulse scheduling while preserving migrations 001-006 for direct upgrades;
 - the synthetic pre-rewrite migration fixture proves sentinel/credential compatibility and managed checkpointing without relogin;
 - a production data-volume copy drill remains an external release operation; the v0.21.0 Hermes live gate passed and must be repeated for each future pinned version.
 
@@ -1076,14 +1090,15 @@ Implementation status at the current branch:
 
 ## Phase 6 — cleanup/release
 
-1. Remove automatic activation routes, services, scheduler, UI, tests, and Codex model-turn adapter methods.
+1. Remove legacy activation routes, controls, history, arbitrary prompts, and model selection.
 2. Apply migration 009 to drop activation tables and `account_state.activation_state` without rewriting historical migrations.
-3. Rewrite docs.
-4. Archive/delete obsolete Windowkeeper and old plugin planning docs.
-5. Verify no old product-name strings remain except intentional storage/crypto compatibility identifiers.
-6. Run full Python and Pi tests/type checks.
-7. Test upgrade from a copy of the real existing data volume (external release drill; synthetic 001-006 fixture is automated here).
-8. Cut the first Codex Broker release only after zero-relogin migration is proven (release not performed by this implementation task).
+3. Add migration 010 and the fixed minimal window-pulse scheduler.
+4. Rewrite docs.
+5. Archive/delete obsolete Windowkeeper and old plugin planning docs.
+6. Verify no old product-name strings remain except intentional storage/crypto compatibility identifiers.
+7. Run full Python and Pi tests/type checks.
+8. Test upgrade from a copy of the real existing data volume (external release drill; synthetic 001-006 fixture is automated here).
+9. Cut the first Codex Broker release only after zero-relogin migration is proven (release not performed by this implementation task).
 
 ---
 
@@ -1094,6 +1109,7 @@ Implementation status at the current branch:
 | Broker becomes a single point of failure | Accept. New turns fail cleanly instead of risking credential corruption. Existing in-flight turn can finish. HA is YAGNI. |
 | Client-key revocation cannot revoke an already-issued OpenAI access token | Accept/document for v1. A full proxy would solve it but adds major data-plane complexity. |
 | Cached usage can be a few minutes stale | Accept. Background polling stays; force refresh on reported quota failure. No fake reservation system. |
+| Window pulses consume a tiny amount of quota and can mutate credentials | Accept by explicit requirement. Use one fixed minimal ephemeral turn per earliest reset and the existing serialized checkpoint path. |
 | Multiple simultaneous clients can exhaust one account together | Accept/reactively reroute. Requests are concurrent; refresh-token mutations remain serialized. |
 | Switching accounts harms prompt caching | Prefer prior healthy account on each fresh turn rather than round-robin. |
 | Removing browser re-password prompts weakens protection against a stolen admin session | Explicit user choice. Retain TLS, long random session tokens, CSRF, Secure/HttpOnly cookies, expiry, logout. |
