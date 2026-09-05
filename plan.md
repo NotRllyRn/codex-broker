@@ -8,7 +8,7 @@ Inputs audited:
 - `sources/pi-0.84.4.zip` — current Pi monorepo source and extension/provider APIs;
 - `sources/hermes-agent-2026.8.31.zip` — current Hermes source, plugin hooks, middleware, provider runtime, and credential pools.
 
-There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r4` commit; the original patch specification remains the behavioral contract.
+There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r5` commit; the original patch specification remains the behavioral contract.
 
 ## 1. Decision
 
@@ -758,7 +758,7 @@ The fork implements these requirements:
 9. discard access-token state at every turn exit and preserve only non-secret preferred-account and display-status metadata;
 10. skip `_try_refresh_codex_client_credentials()` and every native Codex pool read/write while broker mode is active.
 
-The fork's `codex-broker/v0.21.0-r4` branch and matching tag pin integration commit `f36440d7dd` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
+The fork's `codex-broker/v0.21.0-r5` branch and matching tag pin integration commit `7b372ce13b` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
 
 ## Existing Hermes plugin files to retire
 
