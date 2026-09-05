@@ -330,3 +330,93 @@ def test_pre_broker_database_upgrades_without_relogin(tmp_path: Path) -> None:
             ],
         )
         assert "activation_state" not in columns
+
+
+def test_window_pulse_starts_idle_windows_and_schedules_the_next_pulse(
+    tmp_path: Path,
+) -> None:
+    executable = Path(__file__).parents[1] / "fake_codex.py"
+    os.chmod(executable, 0o700)
+    settings = Settings(
+        data_dir=tmp_path / "data",
+        runtime_dir=tmp_path / "run",
+        vault_key=generate_key(),
+        admin_password=PASSWORD,
+        codex_executable=str(executable),
+        window_pulse_enabled=False,
+    )
+    app = create_app(settings)
+    with TestClient(app) as client:
+        state = app.state.broker
+        assert client.portal is not None
+        access = jwt(
+            {
+                "exp": int(time.time()) + 3600,
+                ACCOUNT_CLAIM: {"chatgpt_account_id": "upstream"},
+            }
+        )
+        client.portal.call(
+            state.database.transaction,
+            lambda connection: seed_account(connection, state.services.vault, access),
+        )
+        client.portal.call(state.services._queue_due_window_pulses)
+
+        async def wait_for_pulse() -> tuple[Any, Any, Any]:
+            for _ in range(100):
+                result = await state.database.call(
+                    lambda connection: connection.execute(
+                        """SELECT o.state,p.last_success_at_ms,p.next_pulse_at_ms
+                        FROM operations o JOIN window_pulse_state p USING(account_id)
+                        WHERE o.kind='window.pulse' ORDER BY o.created_at_ms DESC LIMIT 1"""
+                    ).fetchone()
+                )
+                if result and result[0] != "RUNNING" and result[0] != "QUEUED":
+                    return result[0], result[1], result[2]
+                await asyncio.sleep(0.05)
+            raise AssertionError("window pulse did not finish")
+
+        state_name, succeeded_at, next_at = client.portal.call(wait_for_pulse)
+        assert state_name == "SUCCEEDED"
+        assert succeeded_at is not None
+        assert next_at > succeeded_at
+        usage = client.portal.call(
+            state.database.call,
+            lambda connection: connection.execute(
+                "SELECT short_used_percent_raw,weekly_used_percent_raw FROM usage_current WHERE account_id='internal'"
+            ).fetchone(),
+        )
+        assert tuple(usage) == (22, 41)
+
+        def pulse_count(connection: Any) -> int:
+            return cast(
+                int,
+                connection.execute(
+                    "SELECT count(*) FROM operations WHERE kind='window.pulse'"
+                ).fetchone()[0],
+            )
+
+        client.portal.call(state.services._queue_due_window_pulses)
+        assert client.portal.call(state.database.call, pulse_count) == 1
+        client.portal.call(
+            state.database.transaction,
+            lambda connection: connection.execute(
+                "UPDATE window_pulse_state SET next_pulse_at_ms=0,last_attempt_at_ms=?",
+                (int(time.time() * 1000),),
+            ),
+        )
+        client.portal.call(state.services._queue_due_window_pulses)
+        assert client.portal.call(state.database.call, pulse_count) == 1
+        client.portal.call(
+            state.database.transaction,
+            lambda connection: (
+                connection.execute(
+                    "UPDATE window_pulse_state SET last_attempt_at_ms=0"
+                ),
+                connection.execute(
+                    "UPDATE usage_current SET weekly_used_percent_raw=100,weekly_resets_at_s=?",
+                    (int(time.time()) + 3600,),
+                ),
+            ),
+        )
+        client.portal.call(state.services._queue_due_window_pulses)
+        assert client.portal.call(state.database.call, pulse_count) == 1

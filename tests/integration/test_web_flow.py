@@ -599,7 +599,7 @@ def test_manual_token_migration_recovers_v4_schema_drift(tmp_path: Path) -> None
     with TestClient(create_app(settings)) as client:
         assert client.get("/health/ready").status_code == 200
     with closing(sqlite3.connect(database_path)) as connection:
-        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 9
+        assert connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0] == 10
 
 
 def test_manual_token_login_is_retired(tmp_path: Path) -> None:

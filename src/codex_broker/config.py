@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     session_absolute_hours: int = Field(default=2_160, ge=1)
     usage_poll_seconds: int = Field(default=300, ge=60)
     usage_refresh_concurrency: int = Field(default=4, ge=1, le=16)
+    window_pulse_enabled: bool = True
+    window_pulse_poll_seconds: int = Field(default=60, ge=10)
+    window_pulse_retry_seconds: int = Field(default=900, ge=60)
+    window_pulse_concurrency: int = Field(default=2, ge=1, le=8)
     auth_concurrency: int = Field(default=2, ge=1, le=8)
     process_start_concurrency: int = Field(default=2, ge=1, le=8)
     reset_padding_seconds: int = Field(default=10, ge=0, le=300)

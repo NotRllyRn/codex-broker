@@ -75,6 +75,14 @@ class ServiceSettings(Protocol):
     def auth_concurrency(self) -> int: ...
     @property
     def usage_poll_seconds(self) -> int: ...
+    @property
+    def window_pulse_enabled(self) -> bool: ...
+    @property
+    def window_pulse_poll_seconds(self) -> int: ...
+    @property
+    def window_pulse_retry_seconds(self) -> int: ...
+    @property
+    def window_pulse_concurrency(self) -> int: ...
 
 
 class EventPort(Protocol):
@@ -270,6 +278,7 @@ class ApplicationServices:
         self._tasks: set[asyncio.Task[Any]] = set()
         self._login_tasks: dict[str, asyncio.Task[Any]] = {}
         self._usage_semaphore = asyncio.Semaphore(settings.usage_refresh_concurrency)
+        self._pulse_semaphore = asyncio.Semaphore(settings.window_pulse_concurrency)
         self._auth_semaphore = asyncio.Semaphore(settings.auth_concurrency)
         self._browser_login_lock = asyncio.Lock()
         self._credential_locks: dict[str, asyncio.Lock] = {}
@@ -319,6 +328,8 @@ class ApplicationServices:
 
     def start_background(self) -> None:
         self._background(self._usage_loop())
+        if self.settings.window_pulse_enabled:
+            self._background(self._window_pulse_loop())
         self._background(self._maintenance_loop())
 
     async def _maintenance_loop(self) -> None:
@@ -399,6 +410,120 @@ class ApplicationServices:
                     type(error).__name__,
                     extra={"event": "usage.poll_failed"},
                 )
+
+    async def _window_pulse_loop(self) -> None:
+        while True:
+            try:
+                await self._queue_due_window_pulses()
+                await self.clock.sleep(self.settings.window_pulse_poll_seconds)
+            except CancelledError as cancellation:
+                del cancellation
+                return
+            except Exception as error:
+                self.log.error(
+                    "window pulse polling failed: %s",
+                    type(error).__name__,
+                    extra={"event": "window_pulse.poll_failed"},
+                )
+                await self.clock.sleep(self.settings.window_pulse_poll_seconds)
+
+    async def _queue_due_window_pulses(self) -> None:
+        now = self.clock.now_ms()
+        retry_before = now - self.settings.window_pulse_retry_seconds * 1000
+
+        def claim(connection: sqlite3.Connection) -> list[tuple[dict[str, Any], str]]:
+            rows = connection.execute(
+                """SELECT a.*,s.* FROM accounts a JOIN account_state s USING(account_id)
+                JOIN usage_current u USING(account_id)
+                LEFT JOIN window_pulse_state p USING(account_id)
+                WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED'
+                AND s.worker_state='STOPPED'
+                AND (p.account_id IS NULL OR ((p.next_pulse_at_ms<=? OR p.last_success_at_ms IS NULL)
+                     AND p.last_attempt_at_ms<=?))
+                AND NOT (u.short_used_percent_raw>=100 AND u.short_resets_at_s*1000>?)
+                AND NOT (u.weekly_used_percent_raw>=100 AND u.weekly_resets_at_s*1000>?)
+                AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id
+                    AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))""",
+                (now, retry_before, now, now),
+            ).fetchall()
+            claimed: list[tuple[dict[str, Any], str]] = []
+            for row in rows:
+                operation_id = new_id()
+                connection.execute(
+                    "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        operation_id,
+                        row["account_id"],
+                        "window.pulse",
+                        "SCHEDULED",
+                        "QUEUED",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        now,
+                        None,
+                        None,
+                        None,
+                        None,
+                        1,
+                    ),
+                )
+                connection.execute(
+                    """INSERT INTO window_pulse_state(account_id,last_attempt_at_ms)
+                    VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET
+                    last_attempt_at_ms=excluded.last_attempt_at_ms,last_error_code=NULL""",
+                    (row["account_id"], now),
+                )
+                claimed.append((dict(row), operation_id))
+            return claimed
+
+        for account, operation_id in await self.database.transaction(claim):
+            self._background(self._run_window_pulse(account, operation_id))
+
+    async def _run_window_pulse(
+        self, account: dict[str, Any], operation_id: str
+    ) -> None:
+        started = self.clock.monotonic()
+        await self._operation_state(
+            operation_id, "RUNNING", "PULSING_WINDOWS", "Keeping usage windows active"
+        )
+        try:
+            async with self._pulse_semaphore:
+                raw = await self._run_managed(
+                    account, lambda runtime: runtime.adapter.pulse_windows()
+                )
+            normalized = normalize_usage(dict(raw))
+            resets = [
+                window.resets_at_s * 1000
+                for window in (normalized.short, normalized.weekly)
+                if window
+                and window.resets_at_s is not None
+                and window.resets_at_s * 1000 > self.clock.now_ms()
+            ]
+            next_pulse_at = (
+                min(resets)
+                if resets
+                else self.clock.now_ms() + self.settings.window_pulse_retry_seconds * 1000
+            )
+            await self._commit_usage(
+                account,
+                dict(raw),
+                operation_id,
+                started,
+                "Usage windows kept active",
+                next_pulse_at,
+            )
+        except Exception as error:
+            code = error.code if isinstance(error, BrokerError) else "WINDOW_PULSE_FAILED"
+            await self.database.transaction(
+                lambda connection: connection.execute(
+                    "UPDATE window_pulse_state SET last_error_code=? WHERE account_id=?",
+                    (code, account["account_id"]),
+                )
+            )
+            await self._record_usage_failure(account, operation_id, started, error)
 
     async def close(self) -> None:
         for task in self._tasks:
@@ -1559,6 +1684,8 @@ class ApplicationServices:
         raw: dict[str, Any],
         operation_id: str,
         started: float,
+        summary: str = "Usage refreshed",
+        pulse_next_at_ms: int | None = None,
     ) -> None:
         normalized = normalize_usage(raw)
         now = self.clock.now_ms()
@@ -1628,9 +1755,14 @@ class ApplicationServices:
                 "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                 (now, account["account_id"]),
             )
+            if pulse_next_at_ms is not None:
+                connection.execute(
+                    "UPDATE window_pulse_state SET last_success_at_ms=?,next_pulse_at_ms=?,last_error_code=NULL WHERE account_id=?",
+                    (now, pulse_next_at_ms, account["account_id"]),
+                )
             connection.execute(
-                "UPDATE operations SET state='SUCCEEDED',progress_code='COMPLETE',progress_summary='Usage refreshed',completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?",
-                (now, operation_id),
+                "UPDATE operations SET state='SUCCEEDED',progress_code='COMPLETE',progress_summary=?,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?",
+                (summary, now, operation_id),
             )
 
         await self.database.transaction(work)
