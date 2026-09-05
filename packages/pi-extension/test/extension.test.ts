@@ -62,12 +62,19 @@ test("configures the broker from the status menu", async () => {
   const directory = mkdtempSync(join(tmpdir(), "codex-broker-menu-"));
   process.env.PI_CODING_AGENT_DIR = directory;
   process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";
-  const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+  const commands = new Map<
+    string,
+    { handler: (args: string, ctx: ExtensionContext) => Promise<void> }
+  >();
   const notifications: string[] = [];
   const pi = {
     registerProvider: () => undefined,
-    registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
-      commands.set(name, command),
+    registerCommand: (
+      name: string,
+      command: {
+        handler: (args: string, ctx: ExtensionContext) => Promise<void>;
+      },
+    ) => commands.set(name, command),
     on: () => undefined,
   } as unknown as ExtensionAPI;
   const ctx = {
@@ -83,8 +90,13 @@ test("configures the broker from the status menu", async () => {
   try {
     codexBroker(pi);
     await commands.get("broker-status")?.handler("", ctx);
-    assert.match(readFileSync(join(directory, "codex-broker.json"), "utf8"), /broker\.test/);
-    assert.deepEqual(notifications, ["Codex Broker settings saved; server ready"]);
+    assert.match(
+      readFileSync(join(directory, "codex-broker.json"), "utf8"),
+      /broker\.test/,
+    );
+    assert.deepEqual(notifications, [
+      "Codex Broker settings saved; server ready",
+    ]);
   } finally {
     BrokerClient.prototype.health = originalHealth;
     delete process.env.PI_CODING_AGENT_DIR;

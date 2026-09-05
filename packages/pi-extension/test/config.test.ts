@@ -11,7 +11,11 @@ test("persists broker settings privately and prefers them over environment", () 
   process.env.PI_CODING_AGENT_DIR = directory;
   process.env.CODEX_BROKER_URL = "https://environment";
   try {
-    saveConfig({ url: "https://saved", clientKey: "cbk_saved", caCert: "/ca.crt" });
+    saveConfig({
+      url: "https://saved",
+      clientKey: "cbk_saved",
+      caCert: "/ca.crt",
+    });
     assert.deepEqual(loadConfig(), {
       url: "https://saved",
       clientKey: "cbk_saved",

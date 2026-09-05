@@ -305,7 +305,7 @@ export default function codexBroker(pi: ExtensionAPI): void {
       }[field];
       const value = await ctx.ui.input(
         label,
-        field === "clientKey" ? "Paste token" : config[field] ?? "",
+        field === "clientKey" ? "Paste token" : (config[field] ?? ""),
       );
       if (!value) return;
       config = { ...config, [field]: value.trim() };
