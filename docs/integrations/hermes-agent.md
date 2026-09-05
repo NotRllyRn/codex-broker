@@ -10,9 +10,9 @@ The fork remains linked to `NousResearch/hermes-agent` so upstream synchronizati
 | --- | --- |
 | Hermes release reported in production | `v0.21.0` (`v2026.8.31`) |
 | Tested upstream production revision | `b0ab2e163a50d4e6c36507eba955a6067fde6abc` |
-| Integration branch | `codex-broker/v0.21.0-r5` |
-| Integration tag | `codex-broker-v0.21.0-r5` |
-| Tested integration commit | `7b372ce13b6b2e6ec58301061f87642c39e4559c` |
+| Integration branch | `codex-broker/v0.21.0-r7` |
+| Integration tag | `codex-broker-v0.21.0-r7` |
+| Tested integration commit | `e37f33b542ee6995cca75f7b96c4958e186e543b` |
 | Rolling rebase branch | `codex-broker-next` |
 
 The production Git installer identified itself as Hermes Agent `v0.21.0` while running upstream
@@ -31,15 +31,7 @@ commit directly; they do not need to clone this whole monorepo.
 
 ## Install on Hermes
 
-Install Hermes using its normal Git installer first. Then export the same client settings used by Pi:
-
-```bash
-export CODEX_BROKER_URL=https://192.168.1.20:8787
-export CODEX_BROKER_CLIENT_KEY=cbk_...
-export CODEX_BROKER_CA_CERT=/path/to/ca.crt
-```
-
-After this monorepo commit has been pushed, the convenience command is:
+Install Hermes using its normal Git installer first. The integration can be installed without exporting broker settings:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NotRllyRn/codex-broker/main/scripts/install-hermes-integration.sh | sudo -E sh
@@ -54,14 +46,21 @@ The installer:
    `/home/hermes/.hermes/hermes-agent`);
 2. verifies the immutable fork commit and its expected upstream base;
 3. refuses an unsupported newer or divergent Hermes checkout instead of silently downgrading it;
-4. checks out `codex-broker/v0.21.0-r5` at the exact tested commit;
-5. copies only the public broker CA certificate and writes the three Hermes broker variables;
-6. verifies broker TLS and client-key authentication;
-7. restarts `hermes-gateway.service`; and
-8. restores the previous checkout and configuration if validation or startup fails.
+4. checks out `codex-broker/v0.21.0-r7` at the exact tested commit;
+5. optionally preserves the legacy environment-driven setup path when all broker values are supplied;
+6. restarts `hermes-gateway.service`; and
+7. restores the previous checkout and configuration if validation or startup fails.
+
+After installation, use a private administrator chat to configure and verify the connection:
+
+```text
+/broker-status set https://192.168.1.20:8787 cbk_... /home/hermes/.hermes/certs/codex-broker-ca.crt
+```
+
+The CA file must already exist on the Hermes host. Delete the token-bearing command from chat history afterward. `/broker-status` displays the settings with the token redacted and supports changing one value with `url`, `token`, or `ca`. Settings are verified before being saved to `/home/hermes/.hermes/.env` with mode `0600` and take effect without a gateway restart.
 
 This pin adds cycle-safe account failover, an account/usage pre-message before each provider
-attempt, and gateway `/broker-status`. Hermes continues across distinct broker accounts until one
+attempt, and gateway `/broker-status` settings/status. Hermes continues across distinct broker accounts until one
 succeeds or the broker waits for the exact pool reset. If quota/auth fails after visible output,
 Hermes preserves that partial response and asks the replacement account to continue without
 repeating it.

@@ -69,12 +69,9 @@ See [`plan.md`](plan.md) for the API contract and [`OPERATIONS.md`](OPERATIONS.m
 
 ```bash
 pi install ./packages/pi-extension
-export CODEX_BROKER_URL=https://192.168.1.20:8787
-export CODEX_BROKER_CLIENT_KEY=cbk_...
-export CODEX_BROKER_CA_CERT=/path/to/ca.crt  # if the CA is not in system trust
 ```
 
-The extension requests one in-memory lease per user turn and never stores refresh tokens or complete `auth.json` payloads.
+Run `/broker-status` in Pi to configure the broker URL, API token, and CA certificate path. The extension requests one in-memory lease per user turn and never stores refresh tokens or complete `auth.json` payloads.
 
 ## Hermes
 

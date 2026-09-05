@@ -10,7 +10,7 @@ Implement this change in the live Hermes checkout, not in Codex Broker.
 
 ## Implementation status
 
-This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r5`, tag `codex-broker-v0.21.0-r5`, commit `7b372ce13b`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
+This specification is implemented in [`NotRllyRn/hermes-agent-codex-broker`](https://github.com/NotRllyRn/hermes-agent-codex-broker). The production pin is branch `codex-broker/v0.21.0-r7`, tag `codex-broker-v0.21.0-r7`, commit `e37f33b542`, based on upstream production revision `b0ab2e163a` reported as Hermes Agent v0.21.0. The same commit is recorded by the `integrations/hermes-agent` submodule.
 
 The live v0.21.0 checkout had decomposed several paths since the archived audit, so the implementation was adapted to its current `agent/agent_init.py`, conversation phase modules, client lifecycle, and runtime-provider seams rather than copied by line number. See [`hermes-agent.md`](hermes-agent.md) for installation and future-release maintenance.
 
@@ -28,13 +28,15 @@ Therefore, add one small fail-closed core integration. Do not create or mutate H
 
 ## Configuration
 
-Add only these settings, read from the process environment:
+Add only these settings, loaded from Hermes's normal `.env` or inherited process environment:
 
 ```text
 HERMES_CODEX_BROKER_URL=https://192.168.1.20:8787
 HERMES_CODEX_BROKER_CLIENT_KEY=cbk_...
 HERMES_CODEX_BROKER_CA_CERT=/path/to/ca.crt  # optional if CA is in OS trust
 ```
+
+Gateway `/broker-status` must show the current non-secret settings and route status. Administrator-only `set`, `url`, `token`, and `ca` actions verify an authenticated health request before atomically updating process state and the mode-`0600` Hermes `.env`; responses always redact the token. Messaging platforms have no portable secret-input widget, so warn operators to use a private administrator chat and delete the token command afterward.
 
 Broker mode is enabled only when URL and client key are both present. Reject an `http://` URL. Never support disabled certificate verification. Do not accept a refresh token, account list, local routing policy, or persisted access-token cache.
 
@@ -157,7 +159,7 @@ In broker mode, skip `_try_refresh_codex_client_credentials(force=True)` uncondi
 
 ### Status and cleanup
 
-After each initial or replacement lease is applied, emit a lifecycle status before the model request containing the account label, remaining 5-hour/weekly percentages, and compact reset countdowns. Register gateway `/broker-status` to show the last selected route for that session without making a new lease request.
+After each initial or replacement lease is applied, emit a lifecycle status before the model request containing the account label, remaining 5-hour/weekly percentages, and compact reset countdowns. Register gateway `/broker-status` to show the last selected route without making a new lease request and to manage the persistent broker URL, redacted client key, and CA path.
 
 Call `discard_turn()` from the existing turn-finalization path on success, error, and interruption. Keep only non-secret preferred-account and display-status metadata.
 
@@ -209,7 +211,7 @@ Add focused tests rather than copying the entire broker implementation:
   - broker outage fails closed;
   - native `_try_refresh_codex_client_credentials` is never called;
   - each selected lease emits its account status before the request;
-  - `/broker-status` reports the last session route without exposing credentials;
+  - `/broker-status` reports the last session route and persists verified administrator settings without exposing credentials;
   - turn cleanup removes access-token state.
 - Extend `tests/agent/test_codex_cloudflare_headers.py` for explicit broker account identity and case-insensitive override.
 - Extend credential-pool tests to prove broker mode performs zero pool reads/writes while native mode is unchanged.
@@ -221,7 +223,7 @@ Use a local HTTPS test server and generated test CA. Do not weaken TLS in tests 
 1. Back up Hermes auth/config state.
 2. Remove/disable Hermes's local `openai-codex` credential pool for the test profile.
 3. Create a dedicated broker client key named for the Hermes host.
-4. Configure the three environment variables and select an `openai-codex` model.
+4. In a private administrator chat, run `/broker-status set <https-url> <client-key> <ca-path>`, delete the token-bearing command from chat history, and select an `openai-codex` model.
 5. Run a prompt that performs at least two tool calls; verify one broker request for the user turn.
 6. Submit a second prompt; verify a fresh broker request with the previous account as preference.
 7. Force account A to return 401 before output; verify exactly one broker failure report and account B request.

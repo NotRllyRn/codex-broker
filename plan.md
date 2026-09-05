@@ -8,7 +8,7 @@ Inputs audited:
 - `sources/pi-0.84.4.zip` — current Pi monorepo source and extension/provider APIs;
 - `sources/hermes-agent-2026.8.31.zip` — current Hermes source, plugin hooks, middleware, provider runtime, and credential pools.
 
-There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r5` commit; the original patch specification remains the behavioral contract.
+There is no Pi Relay or Hermes pool-plugin checkout in `sources/`. The Pi package is a small extension built directly against Pi 0.84.4. Hermes uses the reviewed core integration in the `integrations/hermes-agent` submodule, pinned to the fork's tested `codex-broker/v0.21.0-r7` commit; the original patch specification remains the behavioral contract.
 
 ## 1. Decision
 
@@ -716,13 +716,7 @@ Do not rely on `before_provider_headers` to replace Codex auth: Pi 0.84.4's Code
 
 Pi's built-in provider retry repeats a failed request with the same already-resolved options. The adapter disables those retries and owns the replacement/continuation chain. Each account can fail only once in that chain, preventing cycles while allowing the request to traverse the available pool and wait for a broker-reported reset. A transport retry first asks the broker to revalidate the preferred account, while a quota/auth failure excludes it. Post-output recovery sends a continuation turn rather than replaying prior streamed text.
 
-Adapter configuration is only:
-
-- `CODEX_BROKER_URL`;
-- `CODEX_BROKER_CLIENT_KEY`;
-- optional `CODEX_BROKER_CA_CERT` when the local CA is not installed in OS trust.
-
-No refresh token, account list, selection policy, or quota state lives in Pi.
+`/broker-status` provides a small TUI settings menu for the broker HTTPS URL, client key, and optional CA path. It verifies changes and stores them in the Pi agent directory as a mode-`0600` `codex-broker.json`; `CODEX_BROKER_*` variables remain fallback defaults only. No refresh token, account list, selection policy, or quota state lives in Pi.
 
 ---
 
@@ -754,11 +748,11 @@ The fork implements these requirements:
 5. use the existing `on_first_delta` callback to distinguish replay from continuation;
 6. replace 401/403/quota failures through the existing outer retry loop until an account succeeds or each returned account has failed once, preserving partial output and injecting a no-repeat continuation instruction when output already started;
 7. wait on the broker's exact pool-reset timestamp and remain interruptible;
-8. announce the selected account label and usage before each attempt and expose `/broker-status` for the session's last route;
+8. announce the selected account label and usage before each attempt and expose `/broker-status` for route status plus administrator-only, verified persistence of URL, client key, and CA path in Hermes's mode-`0600` `.env`;
 9. discard access-token state at every turn exit and preserve only non-secret preferred-account and display-status metadata;
 10. skip `_try_refresh_codex_client_credentials()` and every native Codex pool read/write while broker mode is active.
 
-The fork's `codex-broker/v0.21.0-r5` branch and matching tag pin integration commit `7b372ce13b` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
+The fork's `codex-broker/v0.21.0-r7` branch and matching tag pin integration commit `e37f33b542` over production upstream revision `b0ab2e163a` (reported by Hermes as v0.21.0). The live gateway and focused regression suites pass on that revision. Future Hermes releases receive new immutable version branches after rebase and live validation.
 
 ## Existing Hermes plugin files to retire
 

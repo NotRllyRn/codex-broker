@@ -2,8 +2,8 @@
 set -eu
 
 fork_url=https://github.com/NotRllyRn/hermes-agent-codex-broker.git
-fork_ref=codex-broker/v0.21.0-r5
-pinned_commit=7b372ce13b6b2e6ec58301061f87642c39e4559c
+fork_ref=codex-broker/v0.21.0-r7
+pinned_commit=e37f33b542ee6995cca75f7b96c4958e186e543b
 upstream_base=b0ab2e163a50d4e6c36507eba955a6067fde6abc
 target=${HERMES_AGENT_DIR:-/home/hermes/.hermes/hermes-agent}
 service=${HERMES_GATEWAY_SERVICE:-hermes-gateway.service}
@@ -19,19 +19,21 @@ ca_source=${HERMES_CODEX_BROKER_CA_CERT:-${CODEX_BROKER_CA_CERT:-}}
     echo "Hermes git installation not found at $target" >&2
     exit 1
 }
-[ -n "$url" ] && [ -n "$key" ] || {
-    echo "export CODEX_BROKER_URL and CODEX_BROKER_CLIENT_KEY" >&2
-    exit 1
-}
-case "$url" in https://*) ;; *)
-    echo "Codex Broker URL must use HTTPS" >&2
-    exit 1
-    ;;
-esac
-[ -z "$ca_source" ] || [ -f "$ca_source" ] || {
-    echo "Codex Broker CA certificate not found" >&2
-    exit 1
-}
+if [ -n "$url$key$ca_source" ]; then
+    [ -n "$url" ] && [ -n "$key" ] || {
+        echo "broker URL and client key must be provided together" >&2
+        exit 1
+    }
+    case "$url" in https://*) ;; *)
+        echo "Codex Broker URL must use HTTPS" >&2
+        exit 1
+        ;;
+    esac
+    [ -z "$ca_source" ] || [ -f "$ca_source" ] || {
+        echo "Codex Broker CA certificate not found" >&2
+        exit 1
+    }
+fi
 
 owner=$(stat -c %U "$target")
 group=$(id -gn "$owner")
@@ -90,7 +92,7 @@ runuser -u "$owner" -- git -C "$target" fetch --no-tags "$fork_url" "$fork_ref"
     echo "fork branch no longer matches the reviewed pin" >&2
     exit 1
 }
-[ "$(runuser -u "$owner" -- git -C "$target" rev-parse FETCH_HEAD~6)" = "$upstream_base" ] || {
+[ "$(runuser -u "$owner" -- git -C "$target" rev-parse FETCH_HEAD~8)" = "$upstream_base" ] || {
     echo "fork branch has an unexpected upstream base" >&2
     exit 1
 }
@@ -101,22 +103,23 @@ runuser -u "$owner" -- git -C "$target" merge-base --is-ancestor "$old_head" "$p
 
 runuser -u "$owner" -- git -C "$target" switch -C "$fork_ref" "$pinned_commit"
 changed=1
-install -d -o "$owner" -g "$group" -m 0700 "$cert_dir"
-if [ -n "$ca_source" ]; then
-    if [ "$(readlink -f "$ca_source")" != "$(readlink -f "$cert_file")" ]; then
-        install -o "$owner" -g "$group" -m 0644 "$ca_source" "$cert_file"
+if [ -n "$url$key$ca_source" ]; then
+    install -d -o "$owner" -g "$group" -m 0700 "$cert_dir"
+    if [ -n "$ca_source" ]; then
+        if [ "$(readlink -f "$ca_source")" != "$(readlink -f "$cert_file")" ]; then
+            install -o "$owner" -g "$group" -m 0644 "$ca_source" "$cert_file"
+        else
+            chown "$owner:$group" "$cert_file"
+            chmod 644 "$cert_file"
+        fi
+        ca_value=$cert_file
     else
-        chown "$owner:$group" "$cert_file"
-        chmod 644 "$cert_file"
+        ca_value=
     fi
-    ca_value=$cert_file
-else
-    ca_value=
-fi
-[ -e "$env_file" ] || install -o "$owner" -g "$group" -m 0600 /dev/null "$env_file"
+    [ -e "$env_file" ] || install -o "$owner" -g "$group" -m 0600 /dev/null "$env_file"
 
-BROKER_URL=$url BROKER_KEY=$key BROKER_CA=$ca_value ENV_FILE=$env_file \
-    runuser -u "$owner" -p -- "$python" - <<'PY'
+    BROKER_URL=$url BROKER_KEY=$key BROKER_CA=$ca_value ENV_FILE=$env_file \
+        runuser -u "$owner" -p -- "$python" - <<'PY'
 import os
 from pathlib import Path
 
@@ -141,8 +144,9 @@ response = httpx.get(
 if response.status_code != 200:
     raise RuntimeError("Codex Broker health authentication failed")
 PY
-chown "$owner:$group" "$env_file"
-chmod 600 "$env_file"
+    chown "$owner:$group" "$env_file"
+    chmod 600 "$env_file"
+fi
 
 systemctl restart "$service"
 sleep 8
@@ -151,4 +155,4 @@ systemctl is-active --quiet "$service" || {
     exit 1
 }
 success=1
-echo "Hermes Codex Broker integration installed: v0.21.0-r5 @ $pinned_commit"
+echo "Hermes Codex Broker integration installed: v0.21.0-r7 @ $pinned_commit"
