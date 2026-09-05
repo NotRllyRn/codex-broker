@@ -17,18 +17,14 @@ import {
   type Lease,
   type RouteInput,
 } from "./client.js";
+import { loadConfig, saveConfig, type BrokerConfig } from "./config.js";
 
 const STATUS_ID = "codex-broker";
 
-function clientFromEnvironment(): BrokerClient {
-  const required = ["CODEX_BROKER_URL", "CODEX_BROKER_CLIENT_KEY"] as const;
-  const missing = required.filter((name) => !process.env[name]);
-  if (missing.length) throw new Error(`Missing ${missing.join(", ")}`);
-  return new BrokerClient(
-    process.env.CODEX_BROKER_URL!,
-    process.env.CODEX_BROKER_CLIENT_KEY!,
-    process.env.CODEX_BROKER_CA_CERT,
-  );
+function configuredClient(config: Partial<BrokerConfig>): BrokerClient {
+  if (!config.url || !config.clientKey)
+    throw new Error("Codex Broker is not configured; run /broker-status");
+  return new BrokerClient(config.url, config.clientKey, config.caCert);
 }
 
 function sleep(seconds: number, signal?: AbortSignal): Promise<void> {
@@ -46,6 +42,7 @@ function sleep(seconds: number, signal?: AbortSignal): Promise<void> {
 }
 
 export default function codexBroker(pi: ExtensionAPI): void {
+  let config = loadConfig();
   let client: BrokerClient | undefined;
   let lease: Lease | undefined;
   let connection: "connecting" | "ready" | "unavailable" = "connecting";
@@ -57,7 +54,7 @@ export default function codexBroker(pi: ExtensionAPI): void {
   let retryQueued = false;
   let turnId = "";
 
-  const broker = (): BrokerClient => (client ??= clientFromEnvironment());
+  const broker = (): BrokerClient => (client ??= configuredClient(config));
   const percent = (value: number | null): string =>
     value === null ? "?" : `${value}%`;
   const window = (remaining: number | null, reset: string | null): string => {
@@ -275,15 +272,50 @@ export default function codexBroker(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("broker-status", {
-    description: "Show the current Codex Broker route",
+    description: "Configure Codex Broker or show its status",
     handler: async (_args, ctx) => {
+      const action = await ctx.ui.select("Codex Broker", [
+        "Show status",
+        "Set server address",
+        "Set API token",
+        "Set CA certificate",
+      ]);
+      if (!action) return;
+      if (action === "Show status") {
+        ctx.ui.notify(
+          lease
+            ? `Codex Broker account: ${status(lease)}`
+            : (await checkHealth(ctx))
+              ? "Codex Broker is ready"
+              : "Codex Broker is unavailable",
+          "info",
+        );
+        return;
+      }
+      const field =
+        action === "Set server address"
+          ? "url"
+          : action === "Set API token"
+            ? "clientKey"
+            : "caCert";
+      const label = {
+        url: "Server address",
+        clientKey: "API token",
+        caCert: "CA certificate path",
+      }[field];
+      const value = await ctx.ui.input(
+        label,
+        field === "clientKey" ? "Paste token" : config[field] ?? "",
+      );
+      if (!value) return;
+      config = { ...config, [field]: value.trim() };
+      saveConfig(config);
+      client = undefined;
+      lease = undefined;
+      const healthy = await checkHealth(ctx);
       ctx.ui.notify(
-        lease
-          ? `Codex Broker account: ${status(lease)}`
-          : (await checkHealth(ctx))
-            ? "Codex Broker is ready"
-            : "Codex Broker is unavailable",
-        "info",
+        `Codex Broker settings saved; server ${healthy ? "ready" : "unavailable"}`,
+        healthy ? "info" : "warning",
       );
     },
   });

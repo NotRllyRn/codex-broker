@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type {
@@ -49,6 +52,42 @@ test("shows broker readiness before the first prompt", async () => {
   } finally {
     BrokerClient.prototype.health = originalHealth;
     delete process.env.CODEX_BROKER_URL;
+    delete process.env.CODEX_BROKER_CLIENT_KEY;
+  }
+});
+
+test("configures the broker from the status menu", async () => {
+  const originalHealth = BrokerClient.prototype.health;
+  BrokerClient.prototype.health = async () => undefined;
+  const directory = mkdtempSync(join(tmpdir(), "codex-broker-menu-"));
+  process.env.PI_CODING_AGENT_DIR = directory;
+  process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";
+  const commands = new Map<string, { handler: (args: string, ctx: ExtensionContext) => Promise<void> }>();
+  const notifications: string[] = [];
+  const pi = {
+    registerProvider: () => undefined,
+    registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionContext) => Promise<void> }) =>
+      commands.set(name, command),
+    on: () => undefined,
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    signal: new AbortController().signal,
+    ui: {
+      select: async () => "Set server address",
+      input: async () => "https://broker.test",
+      notify: (message: string) => notifications.push(message),
+      setStatus: () => undefined,
+      theme: { fg: (_color: string, value: string) => value },
+    },
+  } as unknown as ExtensionContext;
+  try {
+    codexBroker(pi);
+    await commands.get("broker-status")?.handler("", ctx);
+    assert.match(readFileSync(join(directory, "codex-broker.json"), "utf8"), /broker\.test/);
+    assert.deepEqual(notifications, ["Codex Broker settings saved; server ready"]);
+  } finally {
+    BrokerClient.prototype.health = originalHealth;
+    delete process.env.PI_CODING_AGENT_DIR;
     delete process.env.CODEX_BROKER_CLIENT_KEY;
   }
 });
