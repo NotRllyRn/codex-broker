@@ -482,9 +482,7 @@ class ApplicationServices:
         for account, operation_id in await self.database.transaction(claim):
             self._background(self._run_window_pulse(account, operation_id))
 
-    async def _run_window_pulse(
-        self, account: dict[str, Any], operation_id: str
-    ) -> None:
+    async def _run_window_pulse(self, account: dict[str, Any], operation_id: str) -> None:
         started = self.clock.monotonic()
         await self._operation_state(
             operation_id, "RUNNING", "PULSING_WINDOWS", "Keeping usage windows active"

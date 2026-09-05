@@ -409,9 +409,7 @@ def test_window_pulse_starts_idle_windows_and_schedules_the_next_pulse(
         client.portal.call(
             state.database.transaction,
             lambda connection: (
-                connection.execute(
-                    "UPDATE window_pulse_state SET last_attempt_at_ms=0"
-                ),
+                connection.execute("UPDATE window_pulse_state SET last_attempt_at_ms=0"),
                 connection.execute(
                     "UPDATE usage_current SET weekly_used_percent_raw=100,weekly_resets_at_s=?",
                     (int(time.time()) + 3600,),

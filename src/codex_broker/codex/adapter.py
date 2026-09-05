@@ -95,11 +95,7 @@ class CodexAdapter:
             model = item.get("model")
             modalities = item.get("inputModalities", [])
             efforts = item.get("supportedReasoningEfforts", [])
-            names = [
-                value.get("reasoningEffort")
-                for value in efforts
-                if isinstance(value, dict)
-            ]
+            names = [value.get("reasoningEffort") for value in efforts if isinstance(value, dict)]
             if isinstance(model, str) and "text" in modalities and names:
                 effort = "minimal" if "minimal" in names else "low" if "low" in names else names[0]
                 if isinstance(effort, str):
