@@ -84,6 +84,38 @@ export class BrokerClient {
       throw new Error("CODEX_BROKER_URL must use HTTPS");
   }
 
+  async health(signal?: AbortSignal): Promise<void> {
+    const ca = this.caPath ? await readFile(this.caPath) : undefined;
+    return new Promise((resolve, reject) => {
+      const req = request(
+        new URL("/api/v1/health", this.url),
+        {
+          ca,
+          signal,
+          headers: { authorization: `Bearer ${this.apiKey}` },
+        },
+        (response) => {
+          response.resume();
+          response.on("error", reject);
+          response.on("end", () =>
+            response.statusCode === 200
+              ? resolve()
+              : reject(
+                  new Error(
+                    `Broker health check failed (${response.statusCode ?? "unknown"})`,
+                  ),
+                ),
+          );
+        },
+      );
+      req.setTimeout(REQUEST_TIMEOUT_MS, () =>
+        req.destroy(new Error("Broker request timed out")),
+      );
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
   async route(input: RouteInput, signal?: AbortSignal): Promise<Lease | Wait> {
     const body = JSON.stringify(input);
     const ca = this.caPath ? await readFile(this.caPath) : undefined;
@@ -149,5 +181,11 @@ export function failureKind(status: number, text = ""): string | undefined {
   if (status === 401 || status === 403) return "auth";
   if (status === 429 || /quota|rate.?limit|usage.?limit/i.test(text))
     return "quota";
+  if (
+    /websocket|connection (?:closed|reset)|socket hang up|stream (?:closed|disconnected)|ECONNRESET|network error|timed out/i.test(
+      text,
+    )
+  )
+    return "retry";
   return undefined;
 }

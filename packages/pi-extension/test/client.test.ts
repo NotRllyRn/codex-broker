@@ -18,6 +18,7 @@ test("classifies only retryable failures", () => {
   assert.equal(failureKind(403), "auth");
   assert.equal(failureKind(429), "quota");
   assert.equal(failureKind(500, "usage limit reached"), "quota");
+  assert.equal(failureKind(0, "WebSocket connection closed"), "retry");
   assert.equal(failureKind(500, "upstream unavailable"), undefined);
 });
 
@@ -50,8 +51,13 @@ test("requires a trusted local CA and bounds responses", async () => {
   const server = createServer(
     { key: await readFile(key), cert: await readFile(cert) },
     (request, response) => {
-      assert.equal(request.url, "/api/v1/route");
       assert.equal(request.headers.authorization, "Bearer cbk_test");
+      if (request.url === "/api/v1/health") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end('{"status":"ok"}');
+        return;
+      }
+      assert.equal(request.url, "/api/v1/route");
       let body = "";
       request.setEncoding("utf8");
       request.on("data", (chunk) => {
@@ -108,9 +114,11 @@ test("requires a trusted local CA and bounds responses", async () => {
       }),
       /self-signed certificate/,
     );
+    const client = new BrokerClient(url, "cbk_test", cert);
+    await client.health();
     assert.equal(
       (
-        await new BrokerClient(url, "cbk_test", cert).route({
+        await client.route({
           session_id: "s",
           turn_id: "trusted",
         })

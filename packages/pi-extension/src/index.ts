@@ -48,6 +48,7 @@ function sleep(seconds: number, signal?: AbortSignal): Promise<void> {
 export default function codexBroker(pi: ExtensionAPI): void {
   let client: BrokerClient | undefined;
   let lease: Lease | undefined;
+  let connection: "connecting" | "ready" | "unavailable" = "connecting";
   let codexActive = false;
   let meaningfulOutput = false;
   let failureHandled = false;
@@ -75,11 +76,31 @@ export default function codexBroker(pi: ExtensionAPI): void {
   const status = (value: Lease): string =>
     `${value.account_label} · 5h ${window(value.short_remaining_percent, value.short_resets_at)} · week ${window(value.weekly_remaining_percent, value.weekly_resets_at)}`;
   const show = (ctx: ExtensionContext): void => {
-    const label = lease ? `broker: ${status(lease)}` : "broker: waiting";
+    const label = lease ? `broker: ${status(lease)}` : `broker: ${connection}`;
     ctx.ui.setStatus(
       STATUS_ID,
-      ctx.ui.theme.fg(lease ? "success" : "warning", label),
+      ctx.ui.theme.fg(
+        lease || connection === "ready"
+          ? "success"
+          : connection === "unavailable"
+            ? "error"
+            : "warning",
+        label,
+      ),
     );
+  };
+
+  const checkHealth = async (ctx: ExtensionContext): Promise<boolean> => {
+    connection = "connecting";
+    show(ctx);
+    try {
+      await broker().health(ctx.signal);
+      connection = "ready";
+    } catch {
+      connection = "unavailable";
+    }
+    show(ctx);
+    return connection === "ready";
   };
 
   const route = async (
@@ -88,16 +109,24 @@ export default function codexBroker(pi: ExtensionAPI): void {
     wait: boolean,
   ): Promise<Lease | undefined> => {
     while (true) {
-      const result = await broker().route(input, ctx.signal);
-      if (result.status === "ok") {
-        lease = result;
+      try {
+        const result = await broker().route(input, ctx.signal);
+        connection = "ready";
+        if (result.status === "ok") {
+          lease = result;
+          show(ctx);
+          return result;
+        }
+        lease = undefined;
         show(ctx);
-        return result;
+        if (!wait) return undefined;
+        await sleep(result.retry_after_seconds, ctx.signal);
+      } catch (error) {
+        connection = "unavailable";
+        lease = undefined;
+        show(ctx);
+        throw error;
       }
-      lease = undefined;
-      show(ctx);
-      if (!wait) return undefined;
-      await sleep(result.retry_after_seconds, ctx.signal);
     }
   };
 
@@ -108,23 +137,43 @@ export default function codexBroker(pi: ExtensionAPI): void {
     if (
       !lease ||
       failureHandled ||
-      meaningfulOutput ||
-      failedAccounts.has(lease.account_id)
+      (kind !== "retry" && failedAccounts.has(lease.account_id))
     )
       return false;
     failureHandled = true;
-    failedAccounts.add(lease.account_id);
-    const replacement = await route(
+    const current = lease;
+    const failed = kind === "retry" ? undefined : current.account_id;
+    if (failed) failedAccounts.add(failed);
+    let replacement = await route(
       ctx,
       {
         session_id: ctx.sessionManager.getSessionId(),
         turn_id: turnId,
-        preferred_account_id: lease.account_id,
-        failed_account_id: lease.account_id,
-        failure_kind: kind,
+        preferred_account_id: current.account_id,
+        failed_account_id: failed,
+        failure_kind: failed ? kind : undefined,
       },
       true,
     );
+    if (
+      kind === "retry" &&
+      replacement?.account_id === current.account_id &&
+      (replacement.short_remaining_percent === 0 ||
+        replacement.weekly_remaining_percent === 0)
+    ) {
+      failedAccounts.add(current.account_id);
+      replacement = await route(
+        ctx,
+        {
+          session_id: ctx.sessionManager.getSessionId(),
+          turn_id: turnId,
+          preferred_account_id: current.account_id,
+          failed_account_id: current.account_id,
+          failure_kind: "quota",
+        },
+        true,
+      );
+    }
     return Boolean(replacement);
   };
 
@@ -143,6 +192,11 @@ export default function codexBroker(pi: ExtensionAPI): void {
         maxRetries: 0,
       });
     },
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
+    lease = undefined;
+    await checkHealth(ctx);
   });
 
   pi.on("before_agent_start", async (_event, ctx) => {
@@ -182,9 +236,21 @@ export default function codexBroker(pi: ExtensionAPI): void {
   });
 
   pi.on("message_end", async (event, ctx) => {
-    if (!codexActive || event.message.role !== "assistant" || meaningfulOutput)
-      return;
-    const kind = failureKind(0, event.message.errorMessage ?? "");
+    if (!codexActive || event.message.role !== "assistant") return;
+    const error = event.message.errorMessage ?? "";
+    if (
+      event.message.stopReason === "error" &&
+      !error.includes("context_length_exceeded") &&
+      /inputs?.*(?:exceeds?|esceeds?).*context window/i.test(error)
+    ) {
+      return {
+        message: {
+          ...event.message,
+          errorMessage: `context_length_exceeded: ${error}`,
+        },
+      };
+    }
+    const kind = failureKind(0, error);
     if (kind && (await reroute(ctx, kind))) retryQueued = true;
   });
 
@@ -195,7 +261,9 @@ export default function codexBroker(pi: ExtensionAPI): void {
     pi.sendMessage(
       {
         customType: "codex-broker-retry",
-        content: "The broker changed accounts. Resume the interrupted request.",
+        content: meaningfulOutput
+          ? "Continue exactly where the interrupted response stopped without repeating prior output. Codex Broker verified an available account."
+          : "Retry the interrupted request now. Codex Broker verified an available account; do not ask the user to repeat it.",
         display: true,
       },
       { deliverAs: "followUp", triggerTurn: true },
@@ -212,7 +280,9 @@ export default function codexBroker(pi: ExtensionAPI): void {
       ctx.ui.notify(
         lease
           ? `Codex Broker account: ${status(lease)}`
-          : "Codex Broker has no active route",
+          : (await checkHealth(ctx))
+            ? "Codex Broker is ready"
+            : "Codex Broker is unavailable",
         "info",
       );
     },

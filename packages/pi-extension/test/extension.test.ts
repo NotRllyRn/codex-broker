@@ -22,6 +22,37 @@ const LEASE: Lease = {
   weekly_resets_at: new Date(Date.now() + 51 * 60 * 60_000).toISOString(),
 };
 
+test("shows broker readiness before the first prompt", async () => {
+  const originalHealth = BrokerClient.prototype.health;
+  BrokerClient.prototype.health = async () => undefined;
+  process.env.CODEX_BROKER_URL = "https://broker.test";
+  process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const statuses: string[] = [];
+  const pi = {
+    registerProvider: () => undefined,
+    registerCommand: () => undefined,
+    on: (name: string, handler: (...args: unknown[]) => unknown) =>
+      handlers.set(name, handler),
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    signal: new AbortController().signal,
+    ui: {
+      setStatus: (_id: string, value: string) => statuses.push(value),
+      theme: { fg: (_color: string, value: string) => value },
+    },
+  } as unknown as ExtensionContext;
+  try {
+    codexBroker(pi);
+    await handlers.get("session_start")?.({}, ctx);
+    assert.deepEqual(statuses, ["broker: connecting", "broker: ready"]);
+  } finally {
+    BrokerClient.prototype.health = originalHealth;
+    delete process.env.CODEX_BROKER_URL;
+    delete process.env.CODEX_BROKER_CLIENT_KEY;
+  }
+});
+
 test("waits for pool reset and resumes automatically", async () => {
   const originalRoute = BrokerClient.prototype.route;
   let calls = 0;
@@ -66,7 +97,118 @@ test("waits for pool reset and resumes automatically", async () => {
   }
 });
 
-test("keeps replacing exhausted accounts before output", async () => {
+test("retries a failed websocket after checking the broker route", async () => {
+  const originalRoute = BrokerClient.prototype.route;
+  const calls: RouteInput[] = [];
+  BrokerClient.prototype.route = async (input) => {
+    calls.push(input);
+    return LEASE;
+  };
+  process.env.CODEX_BROKER_URL = "https://broker.test";
+  process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const sent: unknown[] = [];
+  const pi = {
+    registerProvider: () => undefined,
+    registerCommand: () => undefined,
+    on: (name: string, handler: (...args: unknown[]) => unknown) =>
+      handlers.set(name, handler),
+    sendMessage: (...args: unknown[]) => sent.push(args),
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    model: { provider: "openai-codex" },
+    signal: new AbortController().signal,
+    sessionManager: { getSessionId: () => "session" },
+    ui: {
+      setStatus: () => undefined,
+      theme: { fg: (_color: string, value: string) => value },
+    },
+  } as unknown as ExtensionContext;
+  try {
+    codexBroker(pi);
+    await handlers.get("before_agent_start")?.({}, ctx);
+    handlers.get("message_update")?.(
+      { assistantMessageEvent: { type: "text_delta" } },
+      ctx,
+    );
+    await handlers.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket connection closed",
+        },
+      },
+      ctx,
+    );
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].preferred_account_id, "public");
+    assert.equal(calls[1].failed_account_id, undefined);
+    handlers.get("agent_end")?.({}, ctx);
+    assert.equal(sent.length, 1);
+    assert.match(JSON.stringify(sent[0]), /Continue exactly where/);
+  } finally {
+    BrokerClient.prototype.route = originalRoute;
+    delete process.env.CODEX_BROKER_URL;
+    delete process.env.CODEX_BROKER_CLIENT_KEY;
+  }
+});
+
+test("replaces a transport retry account with no remaining usage", async () => {
+  const originalRoute = BrokerClient.prototype.route;
+  const calls: RouteInput[] = [];
+  BrokerClient.prototype.route = async (input) => {
+    calls.push(input);
+    return calls.length === 2
+      ? { ...LEASE, short_remaining_percent: 0 }
+      : { ...LEASE, account_id: calls.length === 3 ? "replacement" : "public" };
+  };
+  process.env.CODEX_BROKER_URL = "https://broker.test";
+  process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const sent: unknown[] = [];
+  const pi = {
+    registerProvider: () => undefined,
+    registerCommand: () => undefined,
+    on: (name: string, handler: (...args: unknown[]) => unknown) =>
+      handlers.set(name, handler),
+    sendMessage: (...args: unknown[]) => sent.push(args),
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    model: { provider: "openai-codex" },
+    signal: new AbortController().signal,
+    sessionManager: { getSessionId: () => "session" },
+    ui: {
+      setStatus: () => undefined,
+      theme: { fg: (_color: string, value: string) => value },
+    },
+  } as unknown as ExtensionContext;
+  try {
+    codexBroker(pi);
+    await handlers.get("before_agent_start")?.({}, ctx);
+    await handlers.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket connection closed",
+        },
+      },
+      ctx,
+    );
+    assert.equal(calls.length, 3);
+    assert.equal(calls[1].failed_account_id, undefined);
+    assert.equal(calls[2].failed_account_id, "public");
+    handlers.get("agent_end")?.({}, ctx);
+    assert.equal(sent.length, 1);
+  } finally {
+    BrokerClient.prototype.route = originalRoute;
+    delete process.env.CODEX_BROKER_URL;
+    delete process.env.CODEX_BROKER_CLIENT_KEY;
+  }
+});
+
+test("keeps replacing exhausted accounts across continuations", async () => {
   const originalRoute = BrokerClient.prototype.route;
   const calls: RouteInput[] = [];
   BrokerClient.prototype.route = async (input) => {
@@ -125,12 +267,30 @@ test("keeps replacing exhausted accounts before output", async () => {
     assert.equal(sent.length, 2);
     await handlers.get("before_agent_start")?.({}, ctx);
 
+    const normalized = (await handlers.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage:
+            "Codex error: your inputs esceeds the context window of this model",
+        },
+      },
+      ctx,
+    )) as { message: { errorMessage: string } };
+    assert.match(normalized.message.errorMessage, /^context_length_exceeded:/);
+    assert.equal(calls.length, 3);
+
     handlers.get("message_update")?.(
       { assistantMessageEvent: { type: "text_delta" } },
       ctx,
     );
     await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
+    assert.equal(calls[3].failed_account_id, "third");
+    handlers.get("agent_end")?.({}, ctx);
+    assert.equal(sent.length, 3);
+    assert.match(JSON.stringify(sent[2]), /Continue exactly where/);
   } finally {
     BrokerClient.prototype.route = originalRoute;
     delete process.env.CODEX_BROKER_URL;

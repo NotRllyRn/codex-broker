@@ -683,12 +683,14 @@ This exactly meets the requested “ask every new user turn” behavior without 
 
 ## Failover
 
-Use conservative failure behavior:
+Use bounded continuation behavior:
 
-- **before meaningful model output:** each quota/auth failure reports the failed account, obtains another lease, and resumes until an account succeeds or the broker pool is exhausted;
-- **after meaningful model output:** do not replay automatically. Surface the failure; a future continuation design requires separate proof.
+- each quota/auth failure reports the failed account, obtains another lease, and resumes until an account succeeds or the broker pool is exhausted;
+- a transport failure revalidates the preferred account through `/route`; if its returned usage is exhausted, report it and obtain another account;
+- before output, retry the interrupted request; after output, request continuation from the exact interruption point without repeating prior output;
+- normalize Codex context-window errors to Pi's recognized `context_length_exceeded` form so Pi compacts instead of treating them as broker failures.
 
-On quota/auth failure, the adapter calls `/api/v1/route` again with `failed_account_id` + `failure_kind`.
+On quota/auth failure, the adapter calls `/api/v1/route` again with `failed_account_id` + `failure_kind`. Each account may be failed only once in a continuation chain.
 
 If broker responds `POOL_EXHAUSTED`:
 
@@ -712,7 +714,7 @@ The provider override delegates to Pi's exported `openai-codex-responses` stream
 
 Do not rely on `before_provider_headers` to replace Codex auth: Pi 0.84.4's Codex adapter applies its `Authorization` and `chatgpt-account-id` headers after additional headers and derives account id from the JWT. A provider stream wrapper is the supported minimal seam.
 
-Pi's built-in provider retry repeats a failed request with the same already-resolved options. The adapter disables transport retries for broker-routed 401/429 and owns the pre-output replacement chain. Each account can fail only once in that chain, preventing cycles while allowing the request to traverse the available pool and wait for a broker-reported reset. On a streamed failure after meaningful output, fail clearly and never replay automatically.
+Pi's built-in provider retry repeats a failed request with the same already-resolved options. The adapter disables those retries and owns the replacement/continuation chain. Each account can fail only once in that chain, preventing cycles while allowing the request to traverse the available pool and wait for a broker-reported reset. A transport retry first asks the broker to revalidate the preferred account, while a quota/auth failure excludes it. Post-output recovery sends a continuation turn rather than replaying prior streamed text.
 
 Adapter configuration is only:
 
@@ -992,11 +994,13 @@ Migration 009 is destructive only to removed activation history. Rollback to sof
 
 ## Pi adapter tests
 
+- startup performs an authenticated health check and shows ready/unavailable before the first prompt;
 - one broker request per **user prompt**, not per tool-loop iteration;
 - broker can return same account on successive turns;
 - fresh decision still occurs every turn;
-- pre-output quota failover traverses distinct accounts until one succeeds;
-- post-output failure surfaces clearly and is never replayed automatically;
+- quota failover traverses distinct accounts until one succeeds, including after partial output;
+- transport failure revalidates available usage, then retries or continues without repeating prior output;
+- context-window errors invoke Pi's compaction path rather than account failover;
 - pool-exhausted waits until broker timestamp and auto-resumes;
 - revoked broker key fails clearly;
 - no refresh token exists in adapter files/state/logs.
