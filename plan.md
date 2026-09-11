@@ -1,6 +1,6 @@
 # Codex Broker — Rewrite and Monorepo Plan
 
-Status: **implemented; production-volume validation remains an external release gate, and the tested Hermes fork is pinned in this monorepo**
+Status: **implemented through phase 7; production-volume validation remains an external release gate, and the tested Hermes fork is pinned in this monorepo**
 Date: 2026-09-03  
 Inputs audited:
 
@@ -41,7 +41,7 @@ YAGNI is a hard requirement for this rewrite. Do **not** add:
 - Redis, a queue, a second database, or distributed locks;
 - Kubernetes/service discovery;
 - mTLS;
-- public-Internet exposure or tunnel management;
+- public exposure of the administrator dashboard, broker machine API, database, vault, or runtime; only the isolated enrollment listener described below may be Internet-facing;
 - client RBAC/scopes;
 - complex weighted/least-used routing;
 - quota reservations or predicted token accounting;
@@ -75,6 +75,14 @@ A full inference proxy would make Codex Broker own SSE/streaming, cancellation, 
    Pi calls Codex directly <----------------+
 
    Hermes + core integration follows the same lease model.
+
+                         public Internet
+
+   Browser -- HTTPS :8788 --> isolated enrollment site
+                                  |
+                                  | dedicated-key HTTPS, private network
+                                  v
+                              Codex Broker
 ```
 
 Refresh tokens never leave Codex Broker. Access tokens are handed to authenticated LAN clients and used directly against Codex.
@@ -94,7 +102,8 @@ codex-broker/
 ├── src/codex_broker/              # renamed/evolved Windowkeeper service
 │   ├── credential_authority.py    # NEW: only refresh-token owner
 │   ├── router.py                  # NEW: account selection + retry timestamps
-│   ├── client_auth.py             # NEW: machine/client access keys
+│   ├── client_auth.py             # machine/client access keys
+│   ├── web/public.py              # isolated public enrollment application
 │   └── ...                        # existing service, UI, usage, vault, etc.
 ├── packages/
 │   └── pi-extension/              # small Pi 0.84.4 extension package
@@ -103,7 +112,8 @@ codex-broker/
 ├── tests/
 ├── docs/
 ├── Dockerfile
-├── compose.yaml
+├── compose.yaml                   # private LAN broker
+├── compose.public.yaml            # optional isolated Internet listener
 ├── pyproject.toml
 ├── README.md
 └── plan.md
@@ -132,6 +142,24 @@ Implementation structure:
 4. make `Router` query eligibility/usage and call the authority; it never decrypts credentials itself;
 5. keep `/health/live` and `/health/ready`; `/api/v1/health` is the authenticated-client-facing readiness alias;
 6. use RFC 3339 UTC strings ending in `Z`, integer non-negative `Retry-After`, and reject inconsistent failure fields (`failure_kind` without `failed_account_id` or vice versa) with 422.
+
+## 4.2 Isolated public enrollment
+
+The only Internet-facing component is a second, minimal FastAPI process on port `8788`. It has no database, vault, runtime, administrator session, account-management, or lease-routing access. It exposes one guided device-code page, a start endpoint, an opaque-cookie status endpoint, and liveness.
+
+The public process reaches the private broker over the Compose network using HTTPS, the broker CA, and a dedicated random enrollment key. That key authorizes only two `/api/private/v1/public-enrollments*` endpoints and is not a client lease key or administrator credential. Broker port `8787` remains LAN/firewall restricted.
+
+Migration 011 adds `public_enrollments` as short-lived capability claims. A start creates a disabled placeholder account and isolated `CHATGPT_DEVICE_CODE` login. Successful verification atomically reserves the normalized upstream email, rejects duplicate managed/pending identities, promotes credentials through the existing checkpoint path, renames and enables the account, and marks the claim complete. Failures and service restarts fail closed and soft-delete uncredentialed placeholders.
+
+Browser requirements:
+
+1. render an explicit account-access warning;
+2. show `Step 1` with the code and copy button;
+3. show `Step 2` with the complete clickable HTTPS verification URL;
+4. show `Step 3` telling the visitor to return to the original tab;
+5. poll to a clear `Codex authenticated` confirmation without placing capabilities in URLs.
+
+Use direct TLS with a publicly trusted hostname certificate, `HttpOnly`/`Secure`/`SameSite=Strict` enrollment cookies, HSTS, CSP, no-store responses, per-source start throttling, and a global active-flow cap. Start is POST-only to prevent link scanners and browser prefetch from creating accounts. `compose.public.yaml` mounts only public TLS material and the broker CA into a read-only, capability-dropped service. Do not expose the local CA private key or broker server private key.
 
 ---
 
@@ -632,7 +660,7 @@ Migrations 007 and 008 add client keys and temporary account exclusions. Migrati
 1. Stop old Windowkeeper.
 2. Back up the data volume + vault key.
 3. Start Codex Broker against the **same** volume and vault key.
-4. Apply migrations 007-010; retain the automatic pre-v9 database backup.
+4. Apply migrations 007-011; retain the automatic pre-v9 database backup.
 5. Verify vault sentinel with the unchanged legacy format.
 6. Decrypt/read every existing `ACTIVE` credential without writing it.
 7. Display existing accounts and usage.
@@ -941,7 +969,7 @@ Create a fixture representing an actual pre-rewrite Windowkeeper installation:
 
 Test that Codex Broker:
 
-1. applies migrations 007-010;
+1. applies migrations 007-011;
 2. removes activation tables/state without touching account or credential rows;
 3. verifies the old sentinel;
 4. decrypts all old ACTIVE credentials;
@@ -1000,6 +1028,17 @@ Migration 009 is destructive only to removed activation history. Rollback to sof
 - trusted local CA succeeds;
 - `Secure` cookie is enabled in normal LAN deployment.
 
+## Public enrollment tests
+
+- only the dedicated shared key can call private start/status endpoints;
+- the public process has no administrator, account-management, routing, database, vault, or runtime routes/mounts;
+- enrollment capabilities never appear in URLs, HTML, logs, or completed responses;
+- device-code instructions show the code, full trusted HTTPS URL, return step, and confirmation;
+- verified email becomes the label and a duplicate managed/pending identity is rejected before credential promotion;
+- timeout, failure, cancellation, and restart soft-delete uncredentialed placeholders;
+- throttles/global cap bound resource use and security headers disable storage, framing, and referrers;
+- opening/prefetching the page does not start a login; the browser performs an explicit POST.
+
 ## Pi adapter tests
 
 - startup performs an authenticated health check and shows ready/unavailable before the first prompt;
@@ -1034,10 +1073,10 @@ If any gate fails, do not ship the Hermes adapter.
 
 Implementation status at the current branch:
 
-- phases 0-6 are implemented by the incremental commits after `d4d336b`;
+- phases 0-7 are implemented by the incremental commits after `d4d336b`;
 - the Pi package exists at `packages/pi-extension/` and passes its Node tests and type check;
 - the Hermes core integration is live-tested, maintained in a fork, and pinned at `integrations/hermes-agent`;
-- migrations 007-010 add client routing, remove legacy activation state, and add minimal window-pulse scheduling while preserving migrations 001-006 for direct upgrades;
+- migrations 007-011 add client routing, remove legacy activation state, add minimal window-pulse scheduling, and add isolated public enrollment claims while preserving migrations 001-006 for direct upgrades;
 - the synthetic pre-rewrite migration fixture proves sentinel/credential compatibility and managed checkpointing without relogin;
 - a production data-volume copy drill remains an external release operation; the v0.21.0 Hermes live gate passed and must be repeated for each future pinned version.
 
@@ -1100,6 +1139,16 @@ Implementation status at the current branch:
 8. Test upgrade from a copy of the real existing data volume (external release drill; synthetic 001-006 fixture is automated here).
 9. Cut the first Codex Broker release only after zero-relogin migration is proven (release not performed by this implementation task).
 
+## Phase 7 — isolated public enrollment
+
+1. Add migration 011 for expiring enrollment claims without rewriting account or credential rows.
+2. Add dedicated-key private broker start/status endpoints using device-code login only.
+3. Verify and reserve the authenticated email before credential promotion; reject duplicates and remove failed placeholders.
+4. Add the separate public process, guided page, opaque capability cookie, throttles, direct TLS guard, and restrictive headers.
+5. Add `compose.public.yaml` without mounting broker data or private broker key material into the public process.
+6. Add isolation, identity, migration, security-header, and end-to-end enrollment tests.
+7. Keep the feature disabled unless the deployment explicitly enables the Compose override and supplies a public certificate.
+
 ---
 
 # 15. Devil's-advocate risks
@@ -1118,6 +1167,9 @@ Implementation status at the current branch:
 | Renaming Docker volume can make data appear lost | Preserve physical `windowkeeper-data` volume name. |
 | Hermes updates move the required core seams | Rebase the rolling fork branch, rerun compatibility/live gates, and publish a new immutable version pin; never move an old pin. |
 | A full project rewrite could accidentally discard Windowkeeper's strong checkpoint/recovery code | Refactor around existing vault/services rather than rewriting the credential engine from scratch. |
+| Internet enrollment attracts scanners and denial-of-service attempts | Keep it in a separate process with no data mount or admin/router surface; use POST-only starts, per-source throttling, a global cap, short expiries, and firewall the private broker port. |
+| A visitor may not understand that login grants ongoing account access | Display an explicit warning before the code and require the normal OpenAI device authorization interaction. |
+| Public TLS or internal enrollment key compromise could enable unauthorized enrollments | Use a publicly trusted certificate, protect/rotate the dedicated key, mount secrets read-only, and never grant that key route/admin authority. |
 
 ---
 

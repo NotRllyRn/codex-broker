@@ -27,3 +27,7 @@ A route response stating that every eligible account is exhausted and giving the
 ## Preferred account
 
 A non-secret account public ID sent by a client to preserve prompt-cache affinity. The broker still runs eligibility checks for every new user turn.
+
+## Public enrollment
+
+An optional device-code sign-in initiated through the isolated Internet-facing process. The private broker verifies the resulting ChatGPT email, uses it as the account label, and owns the encrypted refresh-token lineage. The public process receives no database, vault, administrator, or lease authority.

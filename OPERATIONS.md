@@ -13,6 +13,8 @@ The bootstrap script creates `.env`, a private local CA, and a server certificat
 
 Loopback HTTP is permitted for development. A non-loopback bind without a TLS certificate and key fails at startup.
 
+The optional Internet-facing enrollment site is a separate process and Compose service on port `8788`; never publish private broker port `8787` to the Internet. See [`docs/public-enrollment.md`](docs/public-enrollment.md).
+
 ## Health
 
 - `/health/live`: process liveness.
@@ -27,7 +29,7 @@ codex-broker doctor
 
 ## Accounts and credentials
 
-Enroll with device code when possible. Browser OAuth supports manual forwarding of the exact loopback callback URL. Manual token import is retired.
+Enroll with device code when possible. Browser OAuth supports manual forwarding of the exact loopback callback URL. Manual token import is retired. The optional public flow always uses device code, verifies the resulting identity, labels the account with its normalized email, and rejects duplicate managed/pending emails.
 
 Each account has one mutable encrypted `ACTIVE` credential. Every authenticated broker runtime is quiesced and checkpointed before plaintext cleanup, including after failed RPCs or cancellation. A checkpoint failure quarantines the runtime and blocks further credential use until explicit reauthentication.
 
@@ -47,7 +49,7 @@ Copy the secret once; only its hash and prefix are stored. Revoke unused or expo
 
 ## Routing and exhaustion
 
-A client calls `POST /api/v1/route` once per user turn. The broker prefers the prior healthy account, skips the reported failed account, and otherwise uses stable creation order. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
+A client calls `POST /api/v1/route` once per user turn. The broker skips the reported failed account and ranks eligible accounts by earliest weekly reset, then earliest short reset, preferred-account affinity, and stable creation order. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
 
 When all eligible accounts are exhausted, the response includes the earliest authoritative reset plus configured padding and an integer `Retry-After`. Unknown reset evidence fails explicitly rather than fabricating a wait.
 
@@ -78,5 +80,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state. Rollback to software expecting the old tables requires restoring the pre-v9 backup.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims without changing existing accounts or credentials. Rollback to software expecting the old activation tables requires restoring the pre-v9 backup.
 6. Do not require account relogin for a normal upgrade.

@@ -14,6 +14,7 @@ Codex Broker is a central Codex authentication, quota, and account-routing servi
 - A version-pinned Hermes fork submodule under [`integrations/hermes-agent`](integrations/hermes-agent), with its implementation specification retained under [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md).
 - One Orbit dashboard, persistent administrator sessions, CSRF protection, incidents, webhooks, and sanitized logs.
 - Direct TLS for same-network deployment.
+- An optional isolated public device-code enrollment listener on a separate port.
 
 Codex Broker is a control plane, not an inference proxy. Clients call Codex directly with short-lived leased access tokens. Revoking a broker key prevents future leases but cannot revoke an already-issued upstream token before its expiry.
 
@@ -65,6 +66,16 @@ Machine endpoints:
 - `GET /api/v1/health` — authenticated broker readiness.
 
 See [`plan.md`](plan.md) for the API contract and [`OPERATIONS.md`](OPERATIONS.md) for backup, recovery, upgrades, and incident response.
+
+## Optional public enrollment
+
+Run the isolated public sign-in site only when needed:
+
+```bash
+docker compose -f compose.yaml -f compose.public.yaml up --build -d
+```
+
+It exposes only a guided device-code enrollment flow on port `8788`; the dashboard and machine API remain in the private broker process on `8787`. A successful flow labels the new account with its verified ChatGPT email. Use a publicly trusted certificate and firewall `8787` from the Internet. See [`docs/public-enrollment.md`](docs/public-enrollment.md) for setup and threat boundaries.
 
 ## Pi
 
