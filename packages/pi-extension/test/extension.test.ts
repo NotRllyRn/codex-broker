@@ -148,6 +148,62 @@ test("waits for pool reset and resumes automatically", async () => {
   }
 });
 
+test("waits through pool resets without replaying a stale failure", async () => {
+  const originalRoute = BrokerClient.prototype.route;
+  const calls: RouteInput[] = [];
+  BrokerClient.prototype.route = async (input) => {
+    calls.push(input);
+    if (calls.length === 2)
+      return {
+        status: "wait",
+        code: "POOL_EXHAUSTED",
+        next_retry_at: new Date().toISOString(),
+        retry_after_seconds: 0,
+      };
+    return {
+      ...LEASE,
+      account_id: calls.length === 4 ? "replacement" : "public",
+    };
+  };
+  process.env.CODEX_BROKER_URL = "https://broker.test";
+  process.env.CODEX_BROKER_CLIENT_KEY = "cbk_test";
+  const handlers = new Map<string, (...args: unknown[]) => unknown>();
+  const pi = {
+    registerProvider: () => undefined,
+    registerCommand: () => undefined,
+    on: (name: string, handler: (...args: unknown[]) => unknown) =>
+      handlers.set(name, handler),
+    sendMessage: () => undefined,
+  } as unknown as ExtensionAPI;
+  const ctx = {
+    model: { provider: "openai-codex" },
+    signal: new AbortController().signal,
+    sessionManager: { getSessionId: () => "session" },
+    ui: {
+      setStatus: () => undefined,
+      theme: { fg: (_color: string, value: string) => value },
+    },
+  } as unknown as ExtensionContext;
+  try {
+    codexBroker(pi);
+    await handlers.get("before_agent_start")?.({}, ctx);
+    await handlers.get("before_provider_request")?.({}, ctx);
+    await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
+    assert.equal(calls.length, 3);
+    assert.equal(calls[1].failed_account_id, "public");
+    assert.equal(calls[2].failed_account_id, undefined);
+
+    await handlers.get("before_provider_request")?.({}, ctx);
+    await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
+    assert.equal(calls.length, 4);
+    assert.equal(calls[3].failed_account_id, "public");
+  } finally {
+    BrokerClient.prototype.route = originalRoute;
+    delete process.env.CODEX_BROKER_URL;
+    delete process.env.CODEX_BROKER_CLIENT_KEY;
+  }
+});
+
 test("retries a failed websocket after checking the broker route", async () => {
   const originalRoute = BrokerClient.prototype.route;
   const calls: RouteInput[] = [];
@@ -302,21 +358,33 @@ test("keeps replacing exhausted accounts across continuations", async () => {
       statuses.at(-1),
       "broker: Personal · 5h 80% (resets 2h 1m) · week 60% (resets 2d 3h)",
     );
+    await handlers.get("before_provider_request")?.({}, ctx);
     await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
     assert.equal(calls.length, 2);
     assert.equal(calls[1].failed_account_id, "public");
-    await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
+    await handlers.get("message_end")?.(
+      {
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "usage limit reached",
+        },
+      },
+      ctx,
+    );
     assert.equal(calls.length, 2);
     handlers.get("agent_end")?.({}, ctx);
     assert.equal(sent.length, 1);
-    await handlers.get("before_agent_start")?.({}, ctx);
-    assert.equal(calls.length, 2);
+
+    // Pi continuation turns can start another provider request without firing
+    // before_agent_start, so each provider attempt resets the failure guard.
+    await handlers.get("before_provider_request")?.({}, ctx);
     await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
     assert.equal(calls.length, 3);
     assert.equal(calls[2].failed_account_id, "replacement");
     handlers.get("agent_end")?.({}, ctx);
     assert.equal(sent.length, 2);
-    await handlers.get("before_agent_start")?.({}, ctx);
+    await handlers.get("before_provider_request")?.({}, ctx);
 
     const normalized = (await handlers.get("message_end")?.(
       {

@@ -49,8 +49,6 @@ export default function codexBroker(pi: ExtensionAPI): void {
   let codexActive = false;
   let meaningfulOutput = false;
   let failureHandled = false;
-  const failedAccounts = new Set<string>();
-  let retryTurn = false;
   let retryQueued = false;
   let turnId = "";
 
@@ -105,9 +103,10 @@ export default function codexBroker(pi: ExtensionAPI): void {
     input: RouteInput,
     wait: boolean,
   ): Promise<Lease | undefined> => {
+    let request = input;
     while (true) {
       try {
-        const result = await broker().route(input, ctx.signal);
+        const result = await broker().route(request, ctx.signal);
         connection = "ready";
         if (result.status === "ok") {
           lease = result;
@@ -117,6 +116,11 @@ export default function codexBroker(pi: ExtensionAPI): void {
         lease = undefined;
         show(ctx);
         if (!wait) return undefined;
+        request = {
+          session_id: input.session_id,
+          turn_id: input.turn_id,
+          preferred_account_id: input.preferred_account_id,
+        };
         await sleep(result.retry_after_seconds, ctx.signal);
       } catch (error) {
         connection = "unavailable";
@@ -131,16 +135,10 @@ export default function codexBroker(pi: ExtensionAPI): void {
     ctx: ExtensionContext,
     kind: string,
   ): Promise<boolean> => {
-    if (
-      !lease ||
-      failureHandled ||
-      (kind !== "retry" && failedAccounts.has(lease.account_id))
-    )
-      return false;
+    if (!lease || failureHandled) return false;
     failureHandled = true;
     const current = lease;
     const failed = kind === "retry" ? undefined : current.account_id;
-    if (failed) failedAccounts.add(failed);
     let replacement = await route(
       ctx,
       {
@@ -158,7 +156,6 @@ export default function codexBroker(pi: ExtensionAPI): void {
       (replacement.short_remaining_percent === 0 ||
         replacement.weekly_remaining_percent === 0)
     ) {
-      failedAccounts.add(current.account_id);
       replacement = await route(
         ctx,
         {
@@ -199,15 +196,8 @@ export default function codexBroker(pi: ExtensionAPI): void {
   pi.on("before_agent_start", async (_event, ctx) => {
     codexActive = ctx.model?.provider === "openai-codex";
     if (!codexActive) return;
-    if (retryTurn) {
-      retryTurn = false;
-      meaningfulOutput = false;
-      failureHandled = false;
-      return;
-    }
     meaningfulOutput = false;
     failureHandled = false;
-    failedAccounts.clear();
     retryQueued = false;
     turnId = randomUUID();
     await route(
@@ -219,6 +209,10 @@ export default function codexBroker(pi: ExtensionAPI): void {
       },
       true,
     );
+  });
+
+  pi.on("before_provider_request", () => {
+    if (codexActive) failureHandled = false;
   });
 
   pi.on("after_provider_response", async (event, ctx) => {
@@ -254,7 +248,6 @@ export default function codexBroker(pi: ExtensionAPI): void {
   pi.on("agent_end", () => {
     if (!retryQueued) return;
     retryQueued = false;
-    retryTurn = true;
     pi.sendMessage(
       {
         customType: "codex-broker-retry",
