@@ -92,6 +92,39 @@ def serve(host: str | None, port: int | None) -> None:
     )
 
 
+@cli.command("public-serve")
+@click.option("--host", default=None, help="Override the configured public bind host.")
+@click.option("--port", type=int, default=None, help="Override the configured public bind port.")
+def public_serve(host: str | None, port: int | None) -> None:
+    """Run the isolated public ChatGPT enrollment site."""
+    settings = _settings()
+    bind_host = host or settings.public_enrollment_host
+    if not settings.public_enrollment_enabled or not settings.public_enrollment_key:
+        raise click.ClickException("public enrollment is not enabled or keyed")
+    if not settings.public_enrollment_ca_cert:
+        raise click.ClickException("the broker CA certificate is required")
+    try:
+        loopback = ipaddress.ip_address(bind_host).is_loopback
+    except ValueError:
+        loopback = bind_host.lower() == "localhost"
+    if not loopback and not (
+        settings.public_enrollment_tls_cert_file and settings.public_enrollment_tls_key_file
+    ):
+        raise click.ClickException(
+            "non-loopback public binds require TLS certificate and key files"
+        )
+    uvicorn.run(
+        "codex_broker.web.public:app",
+        host=bind_host,
+        port=port or settings.public_enrollment_port,
+        ssl_certfile=settings.public_enrollment_tls_cert_file,
+        ssl_keyfile=settings.public_enrollment_tls_key_file,
+        proxy_headers=False,
+        server_header=False,
+        log_level=settings.log_level.lower(),
+    )
+
+
 @cli.command("init")
 @click.option("--key-file", type=click.Path(path_type=Path), default=Path("windowkeeper-vault.key"))
 @click.password_option(confirmation_prompt=True)

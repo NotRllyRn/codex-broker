@@ -2,8 +2,9 @@ import ipaddress
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,6 +22,16 @@ class Settings(BaseSettings):
     trusted_proxies: str = ""
     tls_cert_file: Path | None = None
     tls_key_file: Path | None = None
+    public_enrollment_enabled: bool = False
+    public_enrollment_key: SecretStr | None = None
+    public_enrollment_broker_url: str = "https://codex-broker:8787"
+    public_enrollment_ca_cert: Path | None = None
+    public_enrollment_host: str = "127.0.0.1"
+    public_enrollment_port: int = Field(default=8788, ge=1, le=65535)
+    public_enrollment_tls_cert_file: Path | None = None
+    public_enrollment_tls_key_file: Path | None = None
+    public_enrollment_max_active: int = Field(default=4, ge=1, le=32)
+    public_enrollment_attempts_per_hour: int = Field(default=3, ge=1, le=20)
     vault_key_file: Path | None = None
     vault_key: str | None = None
     admin_password_file: Path | None = None
@@ -46,6 +57,29 @@ class Settings(BaseSettings):
     codex_executable: str = "codex"
     codex_version: str = "unknown"
     log_level: str = "INFO"
+
+    @field_validator("public_enrollment_broker_url")
+    @classmethod
+    def valid_public_broker_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise ValueError("public enrollment broker URL must be an HTTPS origin")
+        return value.rstrip("/")
+
+    @field_validator("public_enrollment_key")
+    @classmethod
+    def valid_public_enrollment_key(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 32:
+            raise ValueError("public enrollment key must contain at least 32 characters")
+        return value
 
     @field_validator("root_path")
     @classmethod
@@ -85,6 +119,8 @@ class Settings(BaseSettings):
             raise ValueError("persistent and runtime directories must differ")
         if self.vault_key_file and self.data_dir.resolve() in self.vault_key_file.resolve().parents:
             raise ValueError("vault key file cannot be under the data directory")
+        if self.public_enrollment_enabled and not self.public_enrollment_key:
+            raise ValueError("public enrollment key is required when public enrollment is enabled")
         self.log_dir = self.log_dir or self.data_dir / "logs"
         return self
 

@@ -21,6 +21,22 @@ def test_serve_refuses_plaintext_lan_bind(tmp_path: Path) -> None:
     assert "require TLS" in result.output
 
 
+def test_public_serve_refuses_plaintext_public_bind(tmp_path: Path) -> None:
+    result = CliRunner().invoke(
+        cli,
+        ["public-serve", "--host", "0.0.0." + "0"],
+        env={
+            "WINDOWKEEPER_DATA_DIR": str(tmp_path / "data"),
+            "WINDOWKEEPER_RUNTIME_DIR": str(tmp_path / "run"),
+            "WINDOWKEEPER_PUBLIC_ENROLLMENT_ENABLED": "true",
+            "WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY": "x" * 32,
+            "WINDOWKEEPER_PUBLIC_ENROLLMENT_CA_CERT": str(tmp_path / "ca.crt"),
+        },
+    )
+    assert result.exit_code == 1
+    assert "require TLS" in result.output
+
+
 def test_cli_initialization_vault_verification_and_version(tmp_path: Path) -> None:
     key_file = tmp_path / "vault.key"
     environment = {

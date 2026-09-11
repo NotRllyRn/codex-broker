@@ -83,6 +83,8 @@ class ServiceSettings(Protocol):
     def window_pulse_retry_seconds(self) -> int: ...
     @property
     def window_pulse_concurrency(self) -> int: ...
+    @property
+    def public_enrollment_max_active(self) -> int: ...
 
 
 class EventPort(Protocol):
@@ -281,6 +283,7 @@ class ApplicationServices:
         self._pulse_semaphore = asyncio.Semaphore(settings.window_pulse_concurrency)
         self._auth_semaphore = asyncio.Semaphore(settings.auth_concurrency)
         self._browser_login_lock = asyncio.Lock()
+        self._public_enrollment_lock = asyncio.Lock()
         self._credential_locks: dict[str, asyncio.Lock] = {}
         self.log = logging.getLogger("codex_broker.services")
 
@@ -311,6 +314,19 @@ class ApplicationServices:
             connection.execute(
                 "UPDATE operations SET state='FAILED',error_code='SERVICE_RESTARTED',error_summary='Operation was interrupted by service restart',completed_at_ms=?,state_version=state_version+1 WHERE state IN('QUEUED','RUNNING','WAITING_FOR_USER')",
                 (now,),
+            )
+            connection.execute(
+                """UPDATE public_enrollments SET state='FAILED',completed_at_ms=?
+                WHERE state='ACTIVE' AND login_attempt_id IN
+                (SELECT login_attempt_id FROM login_attempts WHERE state='RESTART_REQUIRED')""",
+                (now,),
+            )
+            connection.execute(
+                """UPDATE accounts SET enabled=0,lifecycle_state='DELETED',deleted_at_ms=?,updated_at_ms=?
+                WHERE account_id IN (SELECT account_id FROM public_enrollments WHERE state='FAILED')
+                AND NOT EXISTS (SELECT 1 FROM credential_bundles b
+                    WHERE b.account_id=accounts.account_id AND b.state='ACTIVE')""",
+                (now, now),
             )
             connection.execute(
                 "UPDATE webhook_deliveries SET state='RETRY_SCHEDULED',lease_token=NULL,lease_expires_at_ms=NULL,next_attempt_at_ms=? WHERE state='LEASED'",
@@ -548,6 +564,11 @@ class ApplicationServices:
             raise BrokerError("ACCOUNT_LABELS_INVALID", "Use at most 20 labels of 1-40 characters")
 
         def work(connection: sqlite3.Connection) -> None:
+            if connection.execute(
+                "SELECT 1 FROM public_enrollments WHERE state='ACTIVE' AND lower(observed_email)=lower(?)",
+                (name,),
+            ).fetchone():
+                raise sqlite3.IntegrityError("account name is reserved by an active enrollment")
             connection.execute(
                 "INSERT INTO accounts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -605,6 +626,80 @@ class ApplicationServices:
             ) from error
         self.events.publish("account.updated", {"resource_id": token, "state": "STARTING"})
         return {"account_id": account_id, "public_token": token, "display_name": name}
+
+    async def start_public_enrollment(self, session_token: str) -> dict[str, str]:
+        async with self._public_enrollment_lock:
+            now = self.clock.now_ms()
+            active = await self.database.call(
+                lambda connection: int(
+                    connection.execute(
+                        "SELECT count(*) FROM public_enrollments WHERE state='ACTIVE' AND expires_at_ms>?",
+                        (now,),
+                    ).fetchone()[0]
+                )
+            )
+            if active >= self.settings.public_enrollment_max_active:
+                raise BrokerError(
+                    "PUBLIC_ENROLLMENT_BUSY",
+                    "All sign-in slots are busy; try again later",
+                    503,
+                )
+            enrollment_id = new_id()
+            account = await self.create_account(f"Pending sign-in {public_token()[:8]}")
+            try:
+                started = await self.start_login(
+                    account["public_token"],
+                    LoginMethod.CHATGPT_DEVICE_CODE,
+                    session_token,
+                    public_enrollment_id=enrollment_id,
+                )
+            except BaseException:
+                await self.database.transaction(
+                    lambda connection: connection.execute(
+                        "UPDATE accounts SET lifecycle_state='DELETED',deleted_at_ms=?,updated_at_ms=? WHERE account_id=?",
+                        (self.clock.now_ms(), self.clock.now_ms(), account["account_id"]),
+                    )
+                )
+                raise
+            return {"enrollment_id": enrollment_id, **started}
+
+    async def public_enrollment_status(
+        self, enrollment_id: str, attempt_id: str, session_token: str, nonce: str
+    ) -> dict[str, Any]:
+        def read(connection: sqlite3.Connection) -> dict[str, Any] | None:
+            row = connection.execute(
+                """SELECT p.*,l.state login_state,l.error_code,l.observed_email,l.interaction_nonce_hash
+                FROM public_enrollments p JOIN login_attempts l USING(login_attempt_id)
+                WHERE p.enrollment_id=? AND p.login_attempt_id=?""",
+                (enrollment_id, attempt_id),
+            ).fetchone()
+            return dict(row) if row else None
+
+        enrollment = await self.database.call(read)
+        if (
+            not enrollment
+            or not secrets.compare_digest(enrollment["session_hash"], digest(session_token))
+            or not secrets.compare_digest(enrollment["interaction_nonce_hash"], digest(nonce))
+        ):
+            raise BrokerError("PUBLIC_ENROLLMENT_NOT_FOUND", "Sign-in not found", 404)
+        if enrollment["state"] == "COMPLETED":
+            return {"state": "COMPLETED", "email": enrollment["observed_email"]}
+        if enrollment["state"] == "FAILED" or enrollment["login_state"] in {
+            "FAILED_RETRYABLE",
+            "FAILED_ACTION_REQUIRED",
+            "RESTART_REQUIRED",
+            "CANCELLED",
+            "EXPIRED",
+            "SUPERSEDED",
+        }:
+            return {"state": "FAILED"}
+        try:
+            interaction = await self.interaction(attempt_id, session_token, nonce)
+        except BrokerError as error:
+            if error.status != 404:
+                raise
+            return {"state": "STARTING"}
+        return {"state": "WAITING_FOR_USER", **interaction}
 
     async def _account_row(self, public: str) -> dict[str, Any]:
         def work(connection: sqlite3.Connection) -> dict[str, Any] | None:
@@ -748,6 +843,7 @@ class ApplicationServices:
         session_token: str,
         *,
         recover_checkpoint: bool = False,
+        public_enrollment_id: str | None = None,
     ) -> dict[str, str]:
         account = await self._account_row(public)
         if account["worker_state"] == "CREDENTIAL_QUARANTINED" and not recover_checkpoint:
@@ -804,6 +900,21 @@ class ApplicationServices:
                     now,
                 ),
             )
+            if public_enrollment_id:
+                connection.execute(
+                    "INSERT INTO public_enrollments VALUES(?,?,?,?,?,?,?,?,?)",
+                    (
+                        public_enrollment_id,
+                        account["account_id"],
+                        attempt_id,
+                        digest(session_token),
+                        "ACTIVE",
+                        None,
+                        now,
+                        now + self.settings.login_timeout_seconds * 1000,
+                        None,
+                    ),
+                )
 
         try:
             await self.database.transaction(work)
@@ -956,6 +1067,11 @@ class ApplicationServices:
                 source_runtime, source_identity, source = await self._capture_login(
                     account, operation_id, attempt_id, method, session_token, nonce
                 )
+                try:
+                    await self._reserve_public_identity(account, attempt_id, source_identity)
+                except (Exception, CancelledError):
+                    await self.runtime.discard(source_runtime)
+                    raise
                 promotion_task = asyncio.create_task(
                     self._promote_login_source(account["account_id"], attempt_id, source)
                 )
@@ -1991,6 +2107,54 @@ class ApplicationServices:
         await self.database.transaction(work)
         self.events.publish("account.updated", {"resource_id": public, "deleted": True})
 
+    async def _reserve_public_identity(
+        self, account: dict[str, Any], attempt_id: str, identity: dict[str, Any]
+    ) -> None:
+        account_info = verify_identity(account, identity)
+        email = str(account_info.get("email") or "").strip().casefold()
+
+        def work(connection: sqlite3.Connection) -> None:
+            enrollment = connection.execute(
+                "SELECT 1 FROM public_enrollments WHERE login_attempt_id=? AND state='ACTIVE'",
+                (attempt_id,),
+            ).fetchone()
+            if not enrollment:
+                return
+            if not email or "@" not in email or len(email) > 80:
+                raise BrokerError(
+                    "PUBLIC_EMAIL_REQUIRED",
+                    "The authenticated ChatGPT account did not provide a usable email address",
+                    409,
+                )
+            duplicate = connection.execute(
+                """SELECT 1 FROM accounts a JOIN account_state s USING(account_id)
+                WHERE a.account_id<>? AND a.deleted_at_ms IS NULL
+                AND (lower(a.display_name)=? OR lower(COALESCE(s.upstream_email,''))=?)""",
+                (account["account_id"], email, email),
+            ).fetchone()
+            reserved = connection.execute(
+                """SELECT 1 FROM public_enrollments
+                WHERE state='ACTIVE' AND account_id<>? AND lower(observed_email)=?""",
+                (account["account_id"], email),
+            ).fetchone()
+            if duplicate or reserved:
+                raise Conflict(
+                    "PUBLIC_ACCOUNT_EXISTS",
+                    "This ChatGPT account is already managed or being added",
+                )
+            connection.execute(
+                "UPDATE public_enrollments SET observed_email=? WHERE login_attempt_id=? AND state='ACTIVE'",
+                (email, attempt_id),
+            )
+
+        try:
+            await self.database.transaction(work)
+        except sqlite3.IntegrityError as error:
+            raise Conflict(
+                "PUBLIC_ACCOUNT_EXISTS",
+                "This ChatGPT account is already being added",
+            ) from error
+
     async def _commit_login(
         self,
         account: dict[str, Any],
@@ -2013,10 +2177,24 @@ class ApplicationServices:
             ).rowcount
             if not changed:
                 raise Conflict("LOGIN_CANCELLED", "Sign-in did not own the credential checkpoint")
+            public_enrollment = connection.execute(
+                "SELECT observed_email FROM public_enrollments WHERE login_attempt_id=? AND state='ACTIVE'",
+                (attempt_id,),
+            ).fetchone()
             connection.execute(
-                "UPDATE accounts SET enabled=1,lifecycle_state='ACTIVE',last_successful_login_method=?,updated_at_ms=? WHERE account_id=?",
-                (method.value, now, account["account_id"]),
+                "UPDATE accounts SET display_name=COALESCE(?,display_name),enabled=1,lifecycle_state='ACTIVE',last_successful_login_method=?,updated_at_ms=? WHERE account_id=?",
+                (
+                    public_enrollment["observed_email"] if public_enrollment else None,
+                    method.value,
+                    now,
+                    account["account_id"],
+                ),
             )
+            if public_enrollment:
+                connection.execute(
+                    "UPDATE public_enrollments SET state='COMPLETED',completed_at_ms=? WHERE login_attempt_id=?",
+                    (now, attempt_id),
+                )
             connection.execute(
                 "UPDATE account_state SET auth_state='VERIFIED',worker_state='STOPPED',overall_state='WARNING',upstream_email=COALESCE(?,upstream_email),upstream_plan=COALESCE(?,upstream_plan),last_auth_verified_at_ms=?,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                 (email, plan, now, now, account["account_id"]),
@@ -2127,6 +2305,20 @@ class ApplicationServices:
                 (account_id,),
             ).fetchone()
             remains_verified = bool(has_active_credential and row[1] == "VERIFIED")
+            public_enrollment = connection.execute(
+                "SELECT 1 FROM public_enrollments WHERE login_attempt_id=? AND state='ACTIVE'",
+                (attempt_id,),
+            ).fetchone()
+            if public_enrollment:
+                connection.execute(
+                    "UPDATE public_enrollments SET state='FAILED',completed_at_ms=? WHERE login_attempt_id=?",
+                    (now, attempt_id),
+                )
+                if not has_active_credential:
+                    connection.execute(
+                        "UPDATE accounts SET enabled=0,lifecycle_state='DELETED',deleted_at_ms=?,updated_at_ms=? WHERE account_id=?",
+                        (now, now, account_id),
+                    )
             connection.execute(
                 "UPDATE account_state SET auth_state=?,overall_state=?,last_error_code=?,last_error_summary=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?",
                 (
@@ -2138,7 +2330,7 @@ class ApplicationServices:
                     account_id,
                 ),
             )
-            return account_id
+            return None if public_enrollment and not has_active_credential else account_id
 
         if account_id := await self.database.transaction(work):
             self.events.publish(

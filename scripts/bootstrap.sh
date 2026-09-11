@@ -13,9 +13,11 @@ mkdir -p deployment/certs
 certs=deployment/certs
 admin_password=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
 vault_key=$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')
+enrollment_key=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 cat >.env <<EOF
 WINDOWKEEPER_ADMIN_PASSWORD=$admin_password
 WINDOWKEEPER_VAULT_KEY=$vault_key
+WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY=$enrollment_key
 CODEX_BROKER_BIND_ADDRESS=0.0.0.0
 WINDOWKEEPER_BROWSER_OAUTH_MODE=manual
 EOF

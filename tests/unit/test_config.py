@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from codex_broker.config import Settings
 from codex_broker.vault import generate_key
@@ -47,6 +47,22 @@ def test_trusted_proxy_configuration_is_validated(tmp_path: Path) -> None:
             data_dir=tmp_path / "data-2",
             runtime_dir=tmp_path / "run-2",
             trusted_proxies="*",
+        )
+
+
+def test_public_enrollment_requires_key_and_https_broker(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="public enrollment key"):
+        Settings(
+            data_dir=tmp_path / "data-3",
+            runtime_dir=tmp_path / "run-3",
+            public_enrollment_enabled=True,
+        )
+    with pytest.raises(ValidationError, match="must be an HTTPS origin"):
+        Settings(
+            data_dir=tmp_path / "data-4",
+            runtime_dir=tmp_path / "run-4",
+            public_enrollment_broker_url="http://broker:8787",
+            public_enrollment_key=SecretStr("x" * 32),
         )
 
 

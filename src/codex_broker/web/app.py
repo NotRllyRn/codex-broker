@@ -2,6 +2,7 @@
 
 import json
 import os
+import secrets
 import stat
 import time
 from collections import defaultdict, deque
@@ -83,6 +84,18 @@ class AppState:
     client_keys: ClientKeyService
     router: Router
     ready: bool = False
+
+
+class PublicEnrollmentStartBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_token: str = Field(min_length=32, max_length=200)
+
+
+class PublicEnrollmentStatusBody(PublicEnrollmentStartBody):
+    enrollment_id: str = Field(min_length=32, max_length=100)
+    login_attempt_id: str = Field(min_length=32, max_length=100)
+    interaction_nonce: str = Field(min_length=32, max_length=200)
 
 
 class RouteBody(BaseModel):
@@ -267,6 +280,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     login_throttle = LoginThrottle()
     client_auth_throttle = LoginThrottle()
+    enrollment_auth_throttle = LoginThrottle(attempts=20)
     app = FastAPI(
         title="Codex Broker",
         docs_url=None,
@@ -290,7 +304,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             and not location.startswith(f"{resolved.root_path}/")
         ):
             response.headers["location"] = f"{resolved.root_path}{location}"
-        return _security_headers(response, no_store=request.url.path.startswith("/api/v1/"))
+        return _security_headers(response, no_store=request.url.path.startswith("/api/"))
 
     @app.exception_handler(BrokerError)
     async def handle_problem(request: Request, error: BrokerError) -> JSONResponse:
@@ -314,6 +328,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(401, "administrator login required")
         await state(request).security.require_csrf(token, csrf)
         return token
+
+    async def require_enrollment_gateway(
+        request: Request, authorization: str | None = Header(None)
+    ) -> AppState:
+        client = request.client.host if request.client else "unknown"
+        if not enrollment_auth_throttle.allow(client):
+            raise BrokerError("PUBLIC_ENROLLMENT_THROTTLED", "Authentication failed", 429)
+        current = state(request)
+        configured = current.settings.public_enrollment_key
+        scheme, _, token = (authorization or "").partition(" ")
+        if (
+            not current.settings.public_enrollment_enabled
+            or configured is None
+            or scheme.lower() != "bearer"
+            or not secrets.compare_digest(configured.get_secret_value(), token)
+        ):
+            raise BrokerError("PUBLIC_ENROLLMENT_UNAUTHORIZED", "Authentication failed", 401)
+        enrollment_auth_throttle.clear(client)
+        if not current.ready:
+            raise BrokerError("BROKER_NOT_READY", "Codex Broker is unavailable", 503)
+        return current
 
     async def require_client(
         request: Request, authorization: str | None = Header(None)
@@ -349,6 +384,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return JSONResponse(
             {"status": "ok" if current.ready else "unavailable"},
             status_code=200 if current.ready else 503,
+        )
+
+    @app.post("/api/private/v1/public-enrollments")
+    async def public_enrollment_start(
+        request: Request,
+        body: PublicEnrollmentStartBody,
+        authorization: str | None = Header(None),
+    ) -> dict[str, str]:
+        current = await require_enrollment_gateway(request, authorization)
+        return await current.services.start_public_enrollment(body.session_token)
+
+    @app.post("/api/private/v1/public-enrollments/status")
+    async def public_enrollment_status(
+        request: Request,
+        body: PublicEnrollmentStatusBody,
+        authorization: str | None = Header(None),
+    ) -> dict[str, Any]:
+        current = await require_enrollment_gateway(request, authorization)
+        return await current.services.public_enrollment_status(
+            body.enrollment_id,
+            body.login_attempt_id,
+            body.session_token,
+            body.interaction_nonce,
         )
 
     @app.post("/api/v1/route")

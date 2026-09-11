@@ -27,7 +27,7 @@ ENV WINDOWKEEPER_DATA_DIR=/data \
     WINDOWKEEPER_PORT=8787 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-EXPOSE 8787
+EXPOSE 8787 8788
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD ["python","-c","import socket; socket.create_connection(('127.0.0.1', 8787), 2).close()"]
 ENTRYPOINT ["python","-m","codex_broker.container_entrypoint"]
 CMD ["serve"]

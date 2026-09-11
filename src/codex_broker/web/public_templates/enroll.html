@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Connect ChatGPT | Codex Broker</title>
+    <link rel="stylesheet" href="/static/enroll.css" />
+    <script type="module" src="/static/enroll.js"></script>
+  </head>
+  <body>
+    <main>
+      <section class="card" data-enrollment>
+        <p class="kicker">Codex Broker</p>
+        <h1>Connect your ChatGPT account</h1>
+        <p class="notice">
+          Completing this sign-in grants this Codex Broker installation access
+          to use your ChatGPT account. Only continue if you trust its operator.
+        </p>
+        {% if error %}
+        <div class="error" role="alert">{{ error }}</div>
+        {% else %}
+        <div class="loading" data-loading aria-live="polite">
+          <span></span><span></span><span></span>
+          <p>Preparing a secure one-time sign-in…</p>
+        </div>
+        <ol class="steps" data-steps hidden>
+          <li>
+            <h2>Step 1. Copy this code:</h2>
+            <p>You will enter it on OpenAI’s website.</p>
+            <button type="button" class="code" data-copy>
+              <strong data-code></strong><span>Copy code</span>
+            </button>
+          </li>
+          <li>
+            <h2>Step 2. Open the OpenAI sign-in page</h2>
+            <p>Confirm the full destination before continuing:</p>
+            <a data-link target="_blank" rel="noopener noreferrer"></a>
+          </li>
+          <li>
+            <h2>Step 3. Return to this tab</h2>
+            <p>
+              After OpenAI says you may close its page, come back here and wait
+              for confirmation. Do not close this tab first.
+            </p>
+          </li>
+        </ol>
+        <section class="success" data-success hidden aria-live="polite">
+          <span aria-hidden="true">✓</span>
+          <h2>Codex authenticated</h2>
+          <p>
+            <strong data-email></strong> was securely added to Codex Broker.
+          </p>
+          <p>You may close this tab.</p>
+        </section>
+        <section class="error" data-error hidden role="alert">
+          <h2>Sign-in did not complete</h2>
+          <p>Close this tab and open a fresh sign-in link to try again.</p>
+        </section>
+        {% endif %}
+      </section>
+    </main>
+  </body>
+</html>
