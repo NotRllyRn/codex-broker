@@ -50,7 +50,7 @@ Expose only the public port (default `8788`) to the Internet. Keep broker port `
 - the public TLS certificate and key;
 - the broker CA certificate at `/certs/broker-ca.crt`.
 
-The public process runs read-only with all Linux capabilities dropped and no persistent data mount.
+The public process runs read-only with all Linux capabilities dropped and no persistent data mount. Its certificate and key must be readable by container UID/GID `10001:10001` (or that identity's host-remapped UID/GID), while the private key remains restricted; copy ACME renewal output to a deployment path with suitable ownership rather than weakening `/etc/letsencrypt` permissions, then recreate the service after renewal.
 
 If a reverse proxy or CDN fronts the public port, terminate or re-encrypt TLS safely and apply its rate limiting there. The application deliberately does not trust forwarded client-IP headers; without proxy-side limiting, all proxied visitors share one application throttle bucket.
 
