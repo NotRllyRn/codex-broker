@@ -62,14 +62,14 @@ export default function codexBroker(pi: ExtensionAPI): void {
     );
     const duration =
       minutes >= 1_440
-        ? `${Math.floor(minutes / 1_440)}d ${Math.floor((minutes % 1_440) / 60)}h`
+        ? `${Math.floor(minutes / 1_440)}d${Math.floor((minutes % 1_440) / 60)}h`
         : minutes >= 60
-          ? `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+          ? `${Math.floor(minutes / 60)}h${minutes % 60}m`
           : `${minutes}m`;
-    return `${percent(remaining)}${reset ? ` (resets ${duration})` : ""}`;
+    return `${percent(remaining)}${reset ? ` ${duration}` : ""}`;
   };
   const status = (value: Lease): string =>
-    `${value.account_label} · 5h ${window(value.short_remaining_percent, value.short_resets_at)} · week ${window(value.weekly_remaining_percent, value.weekly_resets_at)}`;
+    `${value.account_label} * 5h ${window(value.short_remaining_percent, value.short_resets_at)} * 7d ${window(value.weekly_remaining_percent, value.weekly_resets_at)}`;
   const show = (ctx: ExtensionContext): void => {
     const label = lease ? `broker: ${status(lease)}` : `broker: ${connection}`;
     ctx.ui.setStatus(

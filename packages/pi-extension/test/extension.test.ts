@@ -356,7 +356,7 @@ test("keeps replacing exhausted accounts across continuations", async () => {
     assert.equal(calls.length, 1);
     assert.equal(
       statuses.at(-1),
-      "broker: Personal · 5h 80% (resets 2h 1m) · week 60% (resets 2d 3h)",
+      "broker: Personal * 5h 80% 2h1m * 7d 60% 2d3h",
     );
     await handlers.get("before_provider_request")?.({}, ctx);
     await handlers.get("after_provider_response")?.({ status: 429 }, ctx);
