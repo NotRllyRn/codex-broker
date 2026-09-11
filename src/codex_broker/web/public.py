@@ -91,8 +91,8 @@ def create_public_app(
     )
 
     async def broker(path: str, body: dict[str, str]) -> dict[str, Any]:
-        key = resolved.public_enrollment_key
-        if not resolved.public_enrollment_enabled or key is None:
+        key = resolved.enrollment_gateway_key
+        if key is None:
             raise RuntimeError("public enrollment is not configured")
         verify: bool | str = (
             str(resolved.public_enrollment_ca_cert) if resolved.public_enrollment_ca_cert else True
@@ -117,8 +117,15 @@ def create_public_app(
         return HTMLResponse(templates.get_template("enroll.html").render(error=error))
 
     @app.middleware("http")
-    async def security_headers(_request: Request, call_next: Any) -> Response:
-        return _headers(await call_next(_request))
+    async def security_headers(request: Request, call_next: Any) -> Response:
+        if request.url.path != "/health/live":
+            try:
+                available = await broker("/api/private/v1/public-enrollments/availability", {})
+            except (httpx.HTTPError, RuntimeError, ValueError, TypeError):
+                return _headers(Response(status_code=503))
+            if not available.get("enabled"):
+                return _headers(Response(status_code=404))
+        return _headers(await call_next(request))
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:

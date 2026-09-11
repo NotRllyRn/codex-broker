@@ -112,8 +112,7 @@ codex-broker/
 ├── tests/
 ├── docs/
 ├── Dockerfile
-├── compose.yaml                   # private LAN broker
-├── compose.public.yaml            # optional isolated Internet listener
+├── compose.yaml                   # private broker plus isolated public listener
 ├── pyproject.toml
 ├── README.md
 └── plan.md
@@ -159,7 +158,7 @@ Browser requirements:
 4. show `Step 3` telling the visitor to return to the original tab;
 5. poll to a clear `Codex authenticated` confirmation without placing capabilities in URLs.
 
-Use direct TLS with a publicly trusted hostname certificate, `HttpOnly`/`Secure`/`SameSite=Strict` enrollment cookies, HSTS, CSP, no-store responses, per-source start throttling, and a global active-flow cap. Start is POST-only to prevent link scanners and browser prefetch from creating accounts. `compose.public.yaml` mounts only public TLS material and the broker CA into a read-only, capability-dropped service. Do not expose the local CA private key or broker server private key.
+Use direct TLS with a publicly trusted hostname certificate, `HttpOnly`/`Secure`/`SameSite=Strict` enrollment cookies, HSTS, CSP, no-store responses, per-source start throttling, and a global active-flow cap. Start is POST-only to prevent link scanners and browser prefetch from creating accounts. The public service in `compose.yaml` mounts only public TLS material and the broker CA into a read-only, capability-dropped process. Its shared key is internal transport authentication, never a visitor password. Persist the administrator's enable/disable switch in SQLite; when disabled, visitor routes return empty 404 responses and broker-side starts fail closed. Do not expose the local CA private key or broker server private key.
 
 ---
 
@@ -1145,9 +1144,9 @@ Implementation status at the current branch:
 2. Add dedicated-key private broker start/status endpoints using device-code login only.
 3. Verify and reserve the authenticated email before credential promotion; reject duplicates and remove failed placeholders.
 4. Add the separate public process, guided page, opaque capability cookie, throttles, direct TLS guard, and restrictive headers.
-5. Add `compose.public.yaml` without mounting broker data or private broker key material into the public process.
-6. Add isolation, identity, migration, security-header, and end-to-end enrollment tests.
-7. Keep the feature disabled unless the deployment explicitly enables the Compose override and supplies a public certificate.
+5. Add the isolated public process to default `compose.yaml` without mounting broker data or private broker key material into it.
+6. Add a persisted administrator switch that defaults enabled and immediately hides/rejects public enrollment when disabled.
+7. Add isolation, identity, migration, security-header, switch, and end-to-end enrollment tests.
 
 ---
 

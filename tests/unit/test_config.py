@@ -50,12 +50,14 @@ def test_trusted_proxy_configuration_is_validated(tmp_path: Path) -> None:
         )
 
 
-def test_public_enrollment_requires_key_and_https_broker(tmp_path: Path) -> None:
-    with pytest.raises(ValidationError, match="public enrollment key"):
+def test_public_enrollment_requires_internal_key_length_and_https_broker(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError, match="at least 32 characters"):
         Settings(
             data_dir=tmp_path / "data-3",
             runtime_dir=tmp_path / "run-3",
-            public_enrollment_enabled=True,
+            public_enrollment_key=SecretStr("short"),
         )
     with pytest.raises(ValidationError, match="must be an HTTPS origin"):
         Settings(

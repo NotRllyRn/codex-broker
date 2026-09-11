@@ -10,11 +10,12 @@ def test_dockerfile_preserves_wheel_filename() -> None:
 
 
 def test_public_enrollment_compose_has_no_broker_state_mount() -> None:
-    compose = (Path(__file__).parents[2] / "compose.public.yaml").read_text(encoding="utf-8")
+    compose = (Path(__file__).parents[2] / "compose.yaml").read_text(encoding="utf-8")
+    public = compose.split("  public-enrollment:", 1)[1].split("\nvolumes:", 1)[0]
 
-    assert 'command: ["public-serve"]' in compose
-    assert "/data" not in compose
-    assert "server.key" not in compose
-    assert "ca.key" not in compose
-    assert "read_only: true" in compose
-    assert "no-new-privileges:true" in compose
+    assert 'command: ["public-serve"]' in public
+    assert "/data" not in public
+    assert "server.key" not in public
+    assert "ca.key" not in public
+    assert "read_only: true" in public
+    assert "no-new-privileges:true" in public

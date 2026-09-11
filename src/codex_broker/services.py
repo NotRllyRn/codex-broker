@@ -627,8 +627,29 @@ class ApplicationServices:
         self.events.publish("account.updated", {"resource_id": token, "state": "STARTING"})
         return {"account_id": account_id, "public_token": token, "display_name": name}
 
+    async def public_enrollment_open(self) -> bool:
+        value = await self.database.call(
+            lambda connection: connection.execute(
+                "SELECT value_json FROM settings WHERE setting_key='public_enrollment_open'"
+            ).fetchone()
+        )
+        return value is None or value[0] == "true"
+
+    async def set_public_enrollment_open(self, enabled: bool) -> None:
+        now = self.clock.now_ms()
+        await self.database.transaction(
+            lambda connection: connection.execute(
+                """INSERT INTO settings VALUES('public_enrollment_open',?,?)
+                ON CONFLICT(setting_key) DO UPDATE SET
+                value_json=excluded.value_json,updated_at_ms=excluded.updated_at_ms""",
+                (json.dumps(enabled), now),
+            )
+        )
+
     async def start_public_enrollment(self, session_token: str) -> dict[str, str]:
         async with self._public_enrollment_lock:
+            if not await self.public_enrollment_open():
+                raise BrokerError("PUBLIC_ENROLLMENT_CLOSED", "Public enrollment is closed", 404)
             now = self.clock.now_ms()
             active = await self.database.call(
                 lambda connection: int(

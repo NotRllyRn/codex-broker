@@ -99,8 +99,8 @@ def public_serve(host: str | None, port: int | None) -> None:
     """Run the isolated public ChatGPT enrollment site."""
     settings = _settings()
     bind_host = host or settings.public_enrollment_host
-    if not settings.public_enrollment_enabled or not settings.public_enrollment_key:
-        raise click.ClickException("public enrollment is not enabled or keyed")
+    if not settings.enrollment_gateway_key:
+        raise click.ClickException("public enrollment internal key is not configured")
     if not settings.public_enrollment_ca_cert:
         raise click.ClickException("the broker CA certificate is required")
     try:

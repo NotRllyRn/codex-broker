@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     trusted_proxies: str = ""
     tls_cert_file: Path | None = None
     tls_key_file: Path | None = None
-    public_enrollment_enabled: bool = False
     public_enrollment_key: SecretStr | None = None
     public_enrollment_broker_url: str = "https://codex-broker:8787"
     public_enrollment_ca_cert: Path | None = None
@@ -119,10 +118,12 @@ class Settings(BaseSettings):
             raise ValueError("persistent and runtime directories must differ")
         if self.vault_key_file and self.data_dir.resolve() in self.vault_key_file.resolve().parents:
             raise ValueError("vault key file cannot be under the data directory")
-        if self.public_enrollment_enabled and not self.public_enrollment_key:
-            raise ValueError("public enrollment key is required when public enrollment is enabled")
         self.log_dir = self.log_dir or self.data_dir / "logs"
         return self
+
+    @property
+    def enrollment_gateway_key(self) -> SecretStr | None:
+        return self.public_enrollment_key
 
     @property
     def callback_ports(self) -> tuple[int, ...]:

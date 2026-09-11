@@ -131,6 +131,16 @@ def test_enrollment_refresh_and_dashboard(tmp_path: Path) -> None:
             "/logs",
         ):
             assert client.get(path).status_code == 200
+        assert "Public enrollment" in client.get("/settings").text
+        assert (
+            client.post(
+                "/settings/public-enrollment",
+                data={"enabled": "false", "csrf_token": csrf},
+                follow_redirects=False,
+            ).status_code
+            == 303
+        )
+        assert "Disabled" in client.get("/settings").text
         exported_logs = client.get("/logs/export")
         assert exported_logs.status_code == 200
         assert exported_logs.headers["content-type"].startswith("application/x-ndjson")

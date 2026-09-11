@@ -33,6 +33,10 @@ openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$certs/serv
 openssl req -new -key "$certs/server.key" -subj '/CN=codex-broker' -out "$certs/server.csr"
 openssl x509 -req -in "$certs/server.csr" -CA "$certs/ca.crt" -CAkey "$certs/ca.key" -CAcreateserial -days 825 -sha256 -extfile "$certs/server.ext" -out "$certs/server.crt" 2>/dev/null
 
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$certs/public.key" 2>/dev/null
+openssl req -new -key "$certs/public.key" -subj '/CN=codex-broker-enrollment' -out "$certs/public.csr"
+openssl x509 -req -in "$certs/public.csr" -CA "$certs/ca.crt" -CAkey "$certs/ca.key" -CAcreateserial -days 825 -sha256 -extfile "$certs/server.ext" -out "$certs/public.crt" 2>/dev/null
+
 rm "$certs"/*.csr "$certs"/*.ext "$certs"/*.srl
 chmod 600 .env "$certs"/*.key
 

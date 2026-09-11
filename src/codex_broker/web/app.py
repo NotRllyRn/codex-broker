@@ -336,11 +336,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not enrollment_auth_throttle.allow(client):
             raise BrokerError("PUBLIC_ENROLLMENT_THROTTLED", "Authentication failed", 429)
         current = state(request)
-        configured = current.settings.public_enrollment_key
+        configured = current.settings.enrollment_gateway_key
         scheme, _, token = (authorization or "").partition(" ")
         if (
-            not current.settings.public_enrollment_enabled
-            or configured is None
+            configured is None
             or scheme.lower() != "bearer"
             or not secrets.compare_digest(configured.get_secret_value(), token)
         ):
@@ -385,6 +384,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             {"status": "ok" if current.ready else "unavailable"},
             status_code=200 if current.ready else 503,
         )
+
+    @app.post("/api/private/v1/public-enrollments/availability")
+    async def public_enrollment_availability(
+        request: Request, authorization: str | None = Header(None)
+    ) -> dict[str, bool]:
+        current = await require_enrollment_gateway(request, authorization)
+        return {"enabled": await current.services.public_enrollment_open()}
 
     @app.post("/api/private/v1/public-enrollments")
     async def public_enrollment_start(
@@ -739,9 +745,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             compatibility=current.compatibility,
             destinations=await current.webhooks.destinations(),
             client_keys=await current.client_keys.list(),
+            public_enrollment_open=await current.services.public_enrollment_open(),
             issued_key=None,
             csrf=request.cookies.get(CSRF_COOKIE, ""),
         )
+
+    @app.post("/settings/public-enrollment")
+    async def public_enrollment_enabled(
+        request: Request, enabled: bool = Form(), csrf_token: str = Form()
+    ) -> Response:
+        await require_form(request, csrf_token)
+        await state(request).services.set_public_enrollment_open(enabled)
+        return RedirectResponse("/settings", 303)
 
     @app.post("/settings/client-keys")
     async def client_key_create(
@@ -758,6 +773,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 compatibility=current.compatibility,
                 destinations=await current.webhooks.destinations(),
                 client_keys=await current.client_keys.list(),
+                public_enrollment_open=await current.services.public_enrollment_open(),
                 issued_key=issued,
                 csrf=csrf_token,
             ),

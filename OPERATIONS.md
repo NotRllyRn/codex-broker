@@ -29,7 +29,7 @@ codex-broker doctor
 
 ## Accounts and credentials
 
-Enroll with device code when possible. Browser OAuth supports manual forwarding of the exact loopback callback URL. Manual token import is retired. The optional public flow always uses device code, verifies the resulting identity, labels the account with its normalized email, and rejects duplicate managed/pending emails.
+Enroll with device code when possible. Browser OAuth supports manual forwarding of the exact loopback callback URL. Manual token import is retired. The public flow always uses device code, verifies the resulting identity, labels the account with its normalized email, and rejects duplicate managed/pending emails. Enable or disable it from **Settings → Public enrollment**; disabling makes visitor routes return empty 404 responses.
 
 Each account has one mutable encrypted `ACTIVE` credential. Every authenticated broker runtime is quiesced and checkpointed before plaintext cleanup, including after failed RPCs or cancellation. A checkpoint failure quarantines the runtime and blocks further credential use until explicit reauthentication.
 

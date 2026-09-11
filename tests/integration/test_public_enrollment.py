@@ -27,7 +27,6 @@ def settings(tmp_path: Path) -> Settings:
         vault_key=generate_key(),
         admin_password=PASSWORD,
         codex_executable=str(executable),
-        public_enrollment_enabled=True,
         public_enrollment_key=SecretStr(KEY),
         window_pulse_enabled=False,
     )
@@ -119,6 +118,8 @@ def test_public_site_exposes_only_guided_enrollment(tmp_path: Path) -> None:
         nonlocal calls
         assert request.headers.get("authorization") == f"Bearer {KEY}"
         calls += 1
+        if request.url.path.endswith("/availability"):
+            return httpx.Response(200, json={"enabled": True})
         if request.url.path.endswith("/public-enrollments"):
             return httpx.Response(
                 200,
@@ -147,7 +148,7 @@ def test_public_site_exposes_only_guided_enrollment(tmp_path: Path) -> None:
     ) as client:
         page = client.get("/")
         assert page.status_code == 200
-        assert calls == 0
+        assert calls == 1
         assert "Step 1. Copy this code:" in page.text
         assert "Step 2. Open the OpenAI sign-in page" in page.text
         assert "Step 3. Return to this tab" in page.text
@@ -163,4 +164,20 @@ def test_public_site_exposes_only_guided_enrollment(tmp_path: Path) -> None:
         assert client.get("/login").status_code == 404
         assert client.get("/accounts").status_code == 404
         assert "frame-ancestors 'none'" in page.headers.get("content-security-policy", "")
-        assert calls == 2
+        assert calls == 7
+
+
+def test_disabled_public_site_returns_only_empty_not_found(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/availability")
+        return httpx.Response(200, json={"enabled": False})
+
+    with TestClient(
+        create_public_app(settings(tmp_path), httpx.MockTransport(handler)),
+        base_url="https://public.example",
+    ) as client:
+        for method, path in (("get", "/"), ("get", "/static/enroll.css"), ("post", "/start")):
+            response = getattr(client, method)(path)
+            assert response.status_code == 404
+            assert not response.content
+        assert client.get("/health/live").status_code == 200

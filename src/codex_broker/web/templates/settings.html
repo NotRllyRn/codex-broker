@@ -31,6 +31,24 @@
       }}
     </p>
   </article>
+  <article>
+    <h2>Public enrollment</h2>
+    <strong>{{ 'Enabled' if public_enrollment_open else 'Disabled' }}</strong>
+    <p>
+      Controls whether the public sign-in site accepts or displays anything.
+    </p>
+    <form method="post" action="/settings/public-enrollment">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+      <input
+        type="hidden"
+        name="enabled"
+        value="{{ 'false' if public_enrollment_open else 'true' }}"
+      />
+      <button class="quiet-button" type="submit">
+        {{ 'Disable' if public_enrollment_open else 'Enable' }}
+      </button>
+    </form>
+  </article>
 </section>
 <section class="detail-section">
   <h2>Client access keys</h2>
