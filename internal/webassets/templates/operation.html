@@ -8,7 +8,7 @@
 <section class="operation-view" data-operation="{{ operation.operation_id }}">
   <span class="status-label">{{ operation.state|humanize|title }}</span>
   <h2>
-    {{ operation.progress_summary or operation.error_summary or 'Waiting to start' }}
+    {% if operation.progress_summary %}{{ operation.progress_summary }}{% elif operation.error_summary %}{{ operation.error_summary }}{% else %}Waiting to start{% endif %}
   </h2>
   <dl>
     <div>
@@ -17,7 +17,7 @@
     </div>
     <div>
       <dt>Progress code</dt>
-      <dd>{{ operation.progress_code or 'None' }}</dd>
+      <dd>{{ operation.progress_code|default_if_none:"None" }}</dd>
     </div>
     <div>
       <dt>Created</dt>
@@ -25,7 +25,7 @@
     </div>
     <div>
       <dt>Completed</dt>
-      <dd>{{ operation.completed_at_ms or 'Not complete' }}</dd>
+      <dd>{{ operation.completed_at_ms|default_if_none:"Not complete" }}</dd>
     </div>
     {% if operation.result.model %}
     <div>

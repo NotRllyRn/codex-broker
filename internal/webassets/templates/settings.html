@@ -67,7 +67,7 @@
         >{{ key.key_prefix }}… | {% if key.revoked_at_ms %}Revoked{% else %}Active{% endif %}</span
       >
       <small
-        >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms or 'never' }}</small
+        >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms|default_if_none:"never" }}</small
       >
       <form
         method="post"

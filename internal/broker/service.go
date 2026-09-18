@@ -217,7 +217,7 @@ func (s *Service) account(ctx context.Context, public string) (Account, error) {
 	var a Account
 	var enabled int
 	var workspace sql.NullString
-	err := s.Store.DB.QueryRowContext(ctx, "SELECT a.account_id,a.public_token,a.display_name,a.workspace_constraint,a.preferred_login_method,a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,s.last_successful_login_method,s.last_auth_verified_at_ms FROM accounts a JOIN account_state s USING(account_id) WHERE a.public_token=? AND a.deleted_at_ms IS NULL", public).Scan(&a.ID, &a.PublicID, &a.DisplayName, &workspace, &a.PreferredMethod, &enabled, &a.CreatedAtMS, &a.AuthState, &a.WorkerState, &a.Email, &a.Plan, &a.LastMethod, &a.LastVerified)
+	err := s.Store.DB.QueryRowContext(ctx, "SELECT a.account_id,a.public_token,a.display_name,a.workspace_constraint,a.preferred_login_method,a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,a.last_successful_login_method,s.last_auth_verified_at_ms FROM accounts a JOIN account_state s USING(account_id) WHERE a.public_token=? AND a.deleted_at_ms IS NULL", public).Scan(&a.ID, &a.PublicID, &a.DisplayName, &workspace, &a.PreferredMethod, &enabled, &a.CreatedAtMS, &a.AuthState, &a.WorkerState, &a.Email, &a.Plan, &a.LastMethod, &a.LastVerified)
 	if err == sql.ErrNoRows {
 		return a, core.NewError("ACCOUNT_NOT_FOUND", "Account not found", 404)
 	}

@@ -5,7 +5,7 @@ Codex Broker{% endblock %} {% block content %}
   <p class="kicker">Account evidence</p>
   <h1>{{ detail.account.display_name }}</h1>
   <p>
-    {{ detail.account.upstream_email or 'Upstream identity not verified' }}{% if detail.account.upstream_plan %} | {{ detail.account.upstream_plan }}{% endif %}
+    {{ detail.account.upstream_email|default_if_none:"Upstream identity not verified" }}{% if detail.account.upstream_plan %} | {{ detail.account.upstream_plan }}{% endif %}
   </p>
 </section>
 <section class="account-evidence-grid">
@@ -19,16 +19,16 @@ Codex Broker{% endblock %} {% block content %}
       <div>
         <dt>Method</dt>
         <dd>
-          {{ detail.account.last_successful_login_method or detail.account.preferred_login_method }}
+          {% if detail.account.last_successful_login_method %}{{ detail.account.last_successful_login_method }}{% else %}{{ detail.account.preferred_login_method }}{% endif %}
         </dd>
       </div>
       <div>
         <dt>Workspace</dt>
-        <dd>{{ detail.account.workspace_constraint or 'Not constrained' }}</dd>
+        <dd>{{ detail.account.workspace_constraint|default_if_none:"Not constrained" }}</dd>
       </div>
       <div>
         <dt>Verified</dt>
-        <dd>{{ detail.account.last_auth_verified_at_ms or 'Never' }}</dd>
+        <dd>{{ detail.account.last_auth_verified_at_ms|default_if_none:"Never" }}</dd>
       </div>
     </dl>
   </article>
@@ -38,9 +38,9 @@ Codex Broker{% endblock %} {% block content %}
       >{{ detail.usage.short_used_percent_raw|default_if_none:"?" }}%</strong
     >
     <p>
-      Duration: {{ detail.usage.short_duration_minutes or 'unknown' }} minutes
+      Duration: {{ detail.usage.short_duration_minutes|default_if_none:"unknown" }} minutes
     </p>
-    <p>Reset: {{ detail.usage.short_resets_at_s or 'unknown' }}</p>
+    <p>Reset: {{ detail.usage.short_resets_at_s|default_if_none:"unknown" }}</p>
   </article>
   <article>
     <h2>Weekly window</h2>
@@ -48,9 +48,9 @@ Codex Broker{% endblock %} {% block content %}
       >{{ detail.usage.weekly_used_percent_raw|default_if_none:"?" }}%</strong
     >
     <p>
-      Duration: {{ detail.usage.weekly_duration_minutes or 'unknown' }} minutes
+      Duration: {{ detail.usage.weekly_duration_minutes|default_if_none:"unknown" }} minutes
     </p>
-    <p>Reset: {{ detail.usage.weekly_resets_at_s or 'unknown' }}</p>
+    <p>Reset: {{ detail.usage.weekly_resets_at_s|default_if_none:"unknown" }}</p>
   </article>
 </section>
 <section class="detail-section reauth-panel">
@@ -167,7 +167,7 @@ Codex Broker{% endblock %} {% block content %}
       ><strong>{{ item.kind|humanize|title }}</strong
       ><span>{{ item.state|humanize|title }}</span
       ><small
-        >{{ item.progress_summary or item.error_summary or 'Queued' }}</small
+        >{% if item.progress_summary %}{{ item.progress_summary }}{% elif item.error_summary %}{{ item.error_summary }}{% else %}Queued{% endif %}</small
       ></a
     >{% endfor %}
   </div>

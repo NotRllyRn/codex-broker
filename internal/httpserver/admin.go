@@ -16,7 +16,15 @@ import (
 )
 
 func accountView(account broker.AccountSummary) map[string]any {
-	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset_ms": account.ShortResetMS, "weekly_percent": account.WeeklyPercent, "weekly_reset_ms": account.WeeklyResetMS, "last_refresh_ms": account.LastRefreshMS, "active_operation": account.ActiveOperation, "evidence": account.Evidence}
+	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence}
+}
+
+func timestampView(milliseconds *int64) any {
+	formatted := core.ISOTime(milliseconds)
+	if formatted == nil {
+		return nil
+	}
+	return *formatted
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {

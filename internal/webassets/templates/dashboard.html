@@ -99,13 +99,13 @@
           <strong
             >{{ account.short_percent|default_if_none:"?" }}%</strong
           ><span>Short window</span
-          ><small>{{ account.short_reset or 'Reset unknown' }}</small>
+          ><small>{{ account.short_reset|default_if_none:"Reset unknown" }}</small>
         </div>
         <div>
           <strong
             >{{ account.weekly_percent|default_if_none:"?" }}%</strong
           ><span>Weekly window</span
-          ><small>{{ account.weekly_reset or 'Reset unknown' }}</small>
+          ><small>{{ account.weekly_reset|default_if_none:"Reset unknown" }}</small>
         </div>
       </div>
       <footer>
