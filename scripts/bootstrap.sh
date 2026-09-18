@@ -3,7 +3,7 @@ set -eu
 
 ip=${1:-}
 [ -n "$ip" ] || { echo "usage: $0 <broker-local-ip>" >&2; exit 2; }
-python3 -c 'import ipaddress,sys; ipaddress.ip_address(sys.argv[1])' "$ip" 2>/dev/null || { echo "broker-local-ip must be an IP address" >&2; exit 2; }
+case "$ip" in *[!0-9A-Fa-f:.]*|'') echo "broker-local-ip must be an IP address" >&2; exit 2;; esac
 command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 [ ! -e .env ] || { echo ".env already exists; refusing to overwrite secrets" >&2; exit 1; }
 [ ! -e deployment/certs ] || { echo "deployment/certs already exists; refusing to overwrite certificates" >&2; exit 1; }
@@ -11,9 +11,9 @@ command -v openssl >/dev/null || { echo "openssl is required" >&2; exit 1; }
 umask 077
 mkdir -p deployment/certs
 certs=deployment/certs
-admin_password=$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')
-vault_key=$(python3 -c 'import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())')
-enrollment_key=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+admin_password=$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=\n')
+vault_key="wk1_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+enrollment_key=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
 cat >.env <<EOF
 WINDOWKEEPER_ADMIN_PASSWORD=$admin_password
 WINDOWKEEPER_VAULT_KEY=$vault_key

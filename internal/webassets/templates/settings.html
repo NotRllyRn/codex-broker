@@ -1,0 +1,200 @@
+{% extends "base.html" %}{% block title %}Settings | Codex Broker{% endblock %}{% block content %}
+<section class="page-heading">
+  <p class="kicker">Runtime configuration</p>
+  <h1>Settings</h1>
+  <p>Environment-backed configuration is immutable until restart.</p>
+</section>
+<section class="settings-list">
+  <article>
+    <h2>Vault</h2>
+    <strong>{% if vault_configured %}Configured{% else %}Key required{% endif %}</strong>
+    <p>The key source is never displayed or stored in SQLite.</p>
+  </article>
+  <article>
+    <h2>Usage polling</h2>
+    <strong>{{ settings.usage_poll_seconds }} seconds</strong>
+    <p>Dashboard requests coalesce with background refreshes.</p>
+  </article>
+  <article>
+    <h2>Browser OAuth</h2>
+    <strong>{{ settings.browser_oauth_mode|humanize|title }}</strong>
+    <p>Device code remains the recommended default for remote deployments.</p>
+  </article>
+  <article>
+    <h2>Managed Codex</h2>
+    <strong
+      >{% if compatibility.compatible %}Available{% else %}Unavailable{% endif %}</strong
+    >
+    <p>
+      {{ compatibility.code|humanize|title }}. {{ compatibility.detail }}
+    </p>
+  </article>
+  <article>
+    <h2>Public enrollment</h2>
+    <strong>{% if public_enrollment_open %}Enabled{% else %}Disabled{% endif %}</strong>
+    <p>
+      Controls whether the public sign-in site accepts or displays anything.
+    </p>
+    <form method="post" action="/settings/public-enrollment">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+      <input
+        type="hidden"
+        name="enabled"
+        value="{% if public_enrollment_open %}false{% else %}true{% endif %}"
+      />
+      <button class="quiet-button" type="submit">
+        {% if public_enrollment_open %}Disable{% else %}Enable{% endif %}
+      </button>
+    </form>
+  </article>
+</section>
+<section class="detail-section">
+  <h2>Client access keys</h2>
+  <p class="subtle">
+    Each Pi or Hermes installation should have its own revocable key.
+  </p>
+  {% if issued_key %}
+  <div class="service-alert" role="status">
+    <strong>Copy this key now. It will not be shown again.</strong>
+    <code>{{ issued_key.token }}</code>
+  </div>
+  {% endif %} {% if client_keys %}
+  <div class="data-list">
+    {% for key in client_keys %}
+    <article>
+      <strong>{{ key.name }}</strong
+      ><span
+        >{{ key.key_prefix }}… | {% if key.revoked_at_ms %}Revoked{% else %}Active{% endif %}</span
+      >
+      <small
+        >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms or 'never' }}</small
+      >
+      <form
+        method="post"
+        action="/settings/client-keys/{{ key.key_id }}/{% if key.revoked_at_ms %}delete{% else %}revoke{% endif %}"
+      >
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <button
+          class="{% if key.revoked_at_ms %}danger-button{% else %}quiet-button{% endif %}"
+          type="submit"
+        >
+          {% if key.revoked_at_ms %}Delete{% else %}Revoke{% endif %}
+        </button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">No client keys exist.</p>
+  {% endif %}
+  <form class="account-form" method="post" action="/settings/client-keys">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <label for="client_key_name">Client name</label>
+    <input
+      id="client_key_name"
+      name="name"
+      maxlength="80"
+      required
+      placeholder="Pi desktop"
+    />
+    <button class="primary-button" type="submit">Create key</button>
+  </form>
+</section>
+<section class="detail-section settings-webhooks">
+  <h2>Webhook destinations</h2>
+  <p class="subtle">
+    Incident lifecycle events use immutable signed JSON bodies. Destination URLs
+    and signing secrets are encrypted.
+  </p>
+  {% if destinations %}
+  <div class="data-list">
+    {% for destination in destinations %}
+    <article>
+      <strong>{{ destination.display_name }}</strong
+      ><span
+        >{{ destination.kind|title }} | {% if destination.enabled %}Enabled{% else %}Disabled{% endif %}</span
+      ><small>Created {{ destination.created_at_ms }}</small>
+      <div class="inline-actions">
+        <form
+          method="post"
+          action="/settings/webhooks/{{ destination.destination_id }}/test"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+            class="quiet-button"
+            type="submit"
+          >
+            Send test
+          </button>
+        </form>
+        <form
+          method="post"
+          action="/settings/webhooks/{{ destination.destination_id }}/enabled"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><input
+            type="hidden"
+            name="enabled"
+            value="{% if destination.enabled %}false{% else %}true{% endif %}"
+          /><button class="quiet-button" type="submit">
+            {% if destination.enabled %}Disable{% else %}Enable{% endif %}
+          </button>
+        </form>
+        <form
+          method="post"
+          action="/settings/webhooks/{{ destination.destination_id }}/delete"
+          data-confirm="Delete this webhook destination?"
+        >
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" /><button
+            class="danger-button"
+            type="submit"
+          >
+            Delete
+          </button>
+        </form>
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">No webhook destinations are configured.</p>
+  {% endif %}
+  <form
+    class="account-form webhook-form"
+    method="post"
+    action="/settings/webhooks"
+  >
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <fieldset>
+      <legend>Add destination</legend>
+      <label for="webhook_name">Display name</label
+      ><input
+        id="webhook_name"
+        name="display_name"
+        required
+        maxlength="80"
+      /><label for="webhook_kind">Destination type</label
+      ><select id="webhook_kind" name="kind">
+        <option value="generic">Generic JSON</option>
+        <option value="slack">Slack</option>
+        <option value="discord">Discord</option></select
+      ><label for="webhook_url">HTTPS endpoint</label
+      ><input
+        id="webhook_url"
+        name="url"
+        type="url"
+        required
+        placeholder="https://hooks.example.test/codex-broker"
+      /><label for="webhook_secret">Signing secret <span>optional</span></label
+      ><input
+        id="webhook_secret"
+        name="signing_secret"
+        type="password"
+        autocomplete="new-password"
+      />
+      <p class="field-help">
+        Sent as X-Codex-Broker-Signature using HMAC-SHA256.
+      </p>
+      <button class="primary-button" type="submit">Add destination</button>
+    </fieldset>
+  </form>
+</section>
+{% endblock %}

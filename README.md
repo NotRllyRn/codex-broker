@@ -80,24 +80,26 @@ exact environment variables.
 
 ## Local development
 
-Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and a compatible
+Requires Go 1.27+, Node.js/npm for the Pi extension tests, and a compatible
 `codex` executable.
 
 ```bash
-uv sync --all-extras
 cp .env.example .env
 chmod 600 .env
-uv run codex-broker vault generate-key
+go run ./cmd/codex-broker vault generate-key
 # Set WINDOWKEEPER_VAULT_KEY and WINDOWKEEPER_ADMIN_PASSWORD in .env.
-uv run codex-broker serve
+go run ./cmd/codex-broker serve
 ```
 
 Loopback HTTP is allowed for development. Non-loopback binding requires TLS.
 
 ```bash
-uv run ruff check src tests
-uv run pyright src tests
-uv run pytest
+gofmt -w cmd internal
+go vet ./...
+go test -race ./...
+npm install --prefix packages/pi-extension
+npm test --prefix packages/pi-extension
+npm run check --prefix packages/pi-extension
 ```
 
 ## More documentation

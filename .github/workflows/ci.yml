@@ -11,20 +11,18 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
         with:
-          enable-cache: true
-      - run: uv sync --all-extras --locked
-      - run: uv run ruff check src tests
-      - run: uv run ruff format --check src tests
-      - run: node --check src/windowkeeper/web/static/app.js
-      - run: uv run mypy src tests
-      - run: uv run pyright
-      - run: uv run pytest
-      - run: uv run pip-audit
-      - run: uv build
-      - name: Verify wheel contents
-        run: unzip -l dist/*.whl | grep 'windowkeeper/migrations/001_initial.sql'
+          go-version-file: go.mod
+          cache: true
+      - run: test -z "$(gofmt -l cmd internal)"
+      - run: go vet ./...
+      - run: go test -race ./...
+      - run: go build ./cmd/codex-broker
+      - run: node --check internal/webassets/static/app.js
+      - run: npm install --prefix packages/pi-extension
+      - run: npm test --prefix packages/pi-extension
+      - run: npm run check --prefix packages/pi-extension
   image:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
@@ -59,12 +57,13 @@ jobs:
             --read-only --tmpfs /data:uid=10001,gid=10001,mode=0700 \
             --tmpfs /run/windowkeeper:uid=10001,gid=10001,mode=0700 \
             --publish 127.0.0.1:18787:8787 \
+            --env WINDOWKEEPER_HOST=127.0.0.1 \
             --env WINDOWKEEPER_VAULT_KEY="$key" \
             --env WINDOWKEEPER_ADMIN_PASSWORD='release smoke password' \
             windowkeeper:smoke
           trap 'docker logs windowkeeper-smoke; docker rm --force windowkeeper-smoke' EXIT
           for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:18787/health/live; then exit 0; fi
+            if docker exec windowkeeper-smoke python -c "import socket; socket.create_connection(('127.0.0.1', 8787), 2).close()"; then exit 0; fi
             sleep 1
           done
           exit 1

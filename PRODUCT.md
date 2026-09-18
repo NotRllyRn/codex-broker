@@ -16,7 +16,7 @@ Prevent independent Codex clients from racing or invalidating rotating OAuth ref
 
 ## Operating context
 
-One hardened Docker-first Python process runs on a trusted Linux host. Same-network clients connect by local IP over verified TLS and authenticate with hashed, revocable broker client keys. Clients call Codex directly with leased access tokens; the broker remains a control plane.
+One hardened Docker-first Go process runs on a trusted Linux host. Same-network clients connect by local IP over verified TLS and authenticate with hashed, revocable broker client keys. Clients call Codex directly with leased access tokens; the broker remains a control plane.
 
 ## Capabilities and constraints
 

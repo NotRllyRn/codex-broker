@@ -5,17 +5,18 @@ A release is blocked unless every applicable gate passes.
 ## Automated
 
 ```bash
-uv sync --all-extras
-uv run ruff check src tests
-uv run pyright src tests
-uv run pytest
+test -z "$(gofmt -l cmd internal)"
+go vet ./...
+go test -race ./...
+go build ./cmd/codex-broker
+node --check internal/webassets/static/app.js
 npm --prefix packages/pi-extension test
 npm --prefix packages/pi-extension run check
 ```
 
 Required coverage includes:
 
-- migrations through 010, foreign keys, idempotency, and credential-generation preservation;
+- migrations through 011, foreign keys, idempotency, and credential-generation preservation;
 - upgrade from a pre-rename database without account relogin;
 - vault mismatch, verification, rotation, backup, and restore;
 - managed credential checkpointing after success, RPC failure, cancellation, and restart;
