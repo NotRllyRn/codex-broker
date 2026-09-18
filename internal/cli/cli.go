@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -82,10 +83,40 @@ func Run(ctx context.Context, args []string) error {
 
 func composeHealthProbe(args []string) error {
 	port := "8787"
+	certificatePath := os.Getenv("WINDOWKEEPER_TLS_CERT_FILE")
 	if len(args) > 1 && strings.Contains(args[1], "8788") {
 		port = "8788"
+		certificatePath = os.Getenv("WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE")
 	}
-	connection, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", port), 2*time.Second)
+	address := net.JoinHostPort("127.0.0.1", port)
+	if certificatePath != "" {
+		certificatePEM, err := os.ReadFile(certificatePath)
+		if err != nil {
+			return err
+		}
+		block, _ := pem.Decode(certificatePEM)
+		if block == nil {
+			return errors.New("health certificate is invalid")
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return err
+		}
+		serverName := ""
+		if len(certificate.DNSNames) > 0 {
+			serverName = certificate.DNSNames[0]
+		} else if len(certificate.IPAddresses) > 0 {
+			serverName = certificate.IPAddresses[0].String()
+		}
+		roots := x509.NewCertPool()
+		roots.AppendCertsFromPEM(certificatePEM)
+		connection, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp", address, &tls.Config{RootCAs: roots, ServerName: serverName, MinVersion: tls.VersionTLS12})
+		if err != nil {
+			return err
+		}
+		return connection.Close()
+	}
+	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
 		return err
 	}
