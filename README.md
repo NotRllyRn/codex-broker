@@ -1,8 +1,11 @@
 # Codex Broker
 
-Codex Broker securely shares a pool of ChatGPT/Codex accounts with trusted apps
-on your network. It owns each account's refresh token, tracks usage limits, and
-leases short-lived access tokens without proxying model traffic.
+Codex Broker lets you combine multiple ChatGPT accounts into one 
+shared pool, giving your apps access to higher usage limits without 
+needing to manage each account separately.
+
+It owns each account's refresh token, tracks usage limits, and
+leases short-lived access tokens.
 
 ## Supported apps
 
