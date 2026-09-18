@@ -1,39 +1,87 @@
 # Codex Broker
 
-Codex Broker is a central Codex authentication, quota, and account-routing service. It owns the only mutable OAuth credential for each account, tracks short and weekly usage windows, and leases access tokens to trusted LAN clients without exposing refresh tokens.
+Codex Broker securely shares a pool of ChatGPT/Codex accounts with trusted apps
+on your network. It owns each account's refresh token, tracks usage limits, and
+leases short-lived access tokens without proxying model traffic.
 
-## What ships
+## Supported apps
 
-- Encrypted, isolated credential lineage per ChatGPT/Codex account.
-- Device-code and managed browser sign-in.
-- Opaque `auth.json` checkpointing after every broker-owned authenticated runtime.
-- Stable account routing with preferred-account affinity and exact pool-reset responses.
-- Minimal ephemeral window pulses that keep every verified account's short and weekly reset clocks active.
-- Hashed, revocable client keys for the machine API.
-- A small Pi extension under [`packages/pi-extension`](packages/pi-extension/README.md).
-- A version-pinned Hermes fork submodule under [`integrations/hermes-agent`](integrations/hermes-agent), with its implementation specification retained under [`docs/integrations/hermes-agent-patch.md`](docs/integrations/hermes-agent-patch.md).
-- One Orbit dashboard, persistent administrator sessions, CSRF protection, incidents, webhooks, and sanitized logs.
-- Direct TLS for same-network deployment.
-- An optional isolated public device-code enrollment listener on a separate port.
+| App | Integration | First step |
+| --- | --- | --- |
+| [Pi](https://github.com/badlogic/pi-mono) | Extension included in this repository | [Install the extension](#pi) |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Version-pinned maintained fork | [Run the installer](#hermes-agent) |
+| [T3 Code](https://github.com/pingdotgg/t3code) | [`codex-broker` fork branch](https://github.com/NotRllyRn/t3code/tree/codex-broker) | [Build and connect the fork](#t3-code) |
 
-Codex Broker is a control plane, not an inference proxy. Clients call Codex directly with short-lived leased access tokens. Revoking a broker key prevents future leases but cannot revoke an already-issued upstream token before its expiry.
+All integrations request one in-memory lease per turn. They never store broker
+refresh tokens or a complete broker-managed `auth.json`.
 
-The legacy activation subsystem and its controls are removed. A fixed low-cost pulse runs once per earliest pool reset to keep otherwise idle short and weekly windows active; it uses the existing isolated runtime and credential checkpoint path.
+## Start the broker
+
+For a TLS-protected LAN deployment, install Docker and Compose, then run:
+
+```bash
+git clone https://github.com/NotRllyRn/codex-broker.git
+cd codex-broker
+scripts/bootstrap.sh 192.168.1.20
+docker compose up --build -d
+```
+
+Replace the example IP with the broker host's LAN IP. Open
+`https://192.168.1.20:8787`, sign in with the generated administrator password,
+add at least one Codex account, and create a client key in **Settings**.
+
+Install `deployment/certs/ca.crt` on each client host. Keep `.env`, private keys,
+and the client-key secret private. Never expose broker port `8787` to the
+Internet. See [Operations](OPERATIONS.md) for backups, upgrades, recovery, and
+hardening.
+
+## Connect an app
+
+### Pi
+
+From this repository checkout:
+
+```bash
+pi install ./packages/pi-extension
+```
+
+Run `/broker-status` in Pi and enter the broker HTTPS URL, client key, and CA
+certificate path. See the [Pi extension guide](packages/pi-extension/README.md).
+
+### Hermes Agent
+
+Install Hermes normally, then apply the pinned integration:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NotRllyRn/codex-broker/main/scripts/install-hermes-integration.sh | sudo -E sh
+```
+
+In a private administrator chat, run:
+
+```text
+/broker-status set <url> <client-key> <ca-path>
+```
+
+Delete that message afterward. See the
+[Hermes Agent guide](docs/integrations/hermes-agent.md) for supported versions
+and safer script inspection.
+
+### T3 Code
+
+Build the supported fork's `codex-broker` branch, then add the broker URL, client
+key, and optional private-CA certificate to the Codex provider in
+**Settings → Providers**. A local `codex login` is not required.
+
+See the [T3 Code guide](docs/integrations/t3-code.md) for the build commands and
+exact environment variables.
 
 ## Local development
 
-Requires Python 3.12+, `uv`, and a compatible `codex` executable.
+Requires Python 3.12+, [`uv`](https://docs.astral.sh/uv/), and a compatible
+`codex` executable.
 
 ```bash
 uv sync --all-extras
-uv run ruff check src tests
-uv run pyright src tests
-uv run pytest
-```
-
-The historical `WINDOWKEEPER_*` configuration prefix and storage names remain compatibility identifiers so existing installations upgrade without relogin.
-
-```bash
 cp .env.example .env
 chmod 600 .env
 uv run codex-broker vault generate-key
@@ -41,67 +89,20 @@ uv run codex-broker vault generate-key
 uv run codex-broker serve
 ```
 
-Loopback HTTP is allowed for development. Non-loopback binding requires a TLS certificate and private key.
-
-## Secure LAN deployment
-
-Generate a local CA, server certificate, administrator password, vault key, and `.env`, then start Compose:
+Loopback HTTP is allowed for development. Non-loopback binding requires TLS.
 
 ```bash
-scripts/bootstrap.sh 192.168.1.20
-docker compose up --build -d
+uv run ruff check src tests
+uv run pyright src tests
+uv run pytest
 ```
 
-Install `deployment/certs/ca.crt` in every client host's trust store, or configure the Pi/Hermes CA-file variable. Never disable certificate verification. The service communicates over local IP addresses, but TLS still prevents passive credential capture and detects man-in-the-middle endpoints.
+## More documentation
 
-Create a client key and copy the secret once:
+- [Operations](OPERATIONS.md) — health, backups, upgrades, and incident response
+- [Public enrollment](docs/public-enrollment.md) — isolated device-code enrollment
+- [API contract](plan.md) — authenticated machine endpoints and routing responses
+- [Security policy](SECURITY.md) — vulnerability reporting and security boundary
 
-```bash
-codex-broker client-key create "Pi desktop"
-```
-
-Machine endpoints:
-
-- `POST /api/v1/route` — select an eligible account and return an access-only lease, or an exact wait response.
-- `GET /api/v1/health` — authenticated broker readiness.
-
-See [`plan.md`](plan.md) for the API contract and [`OPERATIONS.md`](OPERATIONS.md) for backup, recovery, upgrades, and incident response.
-
-## Public enrollment
-
-The default Compose stack includes an isolated guided device-code enrollment site on port `8788`; the dashboard and machine API remain in the private broker process on `8787`. Enable or disable the public page from **Settings → Public enrollment**. Disabled pages return only an empty 404 response. A successful flow labels the new account with its verified ChatGPT email. Use a publicly trusted certificate and firewall `8787` from the Internet. See [`docs/public-enrollment.md`](docs/public-enrollment.md) for setup and threat boundaries.
-
-## Pi
-
-```bash
-pi install ./packages/pi-extension
-```
-
-Run `/broker-status` in Pi to configure the broker URL, API token, and CA certificate path. The extension requests one in-memory lease per user turn and never stores refresh tokens or complete `auth.json` payloads.
-
-## Hermes
-
-Hermes requires a small core integration because its plugin hooks fail open at the credential boundary. The tested fork is pinned as a Git submodule and can be installed on a compatible Git-based Hermes installation with [`scripts/install-hermes-integration.sh`](scripts/install-hermes-integration.sh). See [`docs/integrations/hermes-agent.md`](docs/integrations/hermes-agent.md) for installation, exact version pins, and the rebase workflow.
-
-## Operations
-
-```bash
-codex-broker --version
-codex-broker health --json
-codex-broker status --json
-codex-broker doctor
-codex-broker backup --output /secure/backups/windowkeeper.sqlite
-codex-broker restore --input /secure/backups/windowkeeper.sqlite --confirm RESTORE
-codex-broker vault rotate --old-key-file /secure/old.key --new-key-file /secure/new.key
-codex-broker password-set
-```
-
-The administrator can enroll, reauthenticate, enable, disable, refresh, and delete accounts; download the immutable manual export; manage client keys and webhooks; inspect operations/incidents; and export sanitized logs. Password prompts are limited to sign-in and password change. Other browser mutations require the administrator session and CSRF token.
-
-Window pulses are enabled by default. They use one minimal ephemeral turn per account at startup and again at the earliest reported short/weekly reset. Optional controls are `WINDOWKEEPER_WINDOW_PULSE_ENABLED`, `WINDOWKEEPER_WINDOW_PULSE_POLL_SECONDS`, `WINDOWKEEPER_WINDOW_PULSE_RETRY_SECONDS`, and `WINDOWKEEPER_WINDOW_PULSE_CONCURRENCY`.
-
-## Security boundary
-
-The vault key must stay outside SQLite and the persistent data directory. Runtime plaintext exists only in isolated temporary directories and is removed after safe checkpointing. Failed checkpoints quarantine the runtime rather than deleting potentially newer credentials. Tokens, authorization headers, callback values, device codes, and URL query strings are redacted.
-
-Codex Broker does not protect against a compromised host, root user, malicious Codex binary, or a trusted client that exfiltrates its leased access token.
+Codex Broker cannot protect credentials on a compromised broker host or prevent
+a trusted client from copying an already-leased access token.
