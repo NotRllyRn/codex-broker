@@ -8,7 +8,10 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/codex-broker ./cmd/codex-broker
 
 FROM node:22-bookworm-slim AS runtime
-RUN npm install --global @openai/codex@0.145.0 \
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install --global @openai/codex@0.145.0 \
  && npm cache clean --force \
  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
  && useradd --system --uid 10001 --create-home --home-dir /home/windowkeeper windowkeeper \
