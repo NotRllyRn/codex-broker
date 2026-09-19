@@ -85,7 +85,7 @@ func restore(ctx context.Context, settings config.Config, args []string) error {
 	if err != nil || integrity != "ok" {
 		return errors.New("backup integrity check failed")
 	}
-	if version != 11 {
+	if version != 12 {
 		return errors.New("backup schema is not supported by this release")
 	}
 	destination := filepath.Join(settings.DataDir, "windowkeeper.db")
