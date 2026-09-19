@@ -1,6 +1,6 @@
 module github.com/NotRllyRn/codex-broker
 
-go 1.27
+go 1.26.0
 
 require (
 	github.com/flosch/pongo2/v6 v6.1.0
