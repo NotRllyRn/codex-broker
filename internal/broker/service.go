@@ -187,6 +187,9 @@ func (s *Service) CreateAccount(ctx context.Context, name string, labels []strin
 		if _, err := db.ExecContext(ctx, "INSERT INTO usage_current(account_id,last_attempt_at_ms) VALUES(?,?)", id, now); err != nil {
 			return err
 		}
+		if _, err := db.ExecContext(ctx, "INSERT INTO account_profiles(account_id) VALUES(?)", id); err != nil {
+			return err
+		}
 		for _, label := range labels {
 			labelID := core.NewID()
 			var existing string

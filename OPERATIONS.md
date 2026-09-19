@@ -37,6 +37,8 @@ An optional `EXPORT` is an immutable manual snapshot. Normal usage, routing, and
 
 A fixed minimal ephemeral turn pulses each verified account at startup and at its earliest pool reset. This keeps short/weekly reset clocks active without restoring legacy activation controls or arbitrary scheduled inference. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
 
+The regular usage poll also reads the authenticated Codex profile summary from ChatGPT. The latest successful response is cached per account for the dashboard; a failed profile read marks that cache stale but retains its last good values and does not invalidate otherwise-successful rate-limit evidence.
+
 ## Client keys
 
 Create a key in Settings or offline:
@@ -80,5 +82,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims without changing existing accounts or credentials. Rollback to software expecting the old activation tables requires restoring the pre-v9 backup.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache. These migrations do not change existing credentials. Rollback to software expecting the old activation tables requires restoring the pre-v9 backup; rollback across migration 012 requires restoring the automatic pre-v12 database backup.
 6. Do not require account relogin for a normal upgrade.

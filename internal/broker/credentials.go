@@ -308,9 +308,82 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 	})
 	if err != nil {
 		_ = s.recordUsageFailure(ctx, account, operation, start, err)
+		s.refreshProfile(ctx, account)
 		return
 	}
-	_ = s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil)
+	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil); err != nil {
+		return
+	}
+	s.refreshProfile(ctx, account)
+}
+
+func (s *Service) refreshProfile(ctx context.Context, account Account) {
+	now := core.NowMS()
+	lease, err := s.Lease(ctx, account, now, false)
+	if err != nil {
+		_ = s.recordProfileFailure(ctx, account, err)
+		return
+	}
+	profile, err := codex.FetchProfile(ctx, codex.ProfileURL, lease.AccessToken, lease.ChatGPTAccountID)
+	if err != nil {
+		_ = s.recordProfileFailure(ctx, account, err)
+		return
+	}
+	_ = s.commitProfile(ctx, account, profile)
+}
+
+func (s *Service) commitProfile(ctx context.Context, account Account, profile codex.AccountProfile) error {
+	now := core.NowMS()
+	daily, _ := json.Marshal(profile.Stats.DailyUsageBuckets)
+	invocations, _ := json.Marshal(profile.Stats.TopInvocations)
+	var displayName, username, statsAsOf, statsError any
+	if profile.Profile != nil {
+		displayName, username = pointerAnyString(profile.Profile.DisplayName), pointerAnyString(profile.Profile.Username)
+	}
+	if profile.Metadata != nil {
+		statsAsOf, statsError = pointerAnyString(profile.Metadata.StatsAsOf), pointerAnyString(profile.Metadata.StatsError)
+	}
+	err := s.Store.Write(ctx, func(db store.Executor) error {
+		_, err := db.ExecContext(ctx, `INSERT INTO account_profiles(account_id) VALUES(?) ON CONFLICT(account_id) DO NOTHING`, account.ID)
+		if err != nil {
+			return err
+		}
+		_, err = db.ExecContext(ctx, `UPDATE account_profiles SET profile_display_name=?,username=?,stats_as_of=?,stats_error=?,lifetime_tokens=?,peak_daily_tokens=?,longest_running_turn_sec=?,current_streak_days=?,longest_streak_days=?,daily_usage_buckets_json=?,fast_mode_usage_percentage=?,most_used_reasoning_effort=?,most_used_reasoning_effort_percentage=?,unique_skills_used=?,total_skills_used=?,total_threads=?,top_invocations_json=?,complete_read_at_ms=?,last_attempt_at_ms=?,stale=0,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1 WHERE account_id=?`, displayName, username, statsAsOf, statsError, pointerAny(profile.Stats.LifetimeTokens), pointerAny(profile.Stats.PeakDailyTokens), pointerAny(profile.Stats.LongestRunningTurnSec), pointerAny(profile.Stats.CurrentStreakDays), pointerAny(profile.Stats.LongestStreakDays), string(daily), pointerAnyFloat(profile.Stats.FastModeUsagePercentage), pointerAnyString(profile.Stats.MostUsedReasoningEffort), pointerAnyFloat(profile.Stats.MostUsedReasoningEffortPercentage), pointerAny(profile.Stats.UniqueSkillsUsed), pointerAny(profile.Stats.TotalSkillsUsed), pointerAny(profile.Stats.TotalThreads), string(invocations), now, now, account.ID)
+		return err
+	})
+	if err == nil && s.Events != nil {
+		s.Events.Publish("account.updated", map[string]any{"resource_id": account.PublicID, "profile": "FRESH"})
+	}
+	return err
+}
+
+func (s *Service) recordProfileFailure(ctx context.Context, account Account, failure error) error {
+	summary := truncateSummary(failure.Error())
+	if redacted, ok := logbook.Redact(summary).(string); ok {
+		summary = redacted
+	}
+	err := s.Store.Write(ctx, func(db store.Executor) error {
+		_, err := db.ExecContext(ctx, `INSERT INTO account_profiles(account_id,last_attempt_at_ms,stale,last_error_code,last_error_summary) VALUES(?,?,1,'PROFILE_REFRESH_FAILED',?) ON CONFLICT(account_id) DO UPDATE SET last_attempt_at_ms=excluded.last_attempt_at_ms,stale=1,last_error_code=excluded.last_error_code,last_error_summary=excluded.last_error_summary,state_version=account_profiles.state_version+1`, account.ID, core.NowMS(), summary)
+		return err
+	})
+	if err == nil && s.Events != nil {
+		s.Events.Publish("account.updated", map[string]any{"resource_id": account.PublicID, "profile": "STALE"})
+	}
+	return err
+}
+
+func pointerAnyString(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func pointerAnyFloat(value *float64) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 func (s *Service) commitUsage(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64) error {

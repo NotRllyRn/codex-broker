@@ -17,7 +17,7 @@ func TestDashboardRendersUsageResetTimes(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	err = renderer.render(response, 200, "dashboard.html", pongo2.Context{"accounts": []map[string]any{account}, "attention": []map[string]any{}, "counts": map[string]int{"HEALTHY": 1}, "status_options": []string{}, "selected_states": map[string]bool{}, "vault_configured": true})
+	err = renderer.render(response, 200, "dashboard.html", pongo2.Context{"accounts": []map[string]any{account}, "attention": []map[string]any{}, "profiles": []broker.ProfileDashboard{{ID: "all", Label: "All accounts"}}, "profiles_json": `[{"id":"all","label":"All accounts","daily_usage_buckets":[],"token_shares":[]}]`, "counts": map[string]int{"HEALTHY": 1}, "status_options": []string{}, "selected_states": map[string]bool{}, "vault_configured": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,6 +25,11 @@ func TestDashboardRendersUsageResetTimes(t *testing.T) {
 	for _, expected := range []string{"2026-09-18T06:50:03.000000Z", "2026-09-23T17:39:33.000000Z"} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("dashboard does not contain %q", expected)
+		}
+	}
+	for _, expected := range []string{"Account activity", "Lifetime tokens", "Tokens by account", `value="all"`} {
+		if !strings.Contains(body, expected) {
+			t.Errorf("profile dashboard does not contain %q", expected)
 		}
 	}
 }

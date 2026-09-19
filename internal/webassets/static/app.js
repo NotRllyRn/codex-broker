@@ -61,6 +61,124 @@ document
 	.querySelector("[data-refresh-page]")
 	?.addEventListener("click", () => location.reload());
 
+const profileDashboard = document.querySelector("[data-profile-dashboard]");
+if (profileDashboard) {
+	const profiles = JSON.parse(
+		profileDashboard.querySelector("[data-profile-data]").textContent || "[]",
+	);
+	const select = profileDashboard.querySelector("[data-profile-select]");
+	const compact = new Intl.NumberFormat(undefined, {
+		notation: "compact",
+		maximumFractionDigits: 1,
+	});
+	const integer = new Intl.NumberFormat();
+	const colors = ["#2678d9", "#36a58b", "#8b6fd6", "#e18b38", "#d65370", "#6b8e23", "#2b9eb3", "#b76e9b"];
+	const value = (number, suffix = "") =>
+		number == null ? "—" : `${compact.format(number)}${suffix}`;
+	const duration = (seconds) => {
+		if (seconds == null) return "—";
+		const hours = Math.floor(seconds / 3600);
+		const minutes = Math.floor((seconds % 3600) / 60);
+		return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+	};
+	const percentage = (number) =>
+		number == null ? "—" : `${Number(number).toFixed(number % 1 ? 1 : 0)}%`;
+
+	function renderActivity(profile) {
+		const grid = profileDashboard.querySelector("[data-activity-grid]");
+		const months = profileDashboard.querySelector("[data-activity-months]");
+		grid.replaceChildren();
+		months.replaceChildren();
+		const byDate = new Map(profile.daily_usage_buckets.map((item) => [item.start_date, item.tokens]));
+		const end = new Date();
+		end.setUTCHours(0, 0, 0, 0);
+		const start = new Date(end);
+		start.setUTCDate(start.getUTCDate() - 181);
+		start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+		const values = [...byDate.values()];
+		const max = Math.max(1, ...values);
+		let lastMonth = -1;
+		for (let date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
+			const key = date.toISOString().slice(0, 10);
+			const tokens = byDate.get(key) || 0;
+			const cell = document.createElement("span");
+			const level = tokens ? Math.max(1, Math.ceil((tokens / max) * 4)) : 0;
+			cell.dataset.level = String(level);
+			cell.title = `${key}: ${integer.format(tokens)} tokens`;
+			grid.append(cell);
+			if (date.getUTCDay() === 0 && date.getUTCMonth() !== lastMonth) {
+				const month = document.createElement("span");
+				month.textContent = date.toLocaleString(undefined, { month: "short", timeZone: "UTC" });
+				month.style.gridColumn = String(Math.floor((date - start) / 604800000) + 1);
+				months.append(month);
+				lastMonth = date.getUTCMonth();
+			}
+		}
+	}
+
+	function renderTokenShare(profile) {
+		const chart = profileDashboard.querySelector("[data-token-share-chart]");
+		const legend = profileDashboard.querySelector("[data-token-share-legend]");
+		const shares = profile.token_shares.filter((item) => item.tokens > 0);
+		const total = shares.reduce((sum, item) => sum + item.tokens, 0);
+		let cursor = 0;
+		const segments = shares.map((item, index) => {
+			const start = cursor;
+			cursor += (item.tokens / total) * 100;
+			return `${colors[index % colors.length]} ${start}% ${cursor}%`;
+		});
+		chart.style.background = segments.length ? `conic-gradient(${segments.join(",")})` : "var(--surface-2)";
+		chart.querySelector("[data-token-share-total]").textContent = value(total);
+		legend.replaceChildren();
+		shares.forEach((item, index) => {
+			const row = document.createElement("div");
+			const swatch = document.createElement("i");
+			const label = document.createElement("span");
+			const amount = document.createElement("strong");
+			swatch.style.background = colors[index % colors.length];
+			label.textContent = item.label;
+			amount.textContent = value(item.tokens);
+			row.append(swatch, label, amount);
+			legend.append(row);
+		});
+	}
+
+	function renderProfile() {
+		const profile = profiles.find((item) => item.id === select.value) || profiles[0];
+		if (!profile) return;
+		profileDashboard.querySelector("[data-profile-subtitle]").textContent = profile.username
+			? `@${profile.username}`
+			: profile.id === "all"
+				? "Combined statistics for every cached account."
+				: "Cached account statistics";
+		const stats = {
+			lifetime_tokens: value(profile.lifetime_tokens),
+			peak_daily_tokens: value(profile.peak_daily_tokens),
+			current_streak_days: value(profile.current_streak_days, " days"),
+			longest_streak_days: value(profile.longest_streak_days, " days"),
+			longest_running_turn_sec: duration(profile.longest_running_turn_sec),
+			fast_mode_usage_percentage: percentage(profile.fast_mode_usage_percentage),
+			most_used_reasoning_effort: profile.most_used_reasoning_effort
+				? `${profile.most_used_reasoning_effort} · ${percentage(profile.most_used_reasoning_effort_percentage)}`
+				: "—",
+			unique_skills_used: value(profile.unique_skills_used),
+			total_skills_used: value(profile.total_skills_used),
+			total_threads: value(profile.total_threads),
+		};
+		for (const [key, formatted] of Object.entries(stats))
+			profileDashboard.querySelectorAll(`[data-profile-stat="${key}"]`).forEach((node) => (node.textContent = formatted));
+		const freshness = profileDashboard.querySelector("[data-profile-freshness]");
+		freshness.textContent = profile.updated_at_ms
+			? `${profile.stale ? "Cached" : "Updated"} ${relativeTime(String(profile.updated_at_ms))}`
+			: "No cached profile data yet.";
+		renderActivity(profile);
+		renderTokenShare(profile);
+	}
+
+	select?.addEventListener("change", renderProfile);
+	renderProfile();
+}
+
 document.querySelectorAll("form[data-confirm]").forEach((form) => {
 	form.addEventListener("submit", (event) => {
 		if (!window.confirm(form.dataset.confirm)) event.preventDefault();

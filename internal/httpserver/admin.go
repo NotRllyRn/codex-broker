@@ -40,6 +40,14 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	profiles, err := s.App.Service.ProfileDashboard(r.Context())
+	if err != nil {
+		return err
+	}
+	profilesJSON, err := json.Marshal(profiles)
+	if err != nil {
+		return err
+	}
 	filter, query := r.URL.Query().Get("state_filter"), strings.ToLower(r.URL.Query().Get("q"))
 	var views []map[string]any
 	var attention []map[string]any
@@ -62,7 +70,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	for key := range counts {
 		selected[key] = filter == key
 	}
-	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "accounts": views, "attention": attention, "status_options": []string{"HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected})
+	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected})
 }
 
 func (s *Server) accountNew(w http.ResponseWriter, r *http.Request) error {

@@ -5,7 +5,9 @@ shared pool, giving your apps access to higher usage limits without
 needing to manage each account separately.
 
 It owns each account's refresh token, tracks usage limits, and
-leases short-lived access tokens.
+leases short-lived access tokens. The dashboard also caches per-account Codex
+profile activity and presents combined token, streak, task, skill, and account
+share statistics without requiring a fresh upstream read after restart.
 
 ## Supported apps
 

@@ -30,6 +30,51 @@
     ><small>Need action</small>
   </div>
 </section>
+<section class="profile-dashboard" data-profile-dashboard aria-labelledby="profile-dashboard-title">
+  <header class="profile-heading">
+    <div>
+      <p class="kicker">Account activity</p>
+      <h2 id="profile-dashboard-title">Codex profile</h2>
+      <p data-profile-subtitle>Combined statistics for every cached account.</p>
+    </div>
+    <label class="profile-picker">
+      <span>View account</span>
+      <select data-profile-select>
+        {% for profile in profiles %}<option value="{{ profile.ID }}">{{ profile.Label }}</option>{% endfor %}
+      </select>
+    </label>
+  </header>
+  <div class="profile-metrics">
+    <article><strong data-profile-stat="lifetime_tokens">—</strong><span>Lifetime tokens</span></article>
+    <article><strong data-profile-stat="peak_daily_tokens">—</strong><span>Peak tokens</span></article>
+    <article><strong data-profile-stat="current_streak_days">—</strong><span>Current streak</span></article>
+    <article><strong data-profile-stat="longest_streak_days">—</strong><span>Longest streak</span></article>
+    <article class="metric-wide"><strong data-profile-stat="longest_running_turn_sec">—</strong><span>Longest task</span></article>
+  </div>
+  <div class="profile-visuals">
+    <article class="activity-panel">
+      <header><div><h3>Token activity</h3><p data-profile-freshness>No cached profile data yet.</p></div><span class="activity-scale">Less <i></i><i></i><i></i><i></i> More</span></header>
+      <div class="activity-grid" data-activity-grid role="img" aria-label="Daily token activity"></div>
+      <div class="activity-months" data-activity-months aria-hidden="true"></div>
+    </article>
+    <article class="token-share-panel">
+      <header><h3>Tokens by account</h3><p>Lifetime token share</p></header>
+      <div class="token-share-chart" data-token-share-chart role="img" aria-label="Lifetime token share by account"><span data-token-share-total>—</span></div>
+      <div class="token-share-legend" data-token-share-legend></div>
+    </article>
+  </div>
+  <article class="profile-insights">
+    <h3>Activity insights</h3>
+    <dl>
+      <div><dt>Fast mode</dt><dd data-profile-stat="fast_mode_usage_percentage">—</dd></div>
+      <div><dt>Most used reasoning</dt><dd data-profile-stat="most_used_reasoning_effort">—</dd></div>
+      <div><dt>Skills explored</dt><dd data-profile-stat="unique_skills_used">—</dd></div>
+      <div><dt>Total skills used</dt><dd data-profile-stat="total_skills_used">—</dd></div>
+      <div><dt>Total tasks</dt><dd data-profile-stat="total_threads">—</dd></div>
+    </dl>
+  </article>
+  <script type="application/json" data-profile-data>{{ profiles_json|safe }}</script>
+</section>
 <form class="filter-bar" method="get" action="/">
   <label
     ><span>Find account</span

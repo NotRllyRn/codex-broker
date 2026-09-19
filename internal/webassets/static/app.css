@@ -322,6 +322,208 @@ main {
 	text-transform: uppercase;
 	letter-spacing: 0.08em;
 }
+.profile-dashboard {
+	margin: 0 0 2.5rem;
+	padding: clamp(1.2rem, 3vw, 2rem);
+	border: 1px solid var(--line);
+	background: color-mix(in srgb, var(--surface) 88%, var(--paper));
+	box-shadow: var(--shadow);
+}
+.profile-heading {
+	display: flex;
+	justify-content: space-between;
+	align-items: end;
+	gap: 2rem;
+	margin-bottom: 1.5rem;
+}
+.profile-heading h2 {
+	margin: 0;
+	font-size: clamp(1.8rem, 3vw, 3rem);
+	letter-spacing: -0.05em;
+}
+.profile-heading > div > p:last-child,
+.activity-panel header p,
+.token-share-panel header p {
+	margin: 0.45rem 0 0;
+	color: var(--muted);
+	font-size: 0.78rem;
+}
+.profile-picker {
+	display: grid;
+	gap: 0.4rem;
+	min-width: min(18rem, 100%);
+}
+.profile-picker span {
+	color: var(--muted);
+	font-size: 0.72rem;
+	font-weight: 700;
+}
+.profile-metrics {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 1px;
+	background: var(--line);
+	border: 1px solid var(--line);
+}
+.profile-metrics article {
+	display: grid;
+	align-content: center;
+	min-height: 8rem;
+	padding: 1.25rem;
+	background: var(--surface);
+}
+.profile-metrics .metric-wide {
+	grid-column: span 4;
+	min-height: 6.5rem;
+}
+.profile-metrics strong {
+	font: 600 clamp(1.8rem, 3vw, 3rem) / 1 BrokerMono, monospace;
+	letter-spacing: -0.07em;
+}
+.profile-metrics span {
+	margin-top: 0.45rem;
+	color: var(--muted);
+	font-size: 0.78rem;
+}
+.profile-visuals {
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(17rem, 0.8fr);
+	gap: 1px;
+	margin-top: 1px;
+	background: var(--line);
+	border-inline: 1px solid var(--line);
+}
+.activity-panel,
+.token-share-panel,
+.profile-insights {
+	padding: 1.25rem;
+	background: var(--surface);
+}
+.activity-panel header,
+.token-share-panel header {
+	display: flex;
+	justify-content: space-between;
+	align-items: start;
+	gap: 1rem;
+}
+.activity-panel h3,
+.token-share-panel h3,
+.profile-insights h3 {
+	margin: 0;
+	font-size: 0.78rem;
+	text-transform: uppercase;
+	letter-spacing: 0.09em;
+}
+.activity-scale {
+	display: flex;
+	align-items: center;
+	gap: 0.25rem;
+	color: var(--muted);
+	font-size: 0.62rem;
+}
+.activity-scale i,
+.activity-grid span {
+	display: block;
+	width: 0.72rem;
+	height: 0.72rem;
+	border-radius: 0.16rem;
+	background: var(--surface-2);
+}
+.activity-scale i:nth-of-type(1),
+.activity-grid span[data-level="1"] { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); }
+.activity-scale i:nth-of-type(2),
+.activity-grid span[data-level="2"] { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.activity-scale i:nth-of-type(3),
+.activity-grid span[data-level="3"] { background: color-mix(in srgb, var(--accent) 68%, var(--surface)); }
+.activity-scale i:nth-of-type(4),
+.activity-grid span[data-level="4"] { background: var(--accent); }
+.activity-grid {
+	display: grid;
+	grid-template-rows: repeat(7, 0.72rem);
+	grid-auto-flow: column;
+	grid-auto-columns: 0.72rem;
+	gap: 0.25rem;
+	margin-top: 1.6rem;
+	overflow-x: auto;
+	padding-bottom: 0.5rem;
+}
+.activity-months {
+	display: grid;
+	grid-template-columns: repeat(27, 0.72rem);
+	gap: 0.25rem;
+	min-height: 1rem;
+	color: var(--muted);
+	font-size: 0.62rem;
+}
+.activity-months span { white-space: nowrap; }
+.token-share-panel {
+	display: grid;
+	grid-template-columns: minmax(8rem, 0.7fr) 1fr;
+	align-items: center;
+	gap: 1rem;
+}
+.token-share-panel header { grid-column: 1 / 3; }
+.token-share-chart {
+	position: relative;
+	display: grid;
+	place-items: center;
+	width: min(11rem, 100%);
+	aspect-ratio: 1;
+	border-radius: 50%;
+}
+.token-share-chart::after {
+	content: "";
+	position: absolute;
+	inset: 24%;
+	border-radius: 50%;
+	background: var(--surface);
+}
+.token-share-chart span {
+	position: relative;
+	z-index: 1;
+	font: 650 1rem BrokerMono, monospace;
+}
+.token-share-legend {
+	display: grid;
+	gap: 0.55rem;
+	min-width: 0;
+}
+.token-share-legend div {
+	display: grid;
+	grid-template-columns: 0.55rem minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 0.45rem;
+	font-size: 0.68rem;
+}
+.token-share-legend i {
+	width: 0.55rem;
+	height: 0.55rem;
+	border-radius: 50%;
+}
+.token-share-legend span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.token-share-legend strong { font-family: BrokerMono, monospace; }
+.profile-insights {
+	border: 1px solid var(--line);
+	margin-top: 1px;
+}
+.profile-insights dl {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	margin: 1rem 0 0;
+}
+.profile-insights dl div {
+	display: grid;
+	gap: 0.5rem;
+	padding: 0.75rem 1rem;
+	border-left: 1px solid var(--line);
+}
+.profile-insights dl div:first-child { border-left: 0; padding-left: 0; }
+.profile-insights dt { color: var(--muted); font-size: 0.68rem; }
+.profile-insights dd { margin: 0; font-weight: 650; text-transform: capitalize; }
 .filter-bar {
 	display: flex;
 	align-items: flex-end;
@@ -1002,6 +1204,9 @@ textarea {
 	.data-list {
 		grid-template-columns: 1fr 1fr;
 	}
+	.profile-visuals { grid-template-columns: 1fr; }
+	.profile-insights dl { grid-template-columns: repeat(3, 1fr); }
+	.profile-insights dl div:nth-child(4) { border-left: 0; }
 }
 @media (max-width: 720px) {
 	:root {
@@ -1040,6 +1245,14 @@ textarea {
 	.status-strip > div:nth-child(-n + 2) {
 		border-bottom: 1px solid var(--line);
 	}
+	.profile-heading { display: grid; }
+	.profile-metrics { grid-template-columns: 1fr 1fr; }
+	.profile-metrics .metric-wide { grid-column: span 2; }
+	.token-share-panel { grid-template-columns: 1fr; }
+	.token-share-panel header { grid-column: auto; }
+	.profile-insights dl { grid-template-columns: 1fr 1fr; }
+	.profile-insights dl div,
+	.profile-insights dl div:nth-child(4) { border-left: 0; padding-left: 0; }
 	.filter-bar {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
