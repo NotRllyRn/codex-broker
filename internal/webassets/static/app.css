@@ -437,28 +437,6 @@ main {
 .activity-scale i:nth-of-type(4),
 .activity-grid button[data-level="4"] { background: var(--accent); }
 .activity-scale i { width: 0.72rem; height: 0.72rem; }
-.activity-modes {
-	display: grid;
-	grid-template-columns: repeat(3, 1fr);
-	max-width: 32rem;
-	margin: 1.4rem auto 0;
-	padding: 0.22rem;
-	border-radius: 999px;
-	background: var(--surface-2);
-}
-.activity-modes button {
-	min-height: 2.35rem;
-	border: 0;
-	border-radius: 999px;
-	background: transparent;
-	color: var(--ink);
-	font-weight: 650;
-	cursor: pointer;
-}
-.activity-modes button[aria-pressed="true"] {
-	background: var(--surface);
-	box-shadow: 0 0 0 1px var(--line);
-}
 .activity-calendar {
 	--activity-gap: clamp(0.12rem, 0.28vw, 0.28rem);
 	overflow-x: auto;

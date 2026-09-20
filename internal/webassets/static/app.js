@@ -68,9 +68,6 @@ if (profileDashboard) {
 		profileDashboard.querySelector("[data-profile-data]").textContent || "[]",
 	);
 	const select = profileDashboard.querySelector("[data-profile-select]");
-	const activityModes = [...profileDashboard.querySelectorAll("[data-activity-mode]")];
-	let activityMode = "daily";
-	let activeProfile;
 	let pinnedActivityCell;
 	const compact = new Intl.NumberFormat(undefined, {
 		notation: "compact",
@@ -110,31 +107,11 @@ if (profileDashboard) {
 		start.setUTCDate(start.getUTCDate() - start.getUTCDay());
 		const end = new Date(yearEnd);
 		end.setUTCDate(end.getUTCDate() + (6 - end.getUTCDay()));
-		const weekKey = (date) => {
-			const week = new Date(date);
-			week.setUTCDate(week.getUTCDate() - week.getUTCDay());
-			return week.toISOString().slice(0, 10);
-		};
-		const weekly = new Map();
-		for (const [key, tokens] of byDate) {
-			const date = new Date(`${key}T00:00:00Z`);
-			if (date.getUTCFullYear() !== year) continue;
-			const week = weekKey(date);
-			weekly.set(week, (weekly.get(week) || 0) + tokens);
-		}
-		const cumulative = new Map();
-		let running = 0;
-		for (let date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 7)) {
-			const week = weekKey(date);
-			running += weekly.get(week) || 0;
-			cumulative.set(week, running);
-		}
-		const values = activityMode === "daily" ? [...byDate.values()] : activityMode === "weekly" ? [...weekly.values()] : [...cumulative.values()];
-		const max = Math.max(1, ...values);
+		const max = Math.max(1, ...byDate.values());
 		const weeks = Math.round((end - start) / 604800000) + 1;
 		grid.style.setProperty("--activity-weeks", weeks);
 		months.style.setProperty("--activity-weeks", weeks);
-		grid.setAttribute("aria-label", `${activityMode} token activity for ${year}`);
+		grid.setAttribute("aria-label", `Daily token activity for ${year}`);
 		const formatDate = (date) => date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
 		for (let month = 0; month < 12; month++) {
 			const date = new Date(Date.UTC(year, month, 1));
@@ -146,13 +123,9 @@ if (profileDashboard) {
 		for (let date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
 			const key = date.toISOString().slice(0, 10);
 			const tokens = byDate.get(key) || 0;
-			const week = weekKey(date);
-			const metric = activityMode === "daily" ? tokens : activityMode === "weekly" ? weekly.get(week) || 0 : cumulative.get(week) || 0;
-			const displayTokens = activityMode === "daily" ? tokens : metric;
-			const phrase = activityMode === "daily" ? `on ${formatDate(date)}` : `${activityMode === "weekly" ? "on" : "through"} week of ${formatDate(new Date(`${week}T00:00:00Z`))}`;
-			const message = `${compact.format(displayTokens)} tokens ${phrase}`;
+			const message = `${compact.format(tokens)} tokens on ${formatDate(date)}`;
 			const cell = document.createElement("button");
-			const level = tokens && metric ? Math.max(1, Math.ceil((metric / max) * 4)) : 0;
+			const level = tokens ? Math.max(1, Math.ceil((tokens / max) * 4)) : 0;
 			cell.type = "button";
 			cell.role = "gridcell";
 			cell.className = date.getUTCFullYear() === year ? "" : "is-outside-year";
@@ -212,7 +185,6 @@ if (profileDashboard) {
 	function renderProfile() {
 		const profile = profiles.find((item) => item.id === select.value) || profiles[0];
 		if (!profile) return;
-		activeProfile = profile;
 		profileDashboard.querySelector("[data-profile-subtitle]").textContent = profile.username
 			? `@${profile.username}`
 			: profile.id === "all"
@@ -243,11 +215,6 @@ if (profileDashboard) {
 	}
 
 	select?.addEventListener("change", renderProfile);
-	activityModes.forEach((button) => button.addEventListener("click", () => {
-		activityMode = button.dataset.activityMode;
-		activityModes.forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
-		if (activeProfile) renderActivity(activeProfile);
-	}));
 	profileDashboard.addEventListener("click", (event) => {
 		if (!event.target.closest("[data-activity-cell]")) clearActivityTooltip();
 	});

@@ -27,7 +27,7 @@ func TestDashboardRendersUsageResetTimes(t *testing.T) {
 			t.Errorf("dashboard does not contain %q", expected)
 		}
 	}
-	for _, expected := range []string{"Account activity", "Lifetime tokens", "Tokens by account", `value="all"`, `data-activity-mode="daily"`, `data-activity-mode="weekly"`, `data-activity-mode="cumulative"`, "data-activity-tooltip"} {
+	for _, expected := range []string{"Account activity", "Lifetime tokens", "Tokens by account", `value="all"`, "data-activity-tooltip"} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("profile dashboard does not contain %q", expected)
 		}
@@ -36,5 +36,8 @@ func TestDashboardRendersUsageResetTimes(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Errorf("embedded profile data does not contain %q", expected)
 		}
+	}
+	if strings.Contains(body, "data-activity-mode") {
+		t.Error("dashboard still renders token activity mode controls")
 	}
 }
