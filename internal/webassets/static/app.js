@@ -27,6 +27,7 @@ const timestampPattern =
 const timestampNodes = [];
 const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
 while (walker.nextNode()) {
+	if (walker.currentNode.parentElement?.closest("script, style")) continue;
 	timestampPattern.lastIndex = 0;
 	if (timestampPattern.test(walker.currentNode.data))
 		timestampNodes.push([walker.currentNode, walker.currentNode.data]);
