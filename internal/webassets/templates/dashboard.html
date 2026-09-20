@@ -54,8 +54,16 @@
   <div class="profile-visuals">
     <article class="activity-panel">
       <header><div><h3>Token activity</h3><p data-profile-freshness>No cached profile data yet.</p></div><span class="activity-scale">Less <i></i><i></i><i></i><i></i> More</span></header>
-      <div class="activity-grid" data-activity-grid role="img" aria-label="Daily token activity"></div>
-      <div class="activity-months" data-activity-months aria-hidden="true"></div>
+      <div class="activity-modes" role="group" aria-label="Token activity interval">
+        <button type="button" data-activity-mode="daily" aria-pressed="true">Daily</button>
+        <button type="button" data-activity-mode="weekly" aria-pressed="false">Weekly</button>
+        <button type="button" data-activity-mode="cumulative" aria-pressed="false">Cumulative</button>
+      </div>
+      <div class="activity-calendar">
+        <div class="activity-grid" data-activity-grid role="grid" aria-label="Daily token activity"></div>
+        <div class="activity-months" data-activity-months aria-hidden="true"></div>
+      </div>
+      <div class="activity-tooltip" data-activity-tooltip role="tooltip" hidden></div>
     </article>
     <article class="token-share-panel">
       <header><h3>Tokens by account</h3><p>Lifetime token share</p></header>
