@@ -159,6 +159,9 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "no-store, max-age=0")
 			w.Header().Set("Pragma", "no-cache")
 		}
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

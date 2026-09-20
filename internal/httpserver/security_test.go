@@ -62,3 +62,13 @@ func TestDecodeJSONRejectsTrailingValues(t *testing.T) {
 		t.Fatal("accepted a second JSON value")
 	}
 }
+
+func TestStaticAssetsRequireRevalidation(t *testing.T) {
+	server := &Server{}
+	handler := server.middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/static/app.js", nil))
+	if response.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("cache control = %q", response.Header().Get("Cache-Control"))
+	}
+}
