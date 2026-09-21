@@ -31,6 +31,7 @@ const (
 
 type Config struct {
 	Listen, BrokerURL, BrokerCA string
+	ClientKey                   string
 	UpstreamURL                 string
 	UpstreamClient              *http.Client
 }
@@ -39,6 +40,7 @@ type Adapter struct {
 	broker, upstream *http.Client
 	brokerURL        *url.URL
 	upstreamURL      *url.URL
+	clientKey        string
 	sessionID        string
 	mu               sync.Mutex
 	preferred        string
@@ -73,6 +75,9 @@ func New(config Config) (*Adapter, error) {
 	if err := ValidateListen(config.Listen); err != nil {
 		return nil, err
 	}
+	if !strings.HasPrefix(config.ClientKey, "cbk_") {
+		return nil, errors.New("broker client key must use cbk_ format")
+	}
 	brokerURL, err := origin(config.BrokerURL)
 	if err != nil || brokerURL.Scheme != "https" {
 		return nil, errors.New("broker URL must be an HTTPS origin")
@@ -102,6 +107,7 @@ func New(config Config) (*Adapter, error) {
 		upstream:    upstreamClient,
 		brokerURL:   brokerURL,
 		upstreamURL: parsedTarget,
+		clientKey:   config.ClientKey,
 		sessionID:   "macos-" + randomID(),
 	}, nil
 }
@@ -168,13 +174,8 @@ func (a *Adapter) Handler() http.Handler {
 }
 
 func (a *Adapter) health(w http.ResponseWriter, r *http.Request) {
-	key, ok := clientKey(r)
-	if !ok {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
-		return
-	}
 	request, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, a.endpoint("/api/v1/health"), nil)
-	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("Authorization", "Bearer "+a.clientKey)
 	response, err := a.broker.Do(request)
 	if err != nil {
 		http.Error(w, "broker unavailable", http.StatusBadGateway)
@@ -195,8 +196,7 @@ func (a *Adapter) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
-	key, ok := clientKey(r)
-	if !ok {
+	if !hasBearer(r) {
 		http.Error(w, "authentication required", http.StatusUnauthorized)
 		return
 	}
@@ -209,7 +209,7 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 	request := routeRequest{SessionID: a.sessionID, TurnID: turnID, PreferredAccountID: a.preference()}
 	attempts := map[string]int{}
 	for {
-		selected, waiting, routeErr := a.route(r.Context(), key, request)
+		selected, waiting, routeErr := a.route(r.Context(), a.clientKey, request)
 		if routeErr != nil {
 			var statusError brokerStatusError
 			if errors.As(routeErr, &statusError) && (statusError.status == http.StatusUnauthorized || statusError.status == http.StatusForbidden) {
@@ -262,9 +262,9 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func clientKey(r *http.Request) (string, bool) {
+func hasBearer(r *http.Request) bool {
 	scheme, value, ok := strings.Cut(strings.TrimSpace(r.Header.Get("Authorization")), " ")
-	return value, ok && strings.EqualFold(scheme, "bearer") && strings.HasPrefix(value, "cbk_")
+	return ok && strings.EqualFold(scheme, "bearer") && strings.TrimSpace(value) != ""
 }
 
 func readBounded(reader io.Reader, limit int64) ([]byte, error) {

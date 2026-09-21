@@ -24,8 +24,11 @@ func TestConfigurationRequiresLoopbackAndBrokerTLS(t *testing.T) {
 	if ValidateListen("127.0.0.1:8789") != nil || ValidateListen("[::1]:8789") != nil {
 		t.Fatal("loopback address was rejected")
 	}
-	if _, err := New(Config{Listen: DefaultListen, BrokerURL: "http://broker.example"}); err == nil {
+	if _, err := New(Config{Listen: DefaultListen, BrokerURL: "http://broker.example", ClientKey: "cbk_test"}); err == nil {
 		t.Fatal("HTTP broker URL was accepted")
+	}
+	if _, err := New(Config{Listen: DefaultListen, BrokerURL: "https://broker.example"}); err == nil {
+		t.Fatal("missing broker client key was accepted")
 	}
 }
 
@@ -68,6 +71,46 @@ func TestForwardsResponsesWithLeasedIdentity(t *testing.T) {
 	}
 	if response.Header.Get("Set-Cookie") != "" {
 		t.Fatal("upstream cookie was forwarded")
+	}
+}
+
+func TestRejectsUnauthenticatedResponsesBeforeRouting(t *testing.T) {
+	var routes atomic.Int32
+	broker, ca := testBroker(t, func(w http.ResponseWriter, _ *http.Request) {
+		routes.Add(1)
+		writeJSON(w, 200, lease{Status: "ok", AccountID: "a", AccessToken: "access-a", ChatGPTAccountID: "upstream-a"})
+	})
+	defer broker.Close()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer upstream.Close()
+	server := httptest.NewServer(newTestAdapter(t, broker.URL, ca, upstream).Handler())
+	defer server.Close()
+
+	response, err := http.Post(server.URL+"/v1/responses", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusUnauthorized || routes.Load() != 0 {
+		t.Fatalf("status = %d, routes = %d", response.StatusCode, routes.Load())
+	}
+}
+
+func TestHealthUsesOwnedClientKeyWithoutCallerAuthentication(t *testing.T) {
+	broker, ca := testBroker(t, func(http.ResponseWriter, *http.Request) {})
+	defer broker.Close()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer upstream.Close()
+	server := httptest.NewServer(newTestAdapter(t, broker.URL, ca, upstream).Handler())
+	defer server.Close()
+
+	response, err := http.Get(server.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("health status = %d", response.StatusCode)
 	}
 }
 
@@ -231,6 +274,9 @@ func testBroker(t *testing.T, route http.HandlerFunc) (*httptest.Server, string)
 	t.Helper()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/health" {
+			if r.Header.Get("Authorization") != "Bearer cbk_test" {
+				t.Errorf("health authorization = %q", r.Header.Get("Authorization"))
+			}
 			writeJSON(w, 200, map[string]string{"status": "ok"})
 			return
 		}
@@ -254,7 +300,7 @@ func newTestAdapter(t *testing.T, brokerURL, ca string, upstream *httptest.Serve
 	t.Helper()
 	client := upstream.Client()
 	client.CheckRedirect = noRedirect
-	adapter, err := New(Config{Listen: DefaultListen, BrokerURL: brokerURL, BrokerCA: ca, UpstreamURL: upstream.URL, UpstreamClient: client})
+	adapter, err := New(Config{Listen: DefaultListen, BrokerURL: brokerURL, BrokerCA: ca, ClientKey: "cbk_test", UpstreamURL: upstream.URL, UpstreamClient: client})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +316,7 @@ func adapterRequest(t *testing.T, adapter *Adapter, body, query string) *http.Re
 		target += "?" + query
 	}
 	request, _ := http.NewRequest(http.MethodPost, target, strings.NewReader(body))
-	request.Header.Set("Authorization", "Bearer cbk_test")
+	request.Header.Set("Authorization", "Bearer native-chatgpt-token")
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
 	if err != nil {
