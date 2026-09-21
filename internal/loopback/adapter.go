@@ -23,7 +23,7 @@ import (
 
 const (
 	DefaultListen = "127.0.0.1:8789"
-	upstreamURL   = "https://chatgpt.com/backend-api/codex/responses"
+	upstreamURL   = "https://chatgpt.com/backend-api/codex"
 	maxRequest    = 32 << 20
 	maxBrokerBody = 64 << 10
 	maxErrorBody  = 1 << 20
@@ -64,6 +64,10 @@ type wait struct {
 	Code              string `json:"code"`
 	RetryAfterSeconds int    `json:"retry_after_seconds"`
 }
+
+type brokerStatusError struct{ status int }
+
+func (e brokerStatusError) Error() string { return fmt.Sprintf("broker returned HTTP %d", e.status) }
 
 func New(config Config) (*Adapter, error) {
 	if err := ValidateListen(config.Listen); err != nil {
@@ -155,6 +159,7 @@ func (a *Adapter) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("POST /v1/responses", a.responses)
+	mux.HandleFunc("POST /v1/responses/compact", a.responses)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -178,6 +183,10 @@ func (a *Adapter) health(w http.ResponseWriter, r *http.Request) {
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, maxBrokerBody))
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			http.Error(w, "broker client key rejected", http.StatusUnauthorized)
+			return
+		}
 		http.Error(w, "broker rejected health check", http.StatusBadGateway)
 		return
 	}
@@ -202,6 +211,11 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 	for {
 		selected, waiting, routeErr := a.route(r.Context(), key, request)
 		if routeErr != nil {
+			var statusError brokerStatusError
+			if errors.As(routeErr, &statusError) && (statusError.status == http.StatusUnauthorized || statusError.status == http.StatusForbidden) {
+				http.Error(w, "broker client key rejected", http.StatusUnauthorized)
+				return
+			}
 			http.Error(w, "broker routing failed", http.StatusBadGateway)
 			return
 		}
@@ -287,7 +301,7 @@ func (a *Adapter) route(ctx context.Context, key string, input routeRequest) (*l
 		}
 		return nil, &result, nil
 	}
-	return nil, nil, fmt.Errorf("broker returned HTTP %d", response.StatusCode)
+	return nil, nil, brokerStatusError{response.StatusCode}
 }
 
 func (a *Adapter) endpoint(path string) string {
@@ -298,6 +312,7 @@ func (a *Adapter) endpoint(path string) string {
 
 func (a *Adapter) forward(source *http.Request, body []byte, selected lease) (*http.Response, error) {
 	target := *a.upstreamURL
+	target.Path = strings.TrimSuffix(target.Path, "/") + strings.TrimPrefix(source.URL.Path, "/v1")
 	target.RawQuery = source.URL.RawQuery
 	request, err := http.NewRequestWithContext(source.Context(), http.MethodPost, target.String(), bytes.NewReader(body))
 	if err != nil {

@@ -71,6 +71,32 @@ func TestForwardsResponsesWithLeasedIdentity(t *testing.T) {
 	}
 }
 
+func TestForwardsRemoteCompactionPath(t *testing.T) {
+	broker, ca := testBroker(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, lease{Status: "ok", AccountID: "a", AccessToken: "access-a", ChatGPTAccountID: "upstream-a"})
+	})
+	defer broker.Close()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses/compact" {
+			t.Errorf("compaction path = %q", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"output":[]}`)
+	}))
+	defer upstream.Close()
+	server := httptest.NewServer(newTestAdapter(t, broker.URL, ca, upstream).Handler())
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/v1/responses/compact", strings.NewReader(`{}`))
+	request.Header.Set("Authorization", "Bearer cbk_test")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != 200 {
+		t.Fatalf("compaction status = %d", response.StatusCode)
+	}
+}
+
 func TestQuotaFailureSelectsAnotherAccount(t *testing.T) {
 	var routes atomic.Int32
 	broker, ca := testBroker(t, func(w http.ResponseWriter, r *http.Request) {
@@ -150,7 +176,7 @@ func TestBrokerFailureNeverReachesUpstream(t *testing.T) {
 
 	response := adapterRequest(t, newTestAdapter(t, broker.URL, ca, upstream), `{}`, "")
 	defer response.Body.Close()
-	if response.StatusCode != http.StatusBadGateway || calls.Load() != 0 {
+	if response.StatusCode != http.StatusUnauthorized || calls.Load() != 0 {
 		t.Fatalf("status = %d, upstream calls = %d", response.StatusCode, calls.Load())
 	}
 }
@@ -210,7 +236,7 @@ func testBroker(t *testing.T, route http.HandlerFunc) (*httptest.Server, string)
 
 func newTestAdapter(t *testing.T, brokerURL, ca string, upstream *httptest.Server) *Adapter {
 	t.Helper()
-	adapter, err := New(Config{Listen: DefaultListen, BrokerURL: brokerURL, BrokerCA: ca, UpstreamURL: upstream.URL + "/responses", UpstreamClient: upstream.Client()})
+	adapter, err := New(Config{Listen: DefaultListen, BrokerURL: brokerURL, BrokerCA: ca, UpstreamURL: upstream.URL, UpstreamClient: upstream.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
