@@ -34,6 +34,7 @@ type Config struct {
 	ClientKey                   string
 	UpstreamURL                 string
 	UpstreamClient              *http.Client
+	Logf                        func(string, ...any)
 }
 
 type Adapter struct {
@@ -42,6 +43,7 @@ type Adapter struct {
 	upstreamURL      *url.URL
 	clientKey        string
 	sessionID        string
+	logf             func(string, ...any)
 	mu               sync.Mutex
 	preferred        string
 }
@@ -102,6 +104,10 @@ func New(config Config) (*Adapter, error) {
 		}
 		upstreamClient = &http.Client{Transport: upstreamTransport, CheckRedirect: noRedirect}
 	}
+	logf := config.Logf
+	if logf == nil {
+		logf = func(string, ...any) {}
+	}
 	return &Adapter{
 		broker:      &http.Client{Transport: brokerTransport, Timeout: time.Minute, CheckRedirect: noRedirect},
 		upstream:    upstreamClient,
@@ -109,6 +115,7 @@ func New(config Config) (*Adapter, error) {
 		upstreamURL: parsedTarget,
 		clientKey:   config.ClientKey,
 		sessionID:   "macos-" + randomID(),
+		logf:        logf,
 	}, nil
 }
 
@@ -205,21 +212,26 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request body is too large", http.StatusRequestEntityTooLarge)
 		return
 	}
+	a.logf("request received path=%s", r.URL.Path)
 	turnID := randomID()
 	request := routeRequest{SessionID: a.sessionID, TurnID: turnID, PreferredAccountID: a.preference()}
 	attempts := map[string]int{}
+	totalAttempts := 0
 	for {
 		selected, waiting, routeErr := a.route(r.Context(), a.clientKey, request)
 		if routeErr != nil {
 			var statusError brokerStatusError
 			if errors.As(routeErr, &statusError) && (statusError.status == http.StatusUnauthorized || statusError.status == http.StatusForbidden) {
+				a.logf("request failed path=%s stage=broker_auth", r.URL.Path)
 				http.Error(w, "broker client key rejected", http.StatusUnauthorized)
 				return
 			}
+			a.logf("request failed path=%s stage=broker_route", r.URL.Path)
 			http.Error(w, "broker routing failed", http.StatusBadGateway)
 			return
 		}
 		if waiting != nil {
+			a.logf("request waiting path=%s retry_after_seconds=%d", r.URL.Path, waiting.RetryAfterSeconds)
 			if !sleep(r.Context(), time.Duration(waiting.RetryAfterSeconds)*time.Second) {
 				return
 			}
@@ -232,11 +244,14 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		attempts[selected.AccountID]++
+		totalAttempts++
 		response, upstreamErr := a.forward(r, body, *selected)
 		if upstreamErr != nil {
+			a.logf("request failed path=%s stage=upstream", r.URL.Path)
 			http.Error(w, "upstream request failed", http.StatusBadGateway)
 			return
 		}
+		a.logf("request routed path=%s upstream_status=%d attempt=%d", r.URL.Path, response.StatusCode, totalAttempts)
 		if response.StatusCode >= 300 && response.StatusCode < 400 {
 			response.Body.Close()
 			http.Error(w, "upstream redirect rejected", http.StatusBadGateway)

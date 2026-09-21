@@ -1,10 +1,12 @@
 package loopback
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -71,6 +73,32 @@ func TestForwardsResponsesWithLeasedIdentity(t *testing.T) {
 	}
 	if response.Header.Get("Set-Cookie") != "" {
 		t.Fatal("upstream cookie was forwarded")
+	}
+}
+
+func TestLogsOnlyRoutingMetadata(t *testing.T) {
+	broker, ca := testBroker(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, lease{Status: "ok", AccountID: "public-secret", AccessToken: "leased-secret", ChatGPTAccountID: "upstream-secret"})
+	})
+	defer broker.Close()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "response-secret")
+	}))
+	defer upstream.Close()
+	adapter := newTestAdapter(t, broker.URL, ca, upstream)
+	var logs bytes.Buffer
+	adapter.logf = func(format string, values ...any) { _, _ = fmt.Fprintf(&logs, format+"\n", values...) }
+
+	response := adapterRequest(t, adapter, `{"prompt":"request-secret"}`, "")
+	response.Body.Close()
+	output := logs.String()
+	if !strings.Contains(output, "request received path=/v1/responses") || !strings.Contains(output, "request routed path=/v1/responses upstream_status=200 attempt=1") {
+		t.Fatalf("routing log = %q", output)
+	}
+	for _, secret := range []string{"native-chatgpt-token", "cbk_test", "public-secret", "leased-secret", "upstream-secret", "request-secret", "response-secret"} {
+		if strings.Contains(output, secret) {
+			t.Fatalf("routing log contains %q", secret)
+		}
 	}
 }
 

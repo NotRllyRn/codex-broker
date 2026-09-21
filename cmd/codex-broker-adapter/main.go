@@ -28,7 +28,7 @@ func main() {
 	if err != nil {
 		fatal(err)
 	}
-	adapter, err := loopback.New(loopback.Config{Listen: *listen, BrokerURL: *brokerURL, BrokerCA: *brokerCA, ClientKey: clientKey})
+	adapter, err := loopback.New(loopback.Config{Listen: *listen, BrokerURL: *brokerURL, BrokerCA: *brokerCA, ClientKey: clientKey, Logf: log.Printf})
 	if err != nil {
 		fatal(err)
 	}
