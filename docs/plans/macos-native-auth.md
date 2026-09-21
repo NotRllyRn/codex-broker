@@ -1,6 +1,6 @@
 # macOS native-auth migration plan
 
-Status: approved for implementation; live Voice acceptance requires macOS
+Status: implemented; live Voice acceptance requires macOS
 
 ## Goal
 

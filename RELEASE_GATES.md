@@ -52,12 +52,14 @@ Hermes source is maintained in the dedicated fork and pinned here as a submodule
 
 ## ChatGPT macOS gate
 
-On an Apple Silicon Mac, run the installer against a TLS broker, add the custom
-provider to the ChatGPT app, and complete normal, tool-using, image-input, and
-remote-compaction turns. Force pre-output `401` and `429` responses and verify
-refresh/failover, then revoke the client key and verify the next request fails
-before reaching OpenAI. Confirm the LaunchAgent survives logout/login and that
-Keychain, adapter logs, and Codex state contain no leased access token.
+On an Apple Silicon Mac, run the installer against a TLS broker, redirect the
+built-in OpenAI provider with `openai_base_url`, and complete normal,
+tool-using, image-input, and remote-compaction turns. Confirm ChatGPT Voice is
+available and that a voice-directed local Codex task reaches the adapter. Force
+pre-output `401` and `429` responses and verify refresh/failover, then revoke
+the client key and verify the next request fails before reaching OpenAI.
+Confirm the LaunchAgent survives logout/login and that Keychain, adapter logs,
+and Codex state contain no leased access token or native ChatGPT bearer.
 
 ## Final
 

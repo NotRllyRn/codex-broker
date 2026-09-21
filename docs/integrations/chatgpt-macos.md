@@ -85,6 +85,16 @@ launchctl print gui/$(id -u)/dev.codex-broker.adapter
 tail -f "$HOME/Library/Application Support/Codex Broker/logs/adapter.log"
 ```
 
+Each typed Codex request should produce secret-free lines similar to:
+
+```text
+request received path=/v1/responses
+request routed path=/v1/responses upstream_status=200 attempt=1
+```
+
+No request line means the app is not using the loopback base URL. These logs
+never include authorization, account identifiers, prompts, or responses.
+
 Rerun the installer to update the binary, broker URL, CA, or Keychain entry.
 Revoke the old broker client key when replacing it.
 
