@@ -18,7 +18,10 @@ jobs:
       - run: test -z "$(gofmt -l cmd internal)"
       - run: go vet ./...
       - run: go test -race ./...
-      - run: go build ./cmd/codex-broker
+      - run: go build ./cmd/codex-broker ./cmd/codex-broker-adapter
+      - run: GOOS=darwin GOARCH=amd64 go build -o /tmp/codex-broker-adapter-amd64 ./cmd/codex-broker-adapter
+      - run: GOOS=darwin GOARCH=arm64 go build -o /tmp/codex-broker-adapter-arm64 ./cmd/codex-broker-adapter
+      - run: sh -n scripts/bootstrap.sh scripts/install-hermes-integration.sh scripts/install-macos-adapter.sh
       - run: node --check internal/webassets/static/app.js
       - run: npm install --prefix packages/pi-extension
       - run: npm test --prefix packages/pi-extension

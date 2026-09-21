@@ -10,6 +10,7 @@ Retain only sanitized operation IDs, timestamps, and error codes. Never attach `
 - Machine clients receive short-lived access tokens and ChatGPT account IDs only.
 - Browser mutations require an authenticated administrator session and CSRF token.
 - Client keys are random, stored only as hashes, and accepted only by machine endpoints.
+- The macOS adapter binds only to loopback, requires a client key on every request, and keeps leased credentials and traffic in memory.
 - Non-loopback service binding requires TLS. Clients must use system trust or the configured local CA; certificate verification must never be disabled.
 - Webhooks require HTTPS and are redacted before storage.
 - Runtime plaintext is isolated and removed only after safe checkpointing. Failed checkpoints preserve quarantined evidence.

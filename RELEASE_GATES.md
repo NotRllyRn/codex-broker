@@ -8,7 +8,10 @@ A release is blocked unless every applicable gate passes.
 test -z "$(gofmt -l cmd internal)"
 go vet ./...
 go test -race ./...
-go build ./cmd/codex-broker
+go build ./cmd/codex-broker ./cmd/codex-broker-adapter
+GOOS=darwin GOARCH=amd64 go build -o /tmp/codex-broker-adapter-amd64 ./cmd/codex-broker-adapter
+GOOS=darwin GOARCH=arm64 go build -o /tmp/codex-broker-adapter-arm64 ./cmd/codex-broker-adapter
+sh -n scripts/bootstrap.sh scripts/install-hermes-integration.sh scripts/install-macos-adapter.sh
 node --check internal/webassets/static/app.js
 npm --prefix packages/pi-extension test
 npm --prefix packages/pi-extension run check
@@ -16,7 +19,7 @@ npm --prefix packages/pi-extension run check
 
 Required coverage includes:
 
-- migrations through 011, foreign keys, idempotency, and credential-generation preservation;
+- migrations through 012, foreign keys, idempotency, and credential-generation preservation;
 - upgrade from a pre-rename database without account relogin;
 - vault mismatch, verification, rotation, backup, and restore;
 - managed credential checkpointing after success, RPC failure, cancellation, and restart;
@@ -26,6 +29,7 @@ Required coverage includes:
 - persistent administrator sessions, CSRF, logout/password-change revocation, and Orbit-only UI;
 - non-loopback TLS startup guard and trusted/untrusted CA behavior;
 - Pi one-lease-per-user-turn behavior, bounded pre-output failover, wait/resume, and no secret persistence;
+- macOS adapter loopback-only binding, broker TLS, bounded bodies, streamed Responses forwarding, pre-output failover, cycle bounds, cancellation, and no secret persistence;
 - absence of legacy activation endpoints/tables and correct coalesced minimal window pulses with retry and credential checkpointing.
 
 ## Compatibility
@@ -45,6 +49,15 @@ Historical compatibility identifiers must remain stable: `windowkeeper.db`, lock
 ## Hermes gate
 
 Hermes source is maintained in the dedicated fork and pinned here as a submodule; it is not packaged into Codex Broker. For every Hermes release, rebase `codex-broker-next`, create a new immutable version branch/tag, run the automated and live acceptance steps in `docs/integrations/hermes-agent-patch.md`, then update the submodule and installer pins together. The installer must refuse unknown revisions, validate TLS/client authentication, and roll back when gateway startup fails.
+
+## ChatGPT macOS gate
+
+On an Apple Silicon Mac, run the installer against a TLS broker, add the custom
+provider to the ChatGPT app, and complete normal, tool-using, image-input, and
+remote-compaction turns. Force pre-output `401` and `429` responses and verify
+refresh/failover, then revoke the client key and verify the next request fails
+before reaching OpenAI. Confirm the LaunchAgent survives logout/login and that
+Keychain, adapter logs, and Codex state contain no leased access token.
 
 ## Final
 

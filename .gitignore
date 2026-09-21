@@ -5,4 +5,5 @@ dist/
 deployment/
 sources/
 /codex-broker
+/codex-broker-adapter
 coverage.out

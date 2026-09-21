@@ -1,6 +1,6 @@
 # macOS loopback adapter plan
 
-Status: implementation in progress
+Status: implemented; macOS live acceptance remains a release gate
 
 ## Outcome
 
@@ -22,7 +22,8 @@ refresh token.
 ## Boundaries
 
 - Listen only on an IP loopback address.
-- Accept only `POST /v1/responses` and a small authenticated health endpoint.
+- Accept only `POST /v1/responses`, `POST /v1/responses/compact`, and a small
+  authenticated health endpoint.
 - Require a `cbk_` bearer token on every request. The ChatGPT app reads this
   token from macOS Keychain through Codex command-backed authentication.
 - Keep the broker client key, leased access token, request body, and response
@@ -72,8 +73,8 @@ The command handles `SIGINT`/`SIGTERM` and shuts down cleanly.
 
 `scripts/install-macos-adapter.sh` builds the binary, stores a supplied broker
 client key in macOS Keychain, writes a user LaunchAgent, and starts it. It does
-not edit `~/.codex/config.toml`; it prints the exact provider block so existing
-Codex configuration is not overwritten.
+not edit `~/.codex/config.toml`; the integration guide provides the exact
+provider block so existing Codex configuration is not overwritten.
 
 ## Verification
 

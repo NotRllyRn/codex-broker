@@ -16,8 +16,9 @@ share statistics without requiring a fresh upstream read after restart.
 | [Pi](https://github.com/badlogic/pi-mono) | Extension included in this repository | [Install the extension](#pi) |
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Version-pinned maintained fork | [Run the installer](#hermes-agent) |
 | [T3 Code](https://github.com/pingdotgg/t3code) | [`codex-broker` fork branch](https://github.com/NotRllyRn/t3code/tree/codex-broker) | [Build and connect the fork](#t3-code) |
+| ChatGPT for macOS (Codex) | Loopback Go adapter included in this repository | [Install the adapter](#chatgpt-for-macos) |
 
-All integrations request one in-memory lease per turn. They never store broker
+All integrations use in-memory access-only leases. They never store broker
 refresh tokens or a complete broker-managed `auth.json`.
 
 ## Start the broker
@@ -80,6 +81,23 @@ key, and optional private-CA certificate to the Codex provider in
 See the [T3 Code guide](docs/integrations/t3-code.md) for the build commands and
 exact environment variables.
 
+### ChatGPT for macOS
+
+On the Mac, run the loopback-adapter installer with the broker HTTPS origin and
+its CA certificate. The installer securely prompts for a dedicated client key:
+
+```bash
+scripts/install-macos-adapter.sh \
+  https://192.168.1.20:8787 \
+  /path/to/codex-broker-ca.crt
+```
+
+Then add the documented custom provider to `~/.codex/config.toml` and restart
+the ChatGPT app. This routes local **Codex** chats through the broker; ordinary
+ChatGPT chats remain on the app's signed-in account. See the
+[ChatGPT macOS guide](docs/integrations/chatgpt-macos.md) for the exact provider
+configuration, Keychain behavior, verification, and removal steps.
+
 ## Local development
 
 Requires Go 1.27+, Node.js/npm for the Pi extension tests, and a compatible
@@ -107,6 +125,7 @@ npm run check --prefix packages/pi-extension
 ## More documentation
 
 - [Operations](OPERATIONS.md) — health, backups, upgrades, and incident response
+- [ChatGPT macOS adapter](docs/integrations/chatgpt-macos.md) — local installation and Codex provider configuration
 - [Public enrollment](docs/public-enrollment.md) — isolated device-code enrollment
 - [API contract](plan.md) — authenticated machine endpoints and routing responses
 - [Security policy](SECURITY.md) — vulnerability reporting and security boundary

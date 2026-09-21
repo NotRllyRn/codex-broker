@@ -8,7 +8,7 @@ Web service with a browser administration UI and authenticated machine API.
 
 ## Users
 
-Codex Broker serves a self-hosting operator who administers multiple ChatGPT/Codex identities they own or are authorized to manage. Pi, Hermes, and future trusted LAN clients consume broker-issued access-only leases.
+Codex Broker serves a self-hosting operator who administers multiple ChatGPT/Codex identities they own or are authorized to manage. Pi, Hermes, T3 Code, and the local ChatGPT macOS adapter consume broker-issued access-only leases.
 
 ## Product purpose
 
@@ -16,7 +16,7 @@ Prevent independent Codex clients from racing or invalidating rotating OAuth ref
 
 ## Operating context
 
-One hardened Docker-first Go process runs on a trusted Linux host. Same-network clients connect by local IP over verified TLS and authenticate with hashed, revocable broker client keys. Clients call Codex directly with leased access tokens; the broker remains a control plane.
+One hardened Docker-first Go process runs on a trusted Linux host. Same-network clients connect by local IP over verified TLS and authenticate with hashed, revocable broker client keys. Clients call Codex directly with leased access tokens; the broker remains a control plane. The optional macOS loopback adapter is a client-side Responses bridge because the ChatGPT app cannot consume leases directly.
 
 ## Capabilities and constraints
 
@@ -25,7 +25,7 @@ One hardened Docker-first Go process runs on a trusted Linux host. Same-network 
 - Opaque credential checkpointing after every authenticated broker runtime, including failures and cancellation.
 - Device-code and managed browser login; manual token import is retired.
 - Authoritative short/weekly usage polling and stable preferred-account routing.
-- Exact pool-reset wait responses; no weighted routing, prediction, reservation, or inference proxy.
+- Exact pool-reset wait responses; no weighted routing, prediction, reservation, or server-side inference proxy.
 - Machine leases contain access token, upstream account ID, public broker account ID, and expiry—never refresh tokens.
 - SQLite with one owning process; AES-256-GCM vault envelopes; temporary plaintext runtime directories.
 - One Orbit dashboard, persistent administrator sessions, CSRF, incidents, webhooks, and sanitized logs.
