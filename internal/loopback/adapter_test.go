@@ -97,6 +97,22 @@ func TestForwardsRemoteCompactionPath(t *testing.T) {
 	}
 }
 
+func TestRejectsUpstreamRedirect(t *testing.T) {
+	broker, ca := testBroker(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, 200, lease{Status: "ok", AccountID: "a", AccessToken: "access-a", ChatGPTAccountID: "upstream-a"})
+	})
+	defer broker.Close()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Redirect(w, &http.Request{}, "https://example.com", http.StatusFound)
+	}))
+	defer upstream.Close()
+	response := adapterRequest(t, newTestAdapter(t, broker.URL, ca, upstream), `{}`, "")
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("redirect status = %d", response.StatusCode)
+	}
+}
+
 func TestQuotaFailureSelectsAnotherAccount(t *testing.T) {
 	var routes atomic.Int32
 	broker, ca := testBroker(t, func(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +252,9 @@ func testBroker(t *testing.T, route http.HandlerFunc) (*httptest.Server, string)
 
 func newTestAdapter(t *testing.T, brokerURL, ca string, upstream *httptest.Server) *Adapter {
 	t.Helper()
-	adapter, err := New(Config{Listen: DefaultListen, BrokerURL: brokerURL, BrokerCA: ca, UpstreamURL: upstream.URL, UpstreamClient: upstream.Client()})
+	client := upstream.Client()
+	client.CheckRedirect = noRedirect
+	adapter, err := New(Config{Listen: DefaultListen, BrokerURL: brokerURL, BrokerCA: ca, UpstreamURL: upstream.URL, UpstreamClient: client})
 	if err != nil {
 		t.Fatal(err)
 	}

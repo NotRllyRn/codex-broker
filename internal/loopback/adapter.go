@@ -237,6 +237,11 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "upstream request failed", http.StatusBadGateway)
 			return
 		}
+		if response.StatusCode >= 300 && response.StatusCode < 400 {
+			response.Body.Close()
+			http.Error(w, "upstream redirect rejected", http.StatusBadGateway)
+			return
+		}
 		kind := failureKind(response.StatusCode)
 		if kind == "" {
 			a.setPreference(selected.AccountID)
