@@ -1,6 +1,8 @@
 # macOS loopback adapter plan
 
-Status: implemented; macOS live acceptance remains a release gate
+Status: implemented; authentication was superseded by
+[`macos-native-auth.md`](macos-native-auth.md); macOS live acceptance remains a
+release gate
 
 ## Outcome
 
@@ -15,7 +17,7 @@ ChatGPT app (Codex) -> 127.0.0.1 adapter -> Codex Broker /route
                               +------------> ChatGPT Codex /responses
 ```
 
-The adapter is an explicit custom model provider, not a traffic interceptor.
+The adapter is a built-in provider base-URL override, not a traffic interceptor.
 It does not modify the signed ChatGPT app, export `auth.json`, or receive a
 refresh token.
 
@@ -23,9 +25,9 @@ refresh token.
 
 - Listen only on an IP loopback address.
 - Accept only `POST /v1/responses`, `POST /v1/responses/compact`, and a small
-  authenticated health endpoint.
-- Require a `cbk_` bearer token on every request. The ChatGPT app reads this
-  token from macOS Keychain through Codex command-backed authentication.
+  health endpoint that verifies broker connectivity.
+- Load the `cbk_` broker client key from macOS Keychain at startup. Require but
+  discard the built-in provider's native bearer on Responses requests.
 - Keep the broker client key, leased access token, request body, and response
   body out of logs and durable storage.
 - Require HTTPS for Codex Broker, allow an explicit broker CA certificate, and
@@ -66,6 +68,7 @@ Expose only the settings needed by a local service:
 - `--listen` (default `127.0.0.1:8789`, loopback addresses only)
 - `--broker-url` (required HTTPS origin)
 - `--broker-ca` (optional PEM file)
+- `--keychain-account` (macOS account owning the Keychain item)
 
 The command handles `SIGINT`/`SIGTERM` and shuts down cleanly.
 

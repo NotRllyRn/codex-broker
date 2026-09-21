@@ -92,9 +92,10 @@ scripts/install-macos-adapter.sh \
   /path/to/codex-broker-ca.crt
 ```
 
-Then add the documented custom provider to `~/.codex/config.toml` and restart
-the ChatGPT app. This routes local **Codex** chats through the broker; ordinary
-ChatGPT chats remain on the app's signed-in account. See the
+Then point the built-in OpenAI provider's `openai_base_url` at the adapter and
+restart the ChatGPT app. This routes local **Codex** Responses traffic through
+the broker while preserving the app's native ChatGPT authentication for Voice
+and other account features. See the
 [ChatGPT macOS guide](docs/integrations/chatgpt-macos.md) for the exact provider
 configuration, Keychain behavior, verification, and removal steps.
 

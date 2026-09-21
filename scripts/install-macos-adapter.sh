@@ -12,6 +12,9 @@ case "$broker_url" in https://*) ;; *) echo "broker URL must use HTTPS" >&2; exi
 
 key=${CODEX_BROKER_CLIENT_KEY:-}
 if [ -z "$key" ]; then
+    key=$(security find-generic-password -a "$USER" -s dev.codex-broker.adapter -w 2>/dev/null || true)
+fi
+if [ -z "$key" ]; then
     printf "Codex Broker client key: " >&2
     trap 'stty echo 2>/dev/null || true; printf "\n" >&2' EXIT HUP INT TERM
     stty -echo
@@ -49,7 +52,9 @@ unset key
 xml() { printf %s "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/"/\&quot;/g'; }
 arguments="        <string>$(xml "$bin/codex-broker-adapter")</string>
         <string>--broker-url</string>
-        <string>$(xml "$broker_url")</string>"
+        <string>$(xml "$broker_url")</string>
+        <string>--keychain-account</string>
+        <string>$(xml "$USER")</string>"
 if [ -n "$ca_path" ]; then
     arguments="$arguments
         <string>--broker-ca</string>
@@ -83,14 +88,11 @@ chmod 600 "$plist"
 launchctl bootstrap "$domain" "$plist"
 
 for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    key=$(security find-generic-password -a "$USER" -s "$service" -w)
-    if printf 'header = "Authorization: Bearer %s"\n' "$key" | curl --silent --fail --config - --output /dev/null http://127.0.0.1:8789/health; then
-        unset key
+    if curl --silent --fail --output /dev/null http://127.0.0.1:8789/health; then
         echo "Codex Broker adapter installed and connected."
         echo "Restart the ChatGPT app after adding the provider configuration from docs/integrations/chatgpt-macos.md."
         exit 0
     fi
-    unset key
     sleep 1
 done
 
