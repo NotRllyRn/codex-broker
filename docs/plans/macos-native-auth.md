@@ -11,12 +11,13 @@ the documented user-level `openai_base_url` setting:
 
 ```text
 ChatGPT account services -----------------------------> OpenAI
-ChatGPT Voice (GPT-Live) ------------------------------> OpenAI
+ChatGPT Voice call creation ---------------------------> ChatGPT backend
+ChatGPT Voice realtime sideband -----------------------> OpenAI
 Codex Responses -> 127.0.0.1 adapter -> broker lease -> Codex Responses
 ```
 
-This is a compatibility experiment because OpenAI documents the built-in base
-URL override and Voice separately, but does not guarantee their combination.
+The two realtime overrides are required because `openai_base_url` also becomes
+the default Voice call and sideband base URL.
 
 ## Changes
 
@@ -32,6 +33,8 @@ URL override and Voice separately, but does not guarantee their combination.
    ```toml
    model_provider = "openai"
    openai_base_url = "http://127.0.0.1:8789/v1"
+   experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"
+   experimental_realtime_ws_base_url = "https://api.openai.com/v1"
    ```
 
 6. Keep the existing custom-provider configuration functional during migration:
@@ -59,8 +62,8 @@ URL override and Voice separately, but does not guarantee their combination.
   rejection remain unchanged.
 - Run race tests, vet, both macOS cross-builds, shell checks, and existing Pi
   checks.
-- On macOS, verify typed Codex traffic reaches the adapter, then verify Voice
-  availability and that a voice-directed Codex task still uses broker routing.
+- On macOS, verify typed Codex traffic reaches the adapter, Voice uses its
+  direct realtime routes, and a voice-directed Codex task uses broker routing.
 
 ## Rollback
 

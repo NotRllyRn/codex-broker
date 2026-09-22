@@ -10,10 +10,10 @@ ChatGPT app -> http://127.0.0.1:8789/v1/responses
             -> ChatGPT Codex backend
 ```
 
-The built-in OpenAI provider and ChatGPT sign-in remain active. Ordinary
-ChatGPT chats, cloud tasks, Voice, connectors, and profile features keep their
-native service connections; only local Codex Responses traffic uses the
-adapter.
+The built-in OpenAI provider and ChatGPT sign-in remain active. The base URL
+override affects both Codex Responses and Voice unless realtime destinations
+are set separately. The configuration below sends only local Codex Responses
+through the adapter and keeps Voice on its native OpenAI connections.
 
 ## Install
 
@@ -54,7 +54,12 @@ user-level values in `~/.codex/config.toml`:
 ```toml
 model_provider = "openai"
 openai_base_url = "http://127.0.0.1:8789/v1"
+experimental_realtime_webrtc_call_base_url = "https://chatgpt.com/backend-api/codex"
+experimental_realtime_ws_base_url = "https://api.openai.com/v1"
 ```
+
+The two realtime keys are experimental Codex settings and may change between
+desktop releases; re-run the live Voice gate after updating ChatGPT.
 
 Remove the old `[model_providers.codex_broker]` and
 `[model_providers.codex_broker.auth]` tables if present. Keep your existing
@@ -65,9 +70,12 @@ the desktop features you use, completely quit the app, reopen it, select
 The app sends its native bearer to the loopback endpoint. The adapter requires
 a bearer-authenticated request but discards that credential, asks the broker
 for an account lease with its Keychain key, and replaces the upstream identity.
-ChatGPT Voice is a separate GPT-Live service and is not proxied. OpenAI does not
-document Voice compatibility with a redirected model base URL, so this remains
-a live compatibility test rather than a guaranteed integration.
+Without the two realtime overrides, `openai_base_url` also redirects Voice call
+creation to the adapter as `POST /v1/live`, which the adapter intentionally does
+not implement. The overrides restore Codex's native split: WebRTC call creation
+uses the ChatGPT backend and realtime audio/control uses OpenAI's WebSocket
+service. Voice therefore uses the account signed into ChatGPT, while local
+Codex Responses and Voice-delegated Codex turns use broker-selected accounts.
 
 ## Operation
 
@@ -107,5 +115,6 @@ security delete-generic-password -a "$USER" -s dev.codex-broker.adapter
 rm -rf "$HOME/Library/Application Support/Codex Broker"
 ```
 
-Remove `openai_base_url` before restarting the ChatGPT app to restore native
-Codex routing.
+Remove `openai_base_url`, `experimental_realtime_webrtc_call_base_url`, and
+`experimental_realtime_ws_base_url` before restarting the ChatGPT app to
+restore fully native routing.

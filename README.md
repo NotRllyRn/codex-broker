@@ -92,10 +92,11 @@ scripts/install-macos-adapter.sh \
   /path/to/codex-broker-ca.crt
 ```
 
-Then point the built-in OpenAI provider's `openai_base_url` at the adapter and
+Then point the built-in OpenAI provider's `openai_base_url` at the adapter, set
+the documented realtime overrides so Voice keeps its native OpenAI routes, and
 restart the ChatGPT app. This routes local **Codex** Responses traffic through
-the broker while preserving the app's native ChatGPT authentication for Voice
-and other account features. See the
+the broker while preserving native ChatGPT authentication for Voice and other
+account features. See the
 [ChatGPT macOS guide](docs/integrations/chatgpt-macos.md) for the exact provider
 configuration, Keychain behavior, verification, and removal steps.
 
