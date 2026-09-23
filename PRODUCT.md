@@ -29,7 +29,7 @@ One hardened Docker-first Go process runs on a trusted Linux host. Same-network 
 - Machine leases contain access token, upstream account ID, public broker account ID, and expiry—never refresh tokens.
 - SQLite with one owning process; AES-256-GCM vault envelopes; temporary plaintext runtime directories.
 - One Orbit dashboard, persistent administrator sessions, CSRF, incidents, webhooks, and sanitized logs.
-- Legacy activation controls/history are removed; a fixed minimal ephemeral pulse keeps idle short/weekly windows active.
+- Legacy activation controls/history are removed; fixed minimal ephemeral pulses stagger idle weekly windows across the eligible account pool.
 - WCAG 2.2 AA target.
 
 ## Product principles

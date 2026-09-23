@@ -123,6 +123,10 @@ func OpenApplication(ctx context.Context, settings config.Config) (*Application,
 		return nil, err
 	}
 	if application.Ready {
+		if err = service.reconcileCycle(ctx, core.NowMS()); err != nil {
+			application.Close()
+			return nil, err
+		}
 		service.StartBackground(ctx)
 		dispatcher.Start()
 	}

@@ -16,7 +16,7 @@ import (
 )
 
 func accountView(account broker.AccountSummary) map[string]any {
-	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence}
+	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence, "cycle_state": account.CycleState, "cycle_position": account.CyclePosition, "cycle_size": account.CycleSize, "cycle_release": timestampView(account.CycleReleaseMS)}
 }
 
 func timestampView(milliseconds *int64) any {
@@ -51,6 +51,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	filter, query := r.URL.Query().Get("state_filter"), strings.ToLower(r.URL.Query().Get("q"))
 	var views []map[string]any
 	var attention []map[string]any
+	cycleReady, cycleHeld := 0, 0
 	counts := map[string]int{"HEALTHY": 0, "WARNING": 0, "ACTION_REQUIRED": 0, "ERROR": 0, "DISABLED": 0}
 	for _, account := range accounts {
 		if filter != "" && account.OverallState != filter {
@@ -61,6 +62,11 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 		}
 		view := accountView(account)
 		views = append(views, view)
+		if account.CycleState == "IN_CYCLE" {
+			cycleReady++
+		} else if account.CycleState == "HELD" || account.CycleState == "RELEASING" {
+			cycleHeld++
+		}
 		if account.OverallState != "HEALTHY" {
 			attention = append(attention, view)
 		}
@@ -70,7 +76,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	for key := range counts {
 		selected[key] = filter == key
 	}
-	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected})
+	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld})
 }
 
 func (s *Server) accountNew(w http.ResponseWriter, r *http.Request) error {

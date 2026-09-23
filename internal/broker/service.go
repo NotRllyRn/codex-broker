@@ -239,7 +239,6 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var result []AccountSummary
 	for rows.Next() {
 		var item AccountSummary
@@ -269,7 +268,30 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 		}
 		result = append(result, item)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	plan, err := s.cyclePlan(ctx, core.NowMS())
+	if err != nil {
+		return nil, err
+	}
+	byAccount := make(map[string]cyclePlanItem, len(plan))
+	for _, item := range plan {
+		byAccount[item.accountID] = item
+	}
+	for index := range result {
+		if item, ok := byAccount[result[index].AccountID]; ok {
+			result[index].CycleState = item.state
+			result[index].CyclePosition = item.position
+			result[index].CycleSize = item.size
+			result[index].CycleReleaseMS = &item.releaseAtMS
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) AccountDetail(ctx context.Context, public string) (map[string]any, error) {

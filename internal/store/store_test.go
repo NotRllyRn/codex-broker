@@ -3,7 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -20,7 +24,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 12 {
+		if version != 13 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -33,6 +37,52 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestMigrationThirteenPreservesPulseState(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "windowkeeper.db")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		version, parseErr := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if parseErr != nil || version > 12 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := database.ExecContext(ctx, string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, "INSERT INTO schema_migrations VALUES(?,?,?,0)", version, strings.TrimSuffix(entry.Name(), ".sql"), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','p','Account',1,'ACTIVE',1,1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,last_success_at_ms,next_pulse_at_ms) VALUES('a',10,20,30)"); err != nil {
+		t.Fatal(err)
+	}
+	_ = database.Close()
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var state string
+	var attempt, success, next int64
+	if err := migrated.DB.QueryRowContext(ctx, "SELECT cycle_state,last_attempt_at_ms,last_success_at_ms,next_pulse_at_ms FROM window_pulse_state WHERE account_id='a'").Scan(&state, &attempt, &success, &next); err != nil {
+		t.Fatal(err)
+	}
+	if state != "IN_CYCLE" || attempt != 10 || success != 20 || next != 30 {
+		t.Fatalf("migrated pulse = %s, %d, %d, %d", state, attempt, success, next)
 	}
 }
 

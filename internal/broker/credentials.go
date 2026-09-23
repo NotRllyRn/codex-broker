@@ -419,6 +419,11 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 				return err
 			}
 		}
+		if s.Config.WindowPulseEnabled {
+			if err := observeWeeklyCycle(ctx, db, account.ID, usage, now); err != nil {
+				return err
+			}
+		}
 		_, err := db.ExecContext(ctx, "UPDATE operations SET state='SUCCEEDED',progress_code='COMPLETE',progress_summary=?,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?", summary, now, operation)
 		return err
 	})
@@ -498,35 +503,64 @@ func pointerAny(value *int64) any {
 }
 func (s *Service) QueuePulses(ctx context.Context) error {
 	now := core.NowMS()
+	if err := s.reconcileCycle(ctx, now); err != nil {
+		return err
+	}
+	plan, err := s.cyclePlan(ctx, now)
+	if err != nil {
+		return err
+	}
+	releaseID := ""
+	if len(plan) > 0 && plan[0].state == "HELD" && plan[0].releaseAtMS <= now {
+		releaseID = plan[0].accountID
+	}
 	retryBefore := now - int64(s.Config.WindowPulseRetrySeconds)*1000
-	type claimed struct{ public, operation string }
+	type claimed struct {
+		public, operation string
+		release           bool
+	}
 	var claims []claimed
-	err := s.Store.Write(ctx, func(db store.Executor) error {
-		rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.public_token FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND (p.account_id IS NULL OR ((p.next_pulse_at_ms<=? OR p.last_success_at_ms IS NULL) AND p.last_attempt_at_ms<=?)) AND NOT (u.short_used_percent_raw>=100 AND u.short_resets_at_s*1000>?) AND NOT (u.weekly_used_percent_raw>=100 AND u.weekly_resets_at_s*1000>?) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, now, retryBefore, now, now)
+	err = s.Store.Write(ctx, func(db store.Executor) error {
+		rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.public_token,p.cycle_state FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND ((a.account_id=? AND p.cycle_state='HELD') OR (p.cycle_state='IN_CYCLE' AND (p.next_pulse_at_ms<=? OR p.last_success_at_ms IS NULL))) AND p.last_attempt_at_ms<=? AND NOT (u.short_used_percent_raw>=100 AND u.short_resets_at_s*1000>?) AND NOT (u.weekly_used_percent_raw>=100 AND u.weekly_resets_at_s*1000>?) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, releaseID, now, retryBefore, now, now)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
-		var accounts [][2]string
+		type due struct{ id, public, state string }
+		var accounts []due
 		for rows.Next() {
-			var id, public string
-			if err := rows.Scan(&id, &public); err != nil {
+			var account due
+			if err := rows.Scan(&account.id, &account.public, &account.state); err != nil {
 				return err
 			}
-			accounts = append(accounts, [2]string{id, public})
+			accounts = append(accounts, account)
 		}
 		if err := rows.Err(); err != nil {
 			return err
 		}
 		for _, account := range accounts {
+			release := account.id == releaseID && account.state == "HELD"
+			if release {
+				result, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='RELEASING' WHERE account_id=? AND cycle_state='HELD'", account.id)
+				if err != nil {
+					return err
+				}
+				if changed, _ := result.RowsAffected(); changed != 1 {
+					continue
+				}
+			}
 			operation := core.NewID()
-			if _, err := db.ExecContext(ctx, "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation, account[0], "window.pulse", "SCHEDULED", "QUEUED", nil, nil, nil, nil, nil, now, nil, nil, nil, nil, 1); err != nil {
+			trigger := "SCHEDULED"
+			if release {
+				trigger = "CYCLE_RELEASE"
+			}
+			if _, err := db.ExecContext(ctx, "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation, account.id, "window.pulse", trigger, "QUEUED", nil, nil, nil, nil, nil, now, nil, nil, nil, nil, 1); err != nil {
 				return err
 			}
-			if _, err := db.ExecContext(ctx, "INSERT INTO window_pulse_state(account_id,last_attempt_at_ms) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET last_attempt_at_ms=excluded.last_attempt_at_ms,last_error_code=NULL", account[0], now); err != nil {
+			if _, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET last_attempt_at_ms=?,last_error_code=NULL WHERE account_id=?", now, account.id); err != nil {
 				return err
 			}
-			claims = append(claims, claimed{account[1], operation})
+			claims = append(claims, claimed{account.public, operation, release})
 		}
 		return nil
 	})
@@ -535,14 +569,14 @@ func (s *Service) QueuePulses(ctx context.Context) error {
 	}
 	for _, claim := range claims {
 		claim := claim
-		if !s.runAsync(func() { s.runPulse(s.workerCtx, claim.public, claim.operation) }) {
+		if !s.runAsync(func() { s.runPulse(s.workerCtx, claim.public, claim.operation, claim.release) }) {
 			_ = s.FailOperation(context.Background(), claim.operation, "SERVICE_STOPPING", "Service is stopping")
 		}
 	}
 	return nil
 }
 
-func (s *Service) runPulse(ctx context.Context, public, operation string) {
+func (s *Service) runPulse(ctx context.Context, public, operation string, cycleRelease bool) {
 	account, err := s.account(ctx, public)
 	if err != nil {
 		_ = s.FailOperation(ctx, operation, "WINDOW_PULSE_FAILED", "Account unavailable")
@@ -566,13 +600,21 @@ func (s *Service) runPulse(ctx context.Context, public, operation string) {
 			code = typed.Code
 		}
 		_ = s.Store.Write(ctx, func(db store.Executor) error {
-			_, updateErr := db.ExecContext(ctx, "UPDATE window_pulse_state SET last_error_code=? WHERE account_id=?", code, account.ID)
+			_, updateErr := db.ExecContext(ctx, "UPDATE window_pulse_state SET last_error_code=?,cycle_state=CASE WHEN ? THEN 'HELD' ELSE cycle_state END WHERE account_id=?", code, cycleRelease, account.ID)
 			return updateErr
 		})
 		_ = s.recordUsageFailure(ctx, account, operation, started, err)
 		return
 	}
 	usage := NormalizeUsage(raw)
+	if cycleRelease && (usage.Weekly == nil || usage.Weekly.ResetsAtS == nil || *usage.Weekly.ResetsAtS*1000 <= core.NowMS()) {
+		_ = s.Store.Write(ctx, func(db store.Executor) error {
+			_, updateErr := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='HELD',last_error_code='WINDOW_RESET_UNKNOWN' WHERE account_id=?", account.ID)
+			return updateErr
+		})
+		_ = s.recordUsageFailure(ctx, account, operation, started, core.NewError("WINDOW_RESET_UNKNOWN", "The weekly window did not report a future reset", 503))
+		return
+	}
 	var resets []int64
 	for _, window := range []*Window{usage.Short, usage.Weekly} {
 		if window != nil && window.ResetsAtS != nil && *window.ResetsAtS*1000 > core.NowMS() {

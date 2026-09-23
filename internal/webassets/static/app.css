@@ -772,6 +772,22 @@ textarea {
 .orbit-account footer span {
 	color: var(--muted);
 }
+.account-cycle {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.55rem;
+}
+.cycle-state {
+	padding-left: 0.55rem;
+	border-left: 1px solid var(--line-strong);
+	font: 600 0.62rem / 1 BrokerMono, monospace;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+}
+.cycle-held,
+.cycle-releasing {
+	color: var(--warn);
+}
 /* Forms and operational pages */
 .account-form {
 	max-width: 62rem;

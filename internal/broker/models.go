@@ -6,10 +6,12 @@ import "github.com/NotRllyRn/codex-broker/internal/codex"
 
 type Account struct {
 	ID, PublicID, DisplayName, Workspace, PreferredMethod, AuthState, WorkerState string
+	CycleState                                                                    string
 	Enabled, Deleted                                                              bool
 	CreatedAtMS                                                                   int64
 	Email, Plan, LastMethod                                                       sql.NullString
 	LastVerified, ShortUsed, ShortReset, WeeklyUsed, WeeklyReset, ExcludedUntil   sql.NullInt64
+	CycleStarted                                                                  sql.NullInt64
 }
 
 type AccountSummary struct {
@@ -18,6 +20,9 @@ type AccountSummary struct {
 	Enabled                                                                            bool
 	ShortPercent, ShortResetMS, WeeklyPercent, WeeklyResetMS, LastRefreshMS            *int64
 	ActiveOperation                                                                    *string
+	CycleState                                                                         string
+	CyclePosition, CycleSize                                                           int
+	CycleReleaseMS                                                                     *int64
 }
 
 type Window struct {

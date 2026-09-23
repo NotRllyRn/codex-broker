@@ -35,7 +35,7 @@ Each account has one mutable encrypted `ACTIVE` credential. Every authenticated 
 
 An optional `EXPORT` is an immutable manual snapshot. Normal usage, routing, and reauthentication never replace it. Do not distribute one export to multiple independent refresh-token writers.
 
-A fixed minimal ephemeral turn pulses each verified account at startup and at its earliest pool reset. This keeps short/weekly reset clocks active without restoring legacy activation controls or arbitrary scheduled inference. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
+A fixed minimal ephemeral turn keeps each verified account's active short window moving. When a weekly window expires, the account is held until its rolling `7 days / eligible accounts` release slot; ordinary routing releases the oldest held account early when no in-cycle account remains. Usage reads and credential maintenance continue while held. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
 
 The regular usage poll also reads the authenticated Codex profile summary from ChatGPT. The latest successful response is cached per account for the dashboard; a failed profile read marks that cache stale but retains its last good values and does not invalidate otherwise-successful rate-limit evidence.
 
@@ -51,7 +51,7 @@ Copy the secret once; only its hash and prefix are stored. Revoke unused or expo
 
 ## Routing and exhaustion
 
-A client calls `POST /api/v1/route` once per user turn. The broker skips the reported failed account and ranks eligible accounts by earliest weekly reset, then earliest short reset, preferred-account affinity, and stable creation order. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
+A client calls `POST /api/v1/route` once per user turn. The broker skips the reported failed account and ranks in-cycle accounts by earliest weekly reset, then earliest short reset, preferred-account affinity, and stable creation order. Held accounts are excluded while in-cycle capacity remains. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
 
 When all eligible accounts are exhausted, the response includes the earliest authoritative reset plus configured padding and an integer `Retry-After`. Unknown reset evidence fails explicitly rather than fabricating a wait.
 
@@ -82,5 +82,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache. These migrations do not change existing credentials. Rollback to software expecting the old activation tables requires restoring the pre-v9 backup; rollback across migration 012 requires restoring the automatic pre-v12 database backup.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migration 013 adds weekly release-cycle metadata. These migrations do not change existing credentials. Rollback to software expecting the old activation tables requires restoring the pre-v9 backup; rollback across migrations 012 or 013 requires restoring the corresponding automatic pre-migration backup.
 6. Do not require account relogin for a normal upgrade.

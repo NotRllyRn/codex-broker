@@ -51,9 +51,41 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 	}
 	var usable []Account
+	var held []Account
+	releasing := false
 	for _, account := range accounts {
-		if !exhausted(account, now) && (!account.ExcludedUntil.Valid || account.ExcludedUntil.Int64 <= now) {
-			usable = append(usable, account)
+		if exhausted(account, now) || account.ExcludedUntil.Valid && account.ExcludedUntil.Int64 > now {
+			continue
+		}
+		if r.Service.Config.WindowPulseEnabled {
+			switch account.CycleState {
+			case "HELD":
+				held = append(held, account)
+				continue
+			case "RELEASING":
+				releasing = true
+				continue
+			}
+		}
+		usable = append(usable, account)
+	}
+	if len(usable) == 0 && len(held) > 0 {
+		sort.Slice(held, func(i, j int) bool {
+			if held[i].CreatedAtMS != held[j].CreatedAtMS {
+				return held[i].CreatedAtMS < held[j].CreatedAtMS
+			}
+			return held[i].ID < held[j].ID
+		})
+		selected := held[0]
+		released, err := r.Service.releaseHeld(ctx, selected.ID, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		if released {
+			selected.CycleState = "IN_CYCLE"
+			usable = append(usable, selected)
+		} else {
+			releasing = true
 		}
 	}
 	if len(usable) > 0 {
@@ -65,6 +97,9 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 		result := routeLease(selected, lease, now)
 		return &result, nil, nil
+	}
+	if releasing {
+		return nil, &PoolWait{now + 10_000, 10}, nil
 	}
 	retry := nextRetry(accounts, now)
 	if retry == 0 {
@@ -80,7 +115,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 		_, err := db.ExecContext(ctx, "DELETE FROM account_exclusions WHERE expires_at_ms<=?", now)
 		return err
 	})
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, keyID)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +124,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 	for rows.Next() {
 		var account Account
 		var enabled int
-		if err := rows.Scan(&account.ID, &account.PublicID, &account.DisplayName, &account.Workspace, &enabled, &account.CreatedAtMS, &account.AuthState, &account.WorkerState, &account.Email, &account.Plan, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset, &account.ExcludedUntil); err != nil {
+		if err := rows.Scan(&account.ID, &account.PublicID, &account.DisplayName, &account.Workspace, &enabled, &account.CreatedAtMS, &account.AuthState, &account.WorkerState, &account.Email, &account.Plan, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset, &account.ExcludedUntil, &account.CycleState, &account.CycleStarted); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled == 1
