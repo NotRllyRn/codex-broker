@@ -23,6 +23,8 @@ func TestAccountDetailReadsLoginMethodFromAccount(t *testing.T) {
 		VALUES('account','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
 		INSERT INTO usage_current(account_id,short_resets_at_s,weekly_resets_at_s)
 		VALUES('account',1789714203,1790185173);
+		INSERT INTO operations(operation_id,account_id,kind,trigger,state,progress_code,progress_summary,created_at_ms,completed_at_ms,state_version)
+		VALUES('pulse','account','window.pulse','CYCLE_RELEASE','SUCCEEDED','COMPLETE','Usage windows kept active',1000,2000,1);
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -35,5 +37,9 @@ func TestAccountDetailReadsLoginMethodFromAccount(t *testing.T) {
 	account := detail["account"].(map[string]any)
 	if account["last_successful_login_method"] != "CHATGPT_BROWSER" {
 		t.Fatalf("last login method = %#v", account["last_successful_login_method"])
+	}
+	pulses := detail["pulse_operations"].([]map[string]any)
+	if len(pulses) != 1 || pulses[0]["operation_id"] != "pulse" || pulses[0]["trigger"] != "CYCLE_RELEASE" || pulses[0]["created_at"] != "1970-01-01T00:00:01.000000Z" {
+		t.Fatalf("pulse operations = %#v", pulses)
 	}
 }

@@ -16,7 +16,8 @@ import (
 )
 
 func accountView(account broker.AccountSummary) map[string]any {
-	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence, "cycle_state": account.CycleState, "cycle_position": account.CyclePosition, "cycle_size": account.CycleSize, "cycle_release": timestampView(account.CycleReleaseMS)}
+	cycleLabel := map[string]string{"HELD": "Held", "RELEASING": "Starting cycle", "IN_CYCLE": "In rotation"}[account.CycleState]
+	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "worker_state": account.WorkerState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "last_routed": timestampView(account.LastRoutedMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence, "cycle_state": account.CycleState, "cycle_label": cycleLabel, "cycle_position": account.CyclePosition, "cycle_size": account.CycleSize, "cycle_release": timestampView(account.CycleReleaseMS)}
 }
 
 func timestampView(milliseconds *int64) any {
@@ -218,6 +219,11 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) error {
 		result = map[string]any{}
 	}
 	operation["result"] = result
+	for _, field := range []string{"created_at_ms", "started_at_ms", "completed_at_ms"} {
+		if value, ok := operation[field].(int64); ok {
+			operation[strings.TrimSuffix(field, "_ms")] = timestampView(&value)
+		}
+	}
 	return s.renderer.render(w, 200, "operation.html", pongo2.Context{"root_path": s.App.Config.RootPath, "operation": operation, "csrf": cookie(r, csrfCookie)})
 }
 func (s *Server) incidents(w http.ResponseWriter, r *http.Request) error {

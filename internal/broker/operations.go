@@ -87,6 +87,9 @@ func (s *Service) Operations(ctx context.Context, limit int) ([]map[string]any, 
 func (s *Service) OperationsFor(ctx context.Context, accountID string, limit int) ([]map[string]any, error) {
 	return queryMaps(ctx, s.Store.DB, "SELECT * FROM operations WHERE account_id=? ORDER BY created_at_ms DESC LIMIT ?", operationColumns, accountID, limit)
 }
+func (s *Service) OperationsForKind(ctx context.Context, accountID, kind string, limit int) ([]map[string]any, error) {
+	return queryMaps(ctx, s.Store.DB, "SELECT * FROM operations WHERE account_id=? AND kind=? ORDER BY created_at_ms DESC LIMIT ?", operationColumns, accountID, kind, limit)
+}
 func (s *Service) Operation(ctx context.Context, id string) (map[string]any, error) {
 	values, err := queryMaps(ctx, s.Store.DB, "SELECT * FROM operations WHERE operation_id=?", operationColumns, id)
 	if err != nil {

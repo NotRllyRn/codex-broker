@@ -15,14 +15,14 @@ type Account struct {
 }
 
 type AccountSummary struct {
-	AccountID, PublicToken, DisplayName, OverallState, AuthState, UsageState, Evidence string
-	Labels                                                                             []string
-	Enabled                                                                            bool
-	ShortPercent, ShortResetMS, WeeklyPercent, WeeklyResetMS, LastRefreshMS            *int64
-	ActiveOperation                                                                    *string
-	CycleState                                                                         string
-	CyclePosition, CycleSize                                                           int
-	CycleReleaseMS                                                                     *int64
+	AccountID, PublicToken, DisplayName, OverallState, AuthState, WorkerState, UsageState, Evidence string
+	Labels                                                                                          []string
+	Enabled                                                                                         bool
+	ShortPercent, ShortResetMS, WeeklyPercent, WeeklyResetMS, LastRefreshMS, LastRoutedMS           *int64
+	ActiveOperation                                                                                 *string
+	CycleState                                                                                      string
+	CyclePosition, CycleSize                                                                        int
+	CycleReleaseMS                                                                                  *int64
 }
 
 type Window struct {

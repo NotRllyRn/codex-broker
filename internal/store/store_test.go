@@ -24,7 +24,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 13 {
+		if version != 14 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -37,6 +37,58 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestMigrationFourteenRepairsZeroUsageCycle(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "windowkeeper.db")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		version, parseErr := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if parseErr != nil || version > 13 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := database.ExecContext(ctx, string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, "INSERT INTO schema_migrations VALUES(?,?,?,0)", version, strings.TrimSuffix(entry.Name(), ".sql"), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = database.ExecContext(ctx, `
+		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms)
+		VALUES('a','p','Account',1,'ACTIVE',1,1);
+		INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms)
+		VALUES('a','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
+		INSERT INTO usage_current(account_id,weekly_used_percent_raw) VALUES('a',0);
+		INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,last_success_at_ms,next_pulse_at_ms,cycle_state,weekly_started_at_ms)
+		VALUES('a',1,2,3,'IN_CYCLE',4);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = database.Close()
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var state string
+	var started, next, routed sql.NullInt64
+	if err := migrated.DB.QueryRowContext(ctx, "SELECT p.cycle_state,p.weekly_started_at_ms,p.next_pulse_at_ms,s.last_routed_at_ms FROM window_pulse_state p JOIN account_state s USING(account_id) WHERE p.account_id='a'").Scan(&state, &started, &next, &routed); err != nil {
+		t.Fatal(err)
+	}
+	if state != "HELD" || started.Valid || next.Valid || routed.Valid {
+		t.Fatalf("migration repair = %s, %#v, %#v, %#v", state, started, next, routed)
 	}
 }
 

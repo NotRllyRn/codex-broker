@@ -311,7 +311,7 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 		s.refreshProfile(ctx, account)
 		return
 	}
-	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil); err != nil {
+	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil, false); err != nil {
 		return
 	}
 	s.refreshProfile(ctx, account)
@@ -386,7 +386,7 @@ func pointerAnyFloat(value *float64) any {
 	return *value
 }
 
-func (s *Service) commitUsage(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64) error {
+func (s *Service) commitUsage(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64, cycleRelease bool) error {
 	usage := NormalizeUsage(raw)
 	now := core.NowMS()
 	snapshot := core.NewID()
@@ -415,12 +415,16 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 			return err
 		}
 		if pulseNext != nil {
-			if _, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET last_success_at_ms=?,next_pulse_at_ms=?,last_error_code=NULL WHERE account_id=?", now, *pulseNext, account.ID); err != nil {
+			if _, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET last_success_at_ms=?,next_pulse_at_ms=?,last_error_code=NULL,cycle_state=CASE WHEN ? THEN 'IN_CYCLE' ELSE cycle_state END,weekly_started_at_ms=CASE WHEN ? THEN ? ELSE weekly_started_at_ms END WHERE account_id=?", now, *pulseNext, cycleRelease, cycleRelease, now, account.ID); err != nil {
 				return err
 			}
-		}
-		if s.Config.WindowPulseEnabled {
-			if err := observeWeeklyCycle(ctx, db, account.ID, usage, now); err != nil {
+			if cycleRelease {
+				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET last_release_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", now); err != nil {
+					return err
+				}
+			}
+		} else if next := nextUsageReset(usage, now); next != nil {
+			if _, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET next_pulse_at_ms=? WHERE account_id=? AND cycle_state='IN_CYCLE'", *next, account.ID); err != nil {
 				return err
 			}
 		}
@@ -431,6 +435,22 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		s.Events.Publish("account.updated", map[string]any{"resource_id": account.PublicID, "state": "FRESH"})
 	}
 	return err
+}
+
+func nextUsageReset(usage Usage, now int64) *int64 {
+	var next int64
+	for _, window := range []*Window{usage.Short, usage.Weekly} {
+		if window != nil && window.ResetsAtS != nil {
+			reset := *window.ResetsAtS * 1000
+			if reset > now && (next == 0 || reset < next) {
+				next = reset
+			}
+		}
+	}
+	if next == 0 {
+		return nil
+	}
+	return &next
 }
 
 func windowDuration(window *Window) any {
@@ -630,7 +650,7 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, cycleR
 			next = reset
 		}
 	}
-	_ = s.commitUsage(ctx, account, operation, raw, time.Since(started), "Usage windows kept active", &next)
+	_ = s.commitUsage(ctx, account, operation, raw, time.Since(started), "Usage windows kept active", &next, cycleRelease)
 }
 
 func (s *Service) OpenIncident(ctx context.Context, accountID, kind, severity, summary string) error {

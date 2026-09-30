@@ -788,6 +788,17 @@ textarea {
 .cycle-releasing {
 	color: var(--warn);
 }
+.account-activity,
+.account-route {
+	padding-left: 0.55rem;
+	border-left: 1px solid var(--line-strong);
+	font: 600 0.62rem / 1 BrokerMono, monospace;
+	letter-spacing: 0.03em;
+	text-transform: uppercase;
+}
+.account-activity {
+	color: var(--accent);
+}
 /* Forms and operational pages */
 .account-form {
 	max-width: 62rem;

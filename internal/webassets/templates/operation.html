@@ -16,16 +16,20 @@
       <dd>{{ operation.operation_id }}</dd>
     </div>
     <div>
+      <dt>Trigger</dt>
+      <dd>{{ operation.trigger|humanize|title }}</dd>
+    </div>
+    <div>
       <dt>Progress code</dt>
       <dd>{{ operation.progress_code|default_if_none:"None" }}</dd>
     </div>
     <div>
       <dt>Created</dt>
-      <dd>{{ operation.created_at_ms }}</dd>
+      <dd>{{ operation.created_at }}</dd>
     </div>
     <div>
       <dt>Completed</dt>
-      <dd>{{ operation.completed_at_ms|default_if_none:"Not complete" }}</dd>
+      <dd>{{ operation.completed_at|default_if_none:"Not complete" }}</dd>
     </div>
     {% if operation.result.model %}
     <div>

@@ -181,7 +181,7 @@ func (s *Service) CreateAccount(ctx context.Context, name string, labels []strin
 		if _, err := db.ExecContext(ctx, "INSERT INTO accounts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", id, public, name, "chatgpt", method, nil, nullString(workspace), 0, "ENROLLING", now, now, nil); err != nil {
 			return core.NewError("ACCOUNT_NAME_EXISTS", "An active account already uses that name", 409)
 		}
-		if _, err := db.ExecContext(ctx, "INSERT INTO account_state VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", id, "ENROLLING", "STOPPED", "STARTING", "UNKNOWN", nil, nil, nil, nil, nil, nil, nil, 1, now); err != nil {
+		if _, err := db.ExecContext(ctx, "INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,upstream_email,upstream_plan,workspace_verified,last_auth_verified_at_ms,active_operation_id,last_error_code,last_error_summary,state_version,updated_at_ms) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", id, "ENROLLING", "STOPPED", "STARTING", "UNKNOWN", nil, nil, nil, nil, nil, nil, nil, 1, now); err != nil {
 			return err
 		}
 		if _, err := db.ExecContext(ctx, "INSERT INTO usage_current(account_id,last_attempt_at_ms) VALUES(?,?)", id, now); err != nil {
@@ -235,7 +235,7 @@ func (s *Service) account(ctx context.Context, public string) (Account, error) {
 }
 
 func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,s.usage_state,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,u.complete_read_at_ms,u.last_error_summary,(SELECT group_concat(l.name, ', ') FROM account_labels al JOIN labels l USING(label_id) WHERE al.account_id=a.account_id),(SELECT kind FROM operations o WHERE o.account_id=a.account_id AND o.state NOT IN('SUCCEEDED','FAILED','CANCELLED') ORDER BY created_at_ms DESC LIMIT 1) FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)`)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,s.worker_state,s.usage_state,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,u.complete_read_at_ms,s.last_routed_at_ms,u.last_error_summary,(SELECT group_concat(l.name, ', ') FROM account_labels al JOIN labels l USING(label_id) WHERE al.account_id=a.account_id),(SELECT kind FROM operations o WHERE o.account_id=a.account_id AND o.state NOT IN('SUCCEEDED','FAILED','CANCELLED') ORDER BY created_at_ms DESC LIMIT 1) FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -243,9 +243,9 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 	for rows.Next() {
 		var item AccountSummary
 		var enabled int
-		var short, shortReset, weekly, weeklyReset, last sql.NullInt64
+		var short, shortReset, weekly, weeklyReset, last, routed sql.NullInt64
 		var evidence, labels, active sql.NullString
-		if err := rows.Scan(&item.AccountID, &item.PublicToken, &item.DisplayName, &enabled, &item.OverallState, &item.AuthState, &item.UsageState, &short, &shortReset, &weekly, &weeklyReset, &last, &evidence, &labels, &active); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.PublicToken, &item.DisplayName, &enabled, &item.OverallState, &item.AuthState, &item.WorkerState, &item.UsageState, &short, &shortReset, &weekly, &weeklyReset, &last, &routed, &evidence, &labels, &active); err != nil {
 			return nil, err
 		}
 		item.Evidence = "No complete usage read yet"
@@ -260,6 +260,7 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 		item.WeeklyPercent = nullableInt(weekly)
 		item.WeeklyResetMS = secondsPointer(weeklyReset)
 		item.LastRefreshMS = nullableInt(last)
+		item.LastRoutedMS = nullableInt(routed)
 		if labels.Valid {
 			item.Labels = strings.Split(labels.String, ", ")
 		}
@@ -307,10 +308,20 @@ func (s *Service) AccountDetail(ctx context.Context, public string) (map[string]
 	account["labels"] = labels
 	usage := rowMap(s.Store.DB.QueryRowContext(ctx, "SELECT * FROM usage_current WHERE account_id=?", a.ID), usageColumns)
 	operations, _ := s.OperationsFor(ctx, a.ID, 20)
+	pulses, _ := s.OperationsForKind(ctx, a.ID, "window.pulse", 100)
+	for _, items := range [][]map[string]any{operations, pulses} {
+		for _, item := range items {
+			if value, ok := item["created_at_ms"].(int64); ok {
+				if created := core.ISOTime(&value); created != nil {
+					item["created_at"] = *created
+				}
+			}
+		}
+	}
 	incidents, _ := s.IncidentsFor(ctx, a.ID)
 	var exportAt sql.NullInt64
 	_ = s.Store.DB.QueryRowContext(ctx, "SELECT created_at_ms FROM credential_bundles WHERE account_id=? AND state='EXPORT'", a.ID).Scan(&exportAt)
-	return map[string]any{"account": account, "usage": usage, "operations": operations, "incidents": incidents, "auth_export": map[string]any{"available": exportAt.Valid, "created_at_ms": nullableAny(exportAt)}}, nil
+	return map[string]any{"account": account, "usage": usage, "operations": operations, "pulse_operations": pulses, "incidents": incidents, "auth_export": map[string]any{"available": exportAt.Valid, "created_at_ms": nullableAny(exportAt)}}, nil
 }
 
 func (s *Service) SetLabels(ctx context.Context, public string, labels []string) error {

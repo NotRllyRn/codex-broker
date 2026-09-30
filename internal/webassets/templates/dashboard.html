@@ -123,7 +123,7 @@
   </aside>
   <div class="orbit-core">
     <p>Routing authority</p>
-    <strong>{% if cycle_enabled %}{{ cycle_ready }} ready{% if cycle_held %} · {{ cycle_held }} held{% endif %}{% else %}{{ counts.HEALTHY }} ready{% endif %}</strong>
+    <strong>{% if cycle_enabled %}{{ cycle_ready }} in rotation{% if cycle_held %} · {{ cycle_held }} held{% endif %}{% else %}{{ counts.HEALTHY }} ready{% endif %}</strong>
     <span>Clients request the best account at every user-turn boundary.</span>
   </div>
   <div class="orbit-accounts">
@@ -157,7 +157,7 @@
         </div>
       </div>
       <footer>
-        <span class="account-cycle">{{ account.auth_state|humanize|title }}{% if account.cycle_size %}<small class="cycle-state cycle-{{ account.cycle_state|lower }}" title="Weekly release order {{ account.cycle_position }} of {{ account.cycle_size }}">{{ account.cycle_state|humanize|title }} · {{ account.cycle_position }}/{{ account.cycle_size }}</small>{% endif %}</span
+        <span class="account-cycle">{{ account.auth_state|humanize|title }}{% if account.cycle_size %}<small class="cycle-state cycle-{{ account.cycle_state|lower }}" title="Weekly release order {{ account.cycle_position }} of {{ account.cycle_size }}">{{ account.cycle_label }} · #{{ account.cycle_position }}/{{ account.cycle_size }}</small>{% endif %}{% if account.active_operation %}<small class="account-activity" title="The broker is currently operating on this account">{{ account.active_operation|humanize|title }}</small>{% elif account.last_routed %}<small class="account-route" title="Most recently routed {{ account.last_routed }}; client execution continues outside the broker">Last selected</small>{% endif %}</span
         ><a href="/accounts/{{ account.public_token }}">Inspect account</a>
       </footer>
     </article>

@@ -159,6 +159,26 @@ Codex Broker{% endblock %} {% block content %}
   </form>
 </section>
 <section class="detail-section">
+  <h2>Recent window pulses</h2>
+  <p class="subtle">
+    The latest 100 pulses are shown separately so refresh activity cannot hide them.
+  </p>
+  {% if detail.pulse_operations %}
+  <div class="data-list">
+    {% for item in detail.pulse_operations %}<a
+      href="/operations/{{ item.operation_id }}"
+      ><strong>{{ item.trigger|humanize|title }} pulse</strong
+      ><span>{{ item.state|humanize|title }}</span
+      ><small
+        >{{ item.created_at }} · {% if item.progress_summary %}{{ item.progress_summary }}{% elif item.error_summary %}{{ item.error_summary }}{% else %}Queued{% endif %}</small
+      ></a
+    >{% endfor %}
+  </div>
+  {% else %}
+  <p class="subtle">No window pulses are recorded.</p>
+  {% endif %}
+</section>
+<section class="detail-section">
   <h2>Recent operations</h2>
   {% if detail.operations %}
   <div class="data-list">
@@ -167,7 +187,7 @@ Codex Broker{% endblock %} {% block content %}
       ><strong>{{ item.kind|humanize|title }}</strong
       ><span>{{ item.state|humanize|title }}</span
       ><small
-        >{% if item.progress_summary %}{{ item.progress_summary }}{% elif item.error_summary %}{{ item.error_summary }}{% else %}Queued{% endif %}</small
+        >{{ item.created_at }} · {{ item.trigger|humanize|title }} · {% if item.progress_summary %}{{ item.progress_summary }}{% elif item.error_summary %}{{ item.error_summary }}{% else %}Queued{% endif %}</small
       ></a
     >{% endfor %}
   </div>

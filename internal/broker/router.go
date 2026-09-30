@@ -37,6 +37,9 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 		if request.FailureKind == "auth" {
 			if lease, error := r.Service.Lease(ctx, *failed, now, true); error == nil {
+				if err := r.markRouted(ctx, failed.ID, now); err != nil {
+					return nil, nil, err
+				}
 				result := routeLease(*failed, lease, now)
 				return &result, nil, nil
 			}
@@ -95,6 +98,9 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := r.markRouted(ctx, selected.ID, now); err != nil {
+			return nil, nil, err
+		}
 		result := routeLease(selected, lease, now)
 		return &result, nil, nil
 	}
@@ -110,12 +116,19 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 	return nil, &wait, nil
 }
 
+func (r Router) markRouted(ctx context.Context, accountID string, now int64) error {
+	return r.Store.Write(ctx, func(db store.Executor) error {
+		_, err := db.ExecContext(ctx, "UPDATE account_state SET last_routed_at_ms=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, now, accountID)
+		return err
+	})
+}
+
 func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Account, error) {
 	_ = r.Store.Write(ctx, func(db store.Executor) error {
 		_, err := db.ExecContext(ctx, "DELETE FROM account_exclusions WHERE expires_at_ms<=?", now)
 		return err
 	})
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID)
 	if err != nil {
 		return nil, err
 	}

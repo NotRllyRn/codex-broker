@@ -97,7 +97,7 @@ func TestConcurrentNearExpiryLeasesRefreshOnce(t *testing.T) {
 		if _, err := db.ExecContext(ctx, "INSERT INTO accounts VALUES('internal','public','Primary','chatgpt','CHATGPT_DEVICE_CODE','CHATGPT_DEVICE_CODE',NULL,1,'ACTIVE',?,?,NULL)", now, now); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, "INSERT INTO account_state VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH','owner@example.com',NULL,?,?,NULL,NULL,NULL,1,?)", now, now, now); err != nil {
+		if _, err := db.ExecContext(ctx, "INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,upstream_email,workspace_verified,last_auth_verified_at_ms,state_version,updated_at_ms) VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH','owner@example.com',?,?,?,?)", now, now, 1, now); err != nil {
 			return err
 		}
 		_, err := db.ExecContext(ctx, "INSERT INTO usage_current(account_id,short_used_percent_raw,weekly_used_percent_raw) VALUES('internal',10,40)")
@@ -177,7 +177,7 @@ func TestCheckpointFailureQuarantinesCredential(t *testing.T) {
 		if _, err := db.ExecContext(ctx, "INSERT INTO accounts VALUES('internal','public','Primary','chatgpt','CHATGPT_DEVICE_CODE','CHATGPT_DEVICE_CODE',NULL,1,'ACTIVE',?,?,NULL)", now, now); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, "INSERT INTO account_state VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH','owner@example.com',NULL,?,?,NULL,NULL,NULL,1,?)", now, now, now); err != nil {
+		if _, err := db.ExecContext(ctx, "INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,upstream_email,workspace_verified,last_auth_verified_at_ms,state_version,updated_at_ms) VALUES('internal','VERIFIED','STOPPED','HEALTHY','FRESH','owner@example.com',?,?,?,?)", now, now, 1, now); err != nil {
 			return err
 		}
 		_, err := db.ExecContext(ctx, "INSERT INTO usage_current(account_id,short_used_percent_raw,weekly_used_percent_raw) VALUES('internal',10,40)")
