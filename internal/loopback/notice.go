@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const noticePrefix = "msg_codex_broker_" // Remove notices from older adapter versions too.
@@ -36,7 +37,9 @@ func prepareNotice(body []byte) []byte {
 			// Strip only our status line, retaining the model's actual answer.
 			strip := func(text string) string {
 				line, rest, ok := strings.Cut(text, "\n\n")
-				if ok && strings.HasPrefix(line, "Codex Broker: ") && strings.Contains(line, " · short ") && strings.Contains(line, " · weekly ") {
+				legacy := strings.HasPrefix(line, "Codex Broker: ") && strings.Contains(line, " · short ") && strings.Contains(line, " · weekly ")
+				current := strings.HasPrefix(line, "🔨 ") && strings.Contains(line, " · 5h ") && strings.Contains(line, " · 7d ")
+				if ok && (legacy || current) {
 					changed = true
 					return rest
 				}
@@ -68,6 +71,10 @@ func prepareNotice(body []byte) []byte {
 }
 
 func accountNotice(selected lease) string {
+	return accountNoticeAt(selected, time.Now())
+}
+
+func accountNoticeAt(selected lease, now time.Time) string {
 	label := selected.AccountLabel
 	if label == "" {
 		label = selected.AccountID
@@ -78,7 +85,21 @@ func accountNotice(selected lease) string {
 		}
 		return fmt.Sprintf("%d%%", *value)
 	}
-	return fmt.Sprintf("Codex Broker: %s · short %s · weekly %s\n\n", label, percent(selected.ShortRemainingPercent), percent(selected.WeeklyRemainingPercent))
+	reset := func(value string) string {
+		at, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			return "—"
+		}
+		minutes := max(0, int((at.Sub(now)+time.Minute-1)/time.Minute))
+		if minutes >= 24*60 {
+			return fmt.Sprintf("%dd%dh", minutes/(24*60), minutes/60%24)
+		}
+		if minutes >= 60 {
+			return fmt.Sprintf("%dh%dm", minutes/60, minutes%60)
+		}
+		return fmt.Sprintf("%dm", minutes)
+	}
+	return fmt.Sprintf("🔨 %s · 5h %s %s · 7d %s %s\n\n", label, percent(selected.ShortRemainingPercent), reset(selected.ShortResetsAt), percent(selected.WeeklyRemainingPercent), reset(selected.WeeklyResetsAt))
 }
 
 // Validate the stream before changing headers: the Codex backend can return
@@ -246,6 +267,7 @@ func streamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 		}
 		event := noticeEvent(frame)
 		item, _ := event["item"].(map[string]any)
+		terminal := event["type"] == "response.completed" || event["type"] == "response.incomplete" || event["type"] == "response.failed"
 		id, _ := item["id"].(string)
 		if pendingID == "" && event["type"] == "response.output_item.added" && item["type"] == "message" && item["role"] == "assistant" {
 			if item["phase"] == "final_answer" {
@@ -260,6 +282,14 @@ func streamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 				return false, errors.New("assistant message exceeds limit")
 			}
 			pending = append(pending, frame)
+			if terminal {
+				for _, buffered := range pending {
+					if err := emit(buffered); err != nil {
+						return false, err
+					}
+				}
+				return inserted, nil
+			}
 			if event["type"] != "response.output_item.done" || id != pendingID {
 				continue
 			}
@@ -274,6 +304,9 @@ func streamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 		}
 		if err := emit(frame); err != nil {
 			return false, err
+		}
+		if terminal {
+			return inserted, nil
 		}
 	}
 	if pendingID != "" {

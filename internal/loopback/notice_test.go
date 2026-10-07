@@ -3,6 +3,7 @@ package loopback
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 const noticeTestStream = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"output\":[]}}\n\n" +
@@ -62,8 +64,8 @@ func TestNoticePrefixesFinalAnswerConsistently(t *testing.T) {
 			if len(items) != 1 || items[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"] != prefix+"Hello" || response["usage"].(map[string]any)["total_tokens"] != float64(10) {
 				t.Fatalf("completed = %#v", response)
 			}
-			if !strings.HasSuffix(output.String(), "data: [DONE]\n\n") {
-				t.Fatal("lost terminator")
+			if events[len(events)-1]["type"] != "response.completed" {
+				t.Fatal("lost completed event")
 			}
 		})
 	}
@@ -114,7 +116,7 @@ func TestPrepareNoticePreservesAnswersAndToolContinuations(t *testing.T) {
 			map[string]any{"role": "user", "content": "next"},
 		}})
 		body := prepareNotice(input)
-		if strings.Contains(string(body), "Codex Broker:") || strings.Contains(string(body), noticePrefix) || !strings.Contains(string(body), "Actual answer") || !strings.Contains(string(body), `"model":"test"`) {
+		if strings.Contains(string(body), "🔨 ") || strings.Contains(string(body), noticePrefix) || !strings.Contains(string(body), "Actual answer") || !strings.Contains(string(body), `"model":"test"`) {
 			t.Fatalf("prepared = %s", body)
 		}
 	}
@@ -122,8 +124,57 @@ func TestPrepareNoticePreservesAnswersAndToolContinuations(t *testing.T) {
 
 func TestAccountNoticeUsesPublicFallback(t *testing.T) {
 	text := accountNotice(lease{AccountID: "public-a", AccessToken: "secret", ChatGPTAccountID: "private"})
-	if text != "Codex Broker: public-a · short — · weekly —\n\n" {
+	if text != "🔨 public-a · 5h — — · 7d — —\n\n" {
 		t.Fatalf("notice = %s", text)
+	}
+}
+
+func TestAccountNoticeFormatAndResetTimes(t *testing.T) {
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	short, weekly := int64(70), int64(95)
+	selected := lease{AccountLabel: "Arina", ShortRemainingPercent: &short, WeeklyRemainingPercent: &weekly,
+		ShortResetsAt:  now.Add(4*time.Hour + 36*time.Minute).Format(time.RFC3339),
+		WeeklyResetsAt: now.Add(89 * time.Hour).Format(time.RFC3339)}
+	if text := accountNoticeAt(selected, now); text != "🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h\n\n" {
+		t.Fatalf("notice = %q", text)
+	}
+	selected.ShortResetsAt = now.Add(-time.Minute).Format(time.RFC3339)
+	selected.WeeklyResetsAt = "invalid"
+	if text := accountNoticeAt(selected, now); text != "🔨 Arina · 5h 70% 0m · 7d 95% —\n\n" {
+		t.Fatalf("notice = %q", text)
+	}
+}
+
+func TestWebSocketHandshakeRequestsImmediateHTTPFallback(t *testing.T) {
+	var routes atomic.Int32
+	broker, ca := testBroker(t, func(http.ResponseWriter, *http.Request) { routes.Add(1) })
+	defer broker.Close()
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("forwarded WebSocket handshake") }))
+	defer upstream.Close()
+	request := httptest.NewRequest("GET", "/v1/responses", nil)
+	request.Header.Set("Connection", "Upgrade")
+	request.Header.Set("Upgrade", "websocket")
+	response := httptest.NewRecorder()
+	newTestAdapter(t, broker.URL, ca, upstream).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusUpgradeRequired || routes.Load() != 0 {
+		t.Fatalf("status = %d, routes = %d", response.Code, routes.Load())
+	}
+}
+
+type failedNoticeReader struct{}
+
+func (failedNoticeReader) Read([]byte) (int, error) {
+	return 0, errors.New("read after terminal event")
+}
+
+func TestNoticeStopsAtTerminalEvent(t *testing.T) {
+	for _, kind := range []string{"response.completed", "response.incomplete", "response.failed"} {
+		stream := strings.ReplaceAll(strings.Split(noticeTestStream, "data: [DONE]")[0], "response.completed", kind)
+		var output bytes.Buffer
+		inserted, err := streamNotice(&output, io.MultiReader(strings.NewReader(stream), failedNoticeReader{}), "STATUS\n\n")
+		if err != nil || !inserted {
+			t.Fatalf("%s: inserted=%v, error=%v", kind, inserted, err)
+		}
 	}
 }
 
@@ -175,7 +226,7 @@ func TestPlainTextSSEAfterFailover(t *testing.T) {
 			request.Header.Set("Authorization", "Bearer native")
 			response := httptest.NewRecorder()
 			adapter.Handler().ServeHTTP(response, request)
-			if response.Code != 200 || routes.Load() != 2 || strings.Contains(response.Body.String(), "Codex Broker: Account b") != tc.notice || strings.Contains(response.Body.String(), "Codex Broker: Account a") {
+			if response.Code != 200 || routes.Load() != 2 || strings.Contains(response.Body.String(), "🔨 Account b") != tc.notice || strings.Contains(response.Body.String(), "🔨 Account a") {
 				t.Fatalf("response = %d %s", response.Code, response.Body.String())
 			}
 			if tc.notice && (response.Header().Get("Content-Type") != "text/event-stream" || response.Header().Get("Content-Length") != "" || !strings.Contains(logs.String(), "result=injected")) {
