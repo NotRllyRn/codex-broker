@@ -114,7 +114,7 @@
     {% if attention %}{% for account in attention %}
     <a href="/accounts/{{ account.public_token }}"
       ><strong>{{ account.display_name }}</strong
-      ><span>{{ account.overall_state|humanize|title }}</span
+      ><span>{{ account.cycle_label|default:account.overall_state|humanize|title }}</span
       ><small>{{ account.evidence }}</small></a
     >
     {% endfor %}{% else %}
@@ -139,26 +139,17 @@
           <p>{{ account.labels|join:", "|default:"No labels" }}</p>
         </div>
         <span class="status-label"
-          >{{ account.overall_state|humanize|title }}</span
+          >{{ account.cycle_label|default:account.overall_state|humanize|title }}</span
         >
       </header>
-      <div class="paired-usage">
+      <div class="cycle-schedule">
         <div>
-          <strong
-            >{{ account.short_percent|default_if_none:"?" }}%</strong
-          ><span>Short window</span
-          ><small>{{ account.short_reset|default_if_none:"Reset unknown" }}</small>
-        </div>
-        <div>
-          <strong
-            >{{ account.weekly_percent|default_if_none:"?" }}%</strong
-          ><span>Weekly window</span
-          ><small>{% if account.cycle_state == "HELD" or account.cycle_state == "RELEASING" %}Release {{ account.cycle_release|default_if_none:"pending" }}{% else %}{{ account.weekly_reset|default_if_none:"Reset unknown" }}{% endif %}</small>
+          <span>Next cycle pulse</span>
+          <strong>{% if account.cycle_state == "RELEASING" %}Pulsing now{% elif account.cycle_release %}<time datetime="{{ account.cycle_release }}" title="{{ account.cycle_release }}">{{ account.cycle_release }}</time>{% else %}Not scheduled{% endif %}</strong>
         </div>
       </div>
       <footer>
-        <span class="account-cycle">{{ account.auth_state|humanize|title }}{% if account.cycle_size %}<small class="cycle-state cycle-{{ account.cycle_state|lower }}" title="Weekly release order {{ account.cycle_position }} of {{ account.cycle_size }}">{{ account.cycle_label }} · #{{ account.cycle_position }}/{{ account.cycle_size }}</small>{% endif %}{% if account.active_operation %}<small class="account-activity" title="The broker is currently operating on this account">{{ account.active_operation|humanize|title }}</small>{% elif account.last_routed %}<small class="account-route" title="Most recently routed {{ account.last_routed }}; client execution continues outside the broker">Last selected</small>{% endif %}</span
-        ><a href="/accounts/{{ account.public_token }}">Inspect account</a>
+        <a href="/accounts/{{ account.public_token }}">Inspect account</a>
       </footer>
     </article>
     {% endfor %}

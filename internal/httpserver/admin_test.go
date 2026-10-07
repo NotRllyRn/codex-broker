@@ -9,11 +9,11 @@ import (
 	"github.com/flosch/pongo2/v6"
 )
 
-func TestDashboardRendersUsageResetTimes(t *testing.T) {
+func TestDashboardShowsCycleStatusAndNextPulse(t *testing.T) {
 	short, weekly := int64(1789714203000), int64(1790185173000)
 	account := accountView(broker.AccountSummary{DisplayName: "Account", OverallState: "HEALTHY", ShortResetMS: &short, WeeklyResetMS: &weekly, CycleState: "HELD", CyclePosition: 1, CycleSize: 5, CycleReleaseMS: &weekly})
 	routed := int64(1790185000000)
-	rotating := accountView(broker.AccountSummary{DisplayName: "Rotating", OverallState: "HEALTHY", CycleState: "IN_CYCLE", CyclePosition: 2, CycleSize: 5, LastRoutedMS: &routed})
+	rotating := accountView(broker.AccountSummary{DisplayName: "Rotating", OverallState: "HEALTHY", CycleState: "IN_CYCLE", CyclePosition: 2, CycleSize: 5, LastRoutedMS: &routed, CycleReleaseMS: &short})
 	renderer, err := newRenderer("templates")
 	if err != nil {
 		t.Fatal(err)
@@ -34,9 +34,14 @@ func TestDashboardRendersUsageResetTimes(t *testing.T) {
 			t.Errorf("profile dashboard does not contain %q", expected)
 		}
 	}
-	for _, expected := range []string{"Held · #1/5", "In rotation · #2/5", "Last selected", "Most recently routed 2026-09-23T17:36:40.000000Z", "Weekly release order 1 of 5", "Release 2026-09-23T17:39:33.000000Z"} {
+	for _, expected := range []string{"Held", "In Rotation", "Next cycle pulse", `datetime="2026-09-23T17:39:33.000000Z"`, `datetime="2026-09-18T06:50:03.000000Z"`} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("cycle status does not contain %q", expected)
+		}
+	}
+	for _, removed := range []string{"Last selected", "Weekly release order", "Short window", "Weekly window", "#1/5"} {
+		if strings.Contains(body, removed) {
+			t.Errorf("dashboard still contains %q", removed)
 		}
 	}
 	for _, expected := range []string{`"lifetime_tokens":2708142387`, `"updated_at_ms":1790194203000`} {
