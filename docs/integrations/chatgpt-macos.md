@@ -90,11 +90,13 @@ The adapter prefixes the actual final answer with the selected account and
 remaining quota, for example:
 
 ```text
-Codex Broker: Personal · short 82% · weekly 61%
+🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h
 ```
 
 It uses the successful account after any pre-output failover. Unknown quota
-values appear as `—`. Commentary and tool calls do not add notices; the final
+values and reset times appear as `—`. Each percentage is the remaining quota;
+the following duration is the time until that window resets. Commentary and
+tool calls do not add notices; the final
 answer after tool use does. Compaction and non-streaming responses pass through.
 The adapter removes its status prefix from subsequent model inputs while
 retaining the actual answer. This is part of the answer rather than T3 Code's
@@ -109,6 +111,13 @@ identified as final answers at their start stream immediately.
 
 Logs report `request notice result=injected`, `result=skipped`, or
 `result=failed` without account labels, quota values, prompts, or responses.
+
+The adapter answers WebSocket handshakes with HTTP `426`, which Codex treats as
+an immediate switch to HTTP/SSE. This avoids the five retries and `405 Method
+Not Allowed` notice. No additional ChatGPT configuration is needed. Existing
+reconnection notices remain in old turns; verify with a new turn after upgrading.
+The adapter stops reading at the terminal response event so normal client
+completion does not trigger a subsequent stream-read failure.
 
 Rerun the installer and restart ChatGPT to install this adapter change.
 
