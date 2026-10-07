@@ -57,10 +57,13 @@ type routeRequest struct {
 }
 
 type lease struct {
-	Status           string `json:"status"`
-	AccountID        string `json:"account_id"`
-	AccessToken      string `json:"access_token"`
-	ChatGPTAccountID string `json:"chatgpt_account_id"`
+	Status                 string `json:"status"`
+	AccountID              string `json:"account_id"`
+	AccessToken            string `json:"access_token"`
+	ChatGPTAccountID       string `json:"chatgpt_account_id"`
+	AccountLabel           string `json:"account_label"`
+	ShortRemainingPercent  *int64 `json:"short_remaining_percent"`
+	WeeklyRemainingPercent *int64 `json:"weekly_remaining_percent"`
 }
 
 type wait struct {
@@ -213,6 +216,7 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.logf("request received path=%s", r.URL.Path)
+	body, notice := prepareNotice(body)
 	turnID := randomID()
 	request := routeRequest{SessionID: a.sessionID, TurnID: turnID, PreferredAccountID: a.preference()}
 	attempts := map[string]int{}
@@ -260,6 +264,10 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		kind := failureKind(response.StatusCode)
 		if kind == "" {
 			a.setPreference(selected.AccountID)
+			if notice && r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK && strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
+				copyNoticeResponse(w, response, *selected)
+				return
+			}
 			copyResponse(w, response)
 			return
 		}
