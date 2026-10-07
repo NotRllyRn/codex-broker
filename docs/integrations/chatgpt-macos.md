@@ -86,18 +86,28 @@ before response headers reach the app; a partially streamed response is never
 replayed. Both normal Responses requests and Codex's remote-compaction requests
 use the selected broker account.
 
-For each user turn, the adapter inserts a short assistant commentary message
-before the streamed answer, for example:
+The adapter prefixes the actual final answer with the selected account and
+remaining quota, for example:
 
 ```text
 Codex Broker: Personal · short 82% · weekly 61%
 ```
 
 It uses the successful account after any pre-output failover. Unknown quota
-values appear as `—`. Tool continuations, compaction, and non-streaming responses
-do not add notices. Identifiable adapter notices are removed from subsequent
-model inputs. This is a conversation message rather than T3 Code's warning
-banner; rendering in the ChatGPT macOS app requires the live gate below.
+values appear as `—`. Commentary and tool calls do not add notices; the final
+answer after tool use does. Compaction and non-streaming responses pass through.
+The adapter removes its status prefix from subsequent model inputs while
+retaining the actual answer. This is part of the answer rather than T3 Code's
+warning banner; rendering in the ChatGPT macOS app requires the live gate below.
+
+Streaming requests are checked for SSE events even when the backend labels them
+`text/plain`; validated streams are returned as `text/event-stream`. If an
+assistant message's phase is only supplied on completion, that message is held
+until completion to distinguish commentary from the final answer. Messages
+identified as final answers at their start stream immediately.
+
+Logs report `request notice result=injected`, `result=skipped`, or
+`result=failed` without account labels, quota values, prompts, or responses.
 
 Rerun the installer and restart ChatGPT to install this adapter change.
 
