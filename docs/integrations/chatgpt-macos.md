@@ -86,6 +86,21 @@ before response headers reach the app; a partially streamed response is never
 replayed. Both normal Responses requests and Codex's remote-compaction requests
 use the selected broker account.
 
+For each user turn, the adapter inserts a short assistant commentary message
+before the streamed answer, for example:
+
+```text
+Codex Broker: Personal · short 82% · weekly 61%
+```
+
+It uses the successful account after any pre-output failover. Unknown quota
+values appear as `—`. Tool continuations, compaction, and non-streaming responses
+do not add notices. Identifiable adapter notices are removed from subsequent
+model inputs. This is a conversation message rather than T3 Code's warning
+banner; rendering in the ChatGPT macOS app requires the live gate below.
+
+Rerun the installer and restart ChatGPT to install this adapter change.
+
 Check the service and log with:
 
 ```bash

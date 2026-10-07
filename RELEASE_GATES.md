@@ -59,6 +59,11 @@ turns. Confirm ChatGPT Voice uses its native call and WebSocket routes and that
 a voice-directed local Codex task reaches the adapter. Force pre-output `401`
 and `429` responses and verify refresh/failover, then revoke the client key and
 verify the next request fails before reaching OpenAI.
+Confirm the account/quota commentary appears once at the start of each user
+turn, survives reopening the chat, names the successful account after failover,
+and does not repeat during tool continuations or compaction. Inspect subsequent
+Responses inputs to confirm adapter notice IDs are retained by the client and
+the adapter removes those notices before forwarding them upstream.
 Confirm the LaunchAgent survives logout/login and that Keychain, adapter logs,
 and Codex state contain no leased access token or native ChatGPT bearer.
 
