@@ -59,6 +59,7 @@ func TestRouterWaitsForHeldAccount(t *testing.T) {
 		VALUES('account','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
 		INSERT INTO usage_current(account_id,weekly_used_percent_raw,weekly_duration_minutes,weekly_resets_at_s)
 		VALUES('account',0,10080,?);
+		INSERT INTO client_api_keys(key_id,name,key_prefix,secret_hash,created_at_ms) VALUES('key','test','test',X'00',1);
 	`, (now+weeklyCycleMS)/1000)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +87,10 @@ func TestRouterWaitsForHeldAccount(t *testing.T) {
 	lease, wait, err := router.Route(ctx, "key", RouteRequest{})
 	if err != nil || wait == nil || lease != nil || wait.NextRetryAtMS <= now {
 		t.Fatalf("route = %#v, %#v, %v", lease, wait, err)
+	}
+	lease, _, err = router.Route(ctx, "key", RouteRequest{FailedAccountID: "public", FailureKind: "auth"})
+	if err != nil || lease != nil {
+		t.Fatalf("auth retry bypassed hold: lease=%#v err=%v", lease, err)
 	}
 	var state string
 	var started, routed sql.NullInt64
@@ -376,5 +381,31 @@ func TestCycleClaimsAreAtomic(t *testing.T) {
 	}
 	if _, operation, err := service.claimCyclePulse(ctx, now+900000); err != nil || operation == "" {
 		t.Fatalf("retry missing: %s %v", operation, err)
+	}
+}
+
+func TestCycleReconciliationUsesUpstreamExpiry(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	_, err = database.DB.ExecContext(ctx, `
+		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','a','a',1,'ACTIVE',1,1);
+		INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES('a','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
+		INSERT INTO usage_current(account_id,weekly_resets_at_s) VALUES('a',604801);
+		INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,weekly_started_at_ms) VALUES('a',0,'IN_CYCLE',2000);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Store: database, Config: config.Config{WindowPulseEnabled: true}}
+	if err := service.reconcileCycle(ctx, weeklyCycleMS+1000); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	var started int64
+	if err := database.DB.QueryRowContext(ctx, "SELECT cycle_state,weekly_started_at_ms FROM window_pulse_state WHERE account_id='a'").Scan(&state, &started); err != nil || state != "HELD" || started != 1000 {
+		t.Fatalf("state=%s started=%d err=%v", state, started, err)
 	}
 }

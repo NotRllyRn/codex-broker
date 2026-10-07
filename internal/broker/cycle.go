@@ -60,6 +60,9 @@ func loadCycleMembers(ctx context.Context, db store.Executor) ([]cycleMember, er
 		if err := rows.Scan(&item.id, &item.createdAtMS, &item.weeklyUsed, &item.weeklyResetS, &item.weeklyDurationMinutes, &item.state, &item.weeklyStartedAtMS, &item.hasActivePulseOperation); err != nil {
 			return nil, err
 		}
+		if item.state == "IN_CYCLE" && item.weeklyStartedAtMS.Valid && item.weeklyResetS.Valid && item.weeklyResetS.Int64*1000 > item.weeklyStartedAtMS.Int64 {
+			item.weeklyStartedAtMS.Int64 = min(item.weeklyStartedAtMS.Int64, item.weeklyResetS.Int64*1000-weeklyCycleMS)
+		}
 		result = append(result, item)
 	}
 	return result, rows.Err()

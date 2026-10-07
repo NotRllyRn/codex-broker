@@ -38,7 +38,7 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		if request.FailureKind == "quota" {
 			_, _ = r.Service.Refresh(ctx, failed.PublicID, "CLIENT_FAILURE")
 		}
-		if request.FailureKind == "auth" {
+		if request.FailureKind == "auth" && (!r.Service.Config.WindowPulseEnabled || failed.CycleState == "IN_CYCLE") {
 			if lease, error := r.Service.Lease(ctx, *failed, now, true); error == nil {
 				if err := r.markRouted(ctx, failed.ID, now); err != nil {
 					return nil, nil, err
