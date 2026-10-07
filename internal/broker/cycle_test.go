@@ -409,3 +409,15 @@ func TestCycleReconciliationUsesUpstreamExpiry(t *testing.T) {
 		t.Fatalf("state=%s started=%d err=%v", state, started, err)
 	}
 }
+
+func TestCyclePlanWaitsForRolledZeroPercentWindow(t *testing.T) {
+	now := weeklyCycleMS * 10
+	members := []cycleMember{
+		{id: "rolled", state: "HELD", weeklyUsed: sql.NullInt64{Int64: 0, Valid: true}, weeklyStartedAtMS: sql.NullInt64{Int64: now - weeklyCycleMS, Valid: true}, weeklyResetS: sql.NullInt64{Int64: (now + weeklyCycleMS) / 1000, Valid: true}},
+		{id: "idle", state: "HELD", weeklyUsed: sql.NullInt64{Int64: 0, Valid: true}, weeklyResetS: sql.NullInt64{Int64: (now + weeklyCycleMS) / 1000, Valid: true}},
+	}
+	plan := buildCyclePlan(members, sql.NullInt64{}, now)
+	if plan[0].accountID != "idle" || plan[0].releaseAtMS != now || plan[1].releaseAtMS != now+weeklyCycleMS {
+		t.Fatalf("plan=%+v", plan)
+	}
+}

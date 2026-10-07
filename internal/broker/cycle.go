@@ -153,7 +153,7 @@ func buildCyclePlan(members []cycleMember, lastRelease sql.NullInt64, now int64)
 		} else if member.state == "IN_CYCLE" && member.weeklyResetS.Valid {
 			available = member.weeklyResetS.Int64 * 1000
 		}
-		if member.state == "HELD" && member.weeklyUsed.Valid && member.weeklyUsed.Int64 > 0 && member.weeklyResetS.Valid {
+		if member.weeklyResetS.Valid && (member.weeklyStartedAtMS.Valid || member.weeklyUsed.Valid && member.weeklyUsed.Int64 > 0) {
 			available = max(available, member.weeklyResetS.Int64*1000)
 		}
 		ready = append(ready, readyMember{member, available})
