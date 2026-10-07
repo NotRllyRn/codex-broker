@@ -94,20 +94,17 @@ func TestCommentaryNeverGetsNotice(t *testing.T) {
 }
 
 func TestPrepareNoticePreservesAnswersAndToolContinuations(t *testing.T) {
-	for _, tc := range []struct {
-		input  string
-		notice bool
-	}{
-		{`{"input":[{"role":"user","content":"hi"}]}`, true},
-		{`{"input":"hi"}`, true},
-		{`{"input":[{"role":"user"},{"type":"function_call_output","output":"done"}]}`, true},
-		{`{"input":[{"type":"function_call_output","output":"done"}]}`, true},
-		{`{"input":[{"role":"assistant","content":"hi"}]}`, false},
-		{`{}`, false}, {`{"input":null}`, false}, {`invalid`, false},
+	for _, input := range []string{
+		`{"input":[{"role":"user","content":"hi"}]}`,
+		`{"input":"hi"}`,
+		`{"input":[{"role":"user"},{"type":"function_call_output","output":"done"}]}`,
+		`{"input":[{"type":"function_call_output","output":"done"}]}`,
+		`{"input":[{"role":"assistant","content":"hi"}]}`,
+		`{}`, `{"input":null}`, `invalid`,
 	} {
-		body, notice := prepareNotice([]byte(tc.input))
-		if notice != tc.notice || string(body) != tc.input {
-			t.Fatalf("prepared = %s, notice = %v", body, notice)
+		body := prepareNotice([]byte(input))
+		if string(body) != input {
+			t.Fatalf("prepared = %s", body)
 		}
 	}
 	for _, content := range []any{accountNotice(lease{AccountID: "a"}) + "Actual answer", []any{map[string]any{"type": "output_text", "text": accountNotice(lease{AccountID: "a"}) + "Actual answer"}}} {
@@ -116,8 +113,8 @@ func TestPrepareNoticePreservesAnswersAndToolContinuations(t *testing.T) {
 			map[string]any{"role": "assistant", "id": "msg_answer", "content": content},
 			map[string]any{"role": "user", "content": "next"},
 		}})
-		body, notice := prepareNotice(input)
-		if !notice || strings.Contains(string(body), "Codex Broker:") || strings.Contains(string(body), noticePrefix) || !strings.Contains(string(body), "Actual answer") || !strings.Contains(string(body), `"model":"test"`) {
+		body := prepareNotice(input)
+		if strings.Contains(string(body), "Codex Broker:") || strings.Contains(string(body), noticePrefix) || !strings.Contains(string(body), "Actual answer") || !strings.Contains(string(body), `"model":"test"`) {
 			t.Fatalf("prepared = %s", body)
 		}
 	}
@@ -136,6 +133,8 @@ func TestPlainTextSSEAfterFailover(t *testing.T) {
 		stream, notice                    bool
 	}{
 		{"plain_sse", "/v1/responses", noticeTestStream, "text/plain; charset=utf-8", true, true},
+		{"implicit_stream", "/v1/responses", noticeTestStream, "text/plain; charset=utf-8", false, true},
+		{"alternate_input", "/v1/responses", noticeTestStream, "text/plain; charset=utf-8", true, true},
 		{"sse", "/v1/responses", noticeTestStream, "text/event-stream", true, true},
 		{"json", "/v1/responses", `{"output":[]}`, "application/json", true, false},
 		{"non_streaming", "/v1/responses", `{"output":[]}`, "application/json", false, false},
@@ -166,6 +165,12 @@ func TestPlainTextSSEAfterFailover(t *testing.T) {
 			var logs bytes.Buffer
 			adapter.logf = func(format string, args ...any) { fmt.Fprintf(&logs, format+"\n", args...) }
 			body := fmt.Sprintf(`{"stream":%t,"input":[{"role":"user","content":"hello"}]}`, tc.stream)
+			if tc.name == "implicit_stream" {
+				body = `{"input":[{"role":"user","content":"hello"}]}`
+			}
+			if tc.name == "alternate_input" {
+				body = `{"input":[{"type":"agent_message","author":"user","recipient":"assistant","content":[{"type":"input_text","text":"hello"}]}]}`
+			}
 			request := httptest.NewRequest("POST", tc.path, strings.NewReader(body))
 			request.Header.Set("Authorization", "Bearer native")
 			response := httptest.NewRecorder()

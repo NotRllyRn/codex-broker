@@ -13,21 +13,17 @@ import (
 
 const noticePrefix = "msg_codex_broker_" // Remove notices from older adapter versions too.
 
-func prepareNotice(body []byte) ([]byte, bool) {
+func prepareNotice(body []byte) []byte {
 	var request map[string]json.RawMessage
 	if json.Unmarshal(body, &request) != nil {
-		return body, false
-	}
-	var text string
-	if json.Unmarshal(request["input"], &text) == nil && text != "" {
-		return body, true
+		return body
 	}
 	var input []json.RawMessage
 	if json.Unmarshal(request["input"], &input) != nil {
-		return body, false
+		return body
 	}
 	filtered := make([]json.RawMessage, 0, len(input))
-	changed, user := false, false
+	changed := false
 	for _, raw := range input {
 		var item map[string]any
 		_ = json.Unmarshal(raw, &item)
@@ -63,21 +59,12 @@ func prepareNotice(body []byte) ([]byte, bool) {
 			}
 		}
 		filtered = append(filtered, raw)
-		user = user || item["role"] == "user" || item["type"] == "function_call_output" || item["type"] == "custom_tool_call_output"
 	}
 	if changed {
 		request["input"], _ = json.Marshal(filtered)
 		body, _ = json.Marshal(request)
 	}
-	return body, user
-}
-
-func wantsStream(body []byte, header http.Header) bool {
-	var request struct {
-		Stream bool `json:"stream"`
-	}
-	_ = json.Unmarshal(body, &request)
-	return request.Stream || strings.HasPrefix(header.Get("Content-Type"), "text/event-stream")
+	return body
 }
 
 func accountNotice(selected lease) string {

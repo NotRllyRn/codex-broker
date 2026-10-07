@@ -100,7 +100,8 @@ The adapter removes its status prefix from subsequent model inputs while
 retaining the actual answer. This is part of the answer rather than T3 Code's
 warning banner; rendering in the ChatGPT macOS app requires the live gate below.
 
-Streaming requests are checked for SSE events even when the backend labels them
+Successful Responses bodies are checked for SSE events regardless of the
+request's input format or streaming flag, even when the backend labels them
 `text/plain`; validated streams are returned as `text/event-stream`. If an
 assistant message's phase is only supplied on completion, that message is held
 until completion to distinguish commentary from the final answer. Messages

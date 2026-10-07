@@ -216,7 +216,7 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.logf("request received path=%s", r.URL.Path)
-	body, notice := prepareNotice(body)
+	body = prepareNotice(body)
 	turnID := randomID()
 	request := routeRequest{SessionID: a.sessionID, TurnID: turnID, PreferredAccountID: a.preference()}
 	attempts := map[string]int{}
@@ -264,7 +264,7 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		kind := failureKind(response.StatusCode)
 		if kind == "" {
 			a.setPreference(selected.AccountID)
-			if notice && r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK && wantsStream(body, response.Header) {
+			if r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK {
 				a.copyNoticeResponse(w, response, *selected)
 				return
 			}
