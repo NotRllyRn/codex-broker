@@ -264,10 +264,11 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		kind := failureKind(response.StatusCode)
 		if kind == "" {
 			a.setPreference(selected.AccountID)
-			if notice && r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK && strings.HasPrefix(response.Header.Get("Content-Type"), "text/event-stream") {
-				copyNoticeResponse(w, response, *selected)
+			if notice && r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK && wantsStream(body, response.Header) {
+				a.copyNoticeResponse(w, response, *selected)
 				return
 			}
+			a.logf("request notice path=%s result=skipped", r.URL.Path)
 			copyResponse(w, response)
 			return
 		}

@@ -12,87 +12,135 @@ import (
 	"testing"
 )
 
-const noticeTestStream = "data: {\"type\":\"response.created\",\"response\":{\"output\":[]},\"sequence_number\":0}\n\n" +
-	"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_answer\",\"type\":\"message\"}}\n\n" +
+const noticeTestStream = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"output\":[]}}\n\n" +
+	"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_answer\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n" +
 	"data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_answer\",\"delta\":\"Hello\"}\n\n" +
-	"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"msg_answer\"}],\"usage\":{\"total_tokens\":10}}}\n\n" +
+	"data: {\"type\":\"response.output_text.done\",\"item_id\":\"msg_answer\",\"text\":\"Hello\"}\n\n" +
+	"data: {\"type\":\"response.content_part.done\",\"item_id\":\"msg_answer\",\"part\":{\"type\":\"output_text\",\"text\":\"Hello\"}}\n\n" +
+	"data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_answer\",\"type\":\"message\",\"role\":\"assistant\",\"phase\":\"final_answer\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}}\n\n" +
+	"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"id\":\"msg_answer\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}],\"usage\":{\"total_tokens\":10}}}\n\n" +
 	"data: [DONE]\n\n"
 
-func TestNoticeStreamPreservesAnswerAndIndices(t *testing.T) {
+func TestNoticePrefixesFinalAnswerConsistently(t *testing.T) {
 	short, weekly := int64(82), int64(61)
-	item := accountNotice(lease{AccountID: "a", AccountLabel: "Personal", ShortRemainingPercent: &short, WeeklyRemainingPercent: &weekly})
-	var output bytes.Buffer
-	if err := streamNotice(&output, strings.NewReader(noticeTestStream), item); err != nil {
-		t.Fatal(err)
-	}
-	events := readNoticeEvents(t, output.String())
-	if len(events) != 10 {
-		t.Fatalf("events = %d", len(events))
-	}
-	for index, event := range events {
-		if event["sequence_number"] != float64(index+1) {
-			t.Fatalf("sequence = %#v", event)
-		}
-	}
-	if events[3]["delta"] != "Codex Broker: Personal · short 82% · weekly 61%" {
-		t.Fatalf("notice = %#v", events[3])
-	}
-	if events[7]["output_index"] != float64(1) || events[8]["delta"] != "Hello" || events[8]["item_id"] != "msg_answer" {
-		t.Fatalf("answer events = %#v", events[7:9])
-	}
-	response := events[9]["response"].(map[string]any)
-	items := response["output"].([]any)
-	if len(items) != 2 || items[0].(map[string]any)["id"] != item["id"] || items[1].(map[string]any)["id"] != "msg_answer" || response["usage"].(map[string]any)["total_tokens"] != float64(10) {
-		t.Fatalf("completed = %#v", response)
-	}
-	if !strings.HasSuffix(output.String(), "data: [DONE]\n\n") {
-		t.Fatal("lost stream terminator")
-	}
-}
-
-func TestPrepareNoticeSkipsContinuationsAndRemovesPreviousNotice(t *testing.T) {
-	for _, tc := range []struct {
-		name, input string
-		notice      bool
-	}{
-		{"user", `{"input":[{"role":"user","content":"hi"}]}`, true},
-		{"string", `{"input":"hi"}`, true},
-		{"tool", `{"input":[{"role":"user"},{"type":"function_call_output","output":"done"}]}`, false},
-		{"assistant", `{"input":[{"role":"user"},{"role":"assistant","content":"hi"}]}`, false},
-		{"missing", `{}`, false},
-		{"null", `{"input":null}`, false},
-		{"malformed", `invalid`, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body, notice := prepareNotice([]byte(tc.input))
-			if notice != tc.notice || string(body) != tc.input {
-				t.Fatalf("prepared = %s, notice = %v", body, notice)
+	prefix := accountNotice(lease{AccountID: "a", AccountLabel: "Personal", ShortRemainingPercent: &short, WeeklyRemainingPercent: &weekly})
+	for _, phase := range []string{"late", "early", "legacy"} {
+		t.Run(phase, func(t *testing.T) {
+			stream := noticeTestStream
+			if phase == "early" {
+				stream = strings.Replace(stream, `"content":[]`, `"phase":"final_answer","content":[]`, 1)
+			}
+			if phase == "legacy" {
+				stream = strings.ReplaceAll(stream, `"phase":"final_answer",`, "")
+			}
+			var output bytes.Buffer
+			inserted, err := streamNotice(&output, strings.NewReader(stream), prefix)
+			if err != nil || !inserted {
+				t.Fatalf("injected = %v, error = %v", inserted, err)
+			}
+			events := readNoticeEvents(t, output.String())
+			if len(events) != 7 {
+				t.Fatalf("events = %d", len(events))
+			}
+			for index, event := range events {
+				if event["sequence_number"] != float64(index+1) {
+					t.Fatalf("sequence = %#v", event)
+				}
+				if value, ok := event["output_index"]; ok && value != float64(0) {
+					t.Fatalf("changed index: %#v", event)
+				}
+			}
+			if events[2]["delta"] != prefix+"Hello" || events[3]["text"] != prefix+"Hello" || events[4]["part"].(map[string]any)["text"] != prefix+"Hello" {
+				t.Fatalf("text events = %#v", events[2:5])
+			}
+			item := events[5]["item"].(map[string]any)
+			if item["id"] != "msg_answer" || item["phase"] != "final_answer" || item["content"].([]any)[0].(map[string]any)["text"] != prefix+"Hello" {
+				t.Fatalf("item = %#v", item)
+			}
+			response := events[6]["response"].(map[string]any)
+			items := response["output"].([]any)
+			if len(items) != 1 || items[0].(map[string]any)["content"].([]any)[0].(map[string]any)["text"] != prefix+"Hello" || response["usage"].(map[string]any)["total_tokens"] != float64(10) {
+				t.Fatalf("completed = %#v", response)
+			}
+			if !strings.HasSuffix(output.String(), "data: [DONE]\n\n") {
+				t.Fatal("lost terminator")
 			}
 		})
 	}
-	input := `{"model":"test","input":[{"role":"assistant","id":"msg_codex_broker_previous","content":[]},{"role":"user","content":"next"}]}`
-	body, notice := prepareNotice([]byte(input))
-	if !notice || strings.Contains(string(body), noticePrefix) || !strings.Contains(string(body), `"model":"test"`) {
-		t.Fatalf("prepared = %s, notice = %v", body, notice)
+}
+
+func TestCommentaryNeverGetsNotice(t *testing.T) {
+	commentary := strings.ReplaceAll(strings.ReplaceAll(noticeTestStream, "msg_answer", "msg_progress"), `"phase":"final_answer"`, `"phase":"commentary"`)
+	var output bytes.Buffer
+	inserted, err := streamNotice(&output, strings.NewReader(commentary), "STATUS\n\n")
+	if err != nil || inserted || strings.Contains(output.String(), "STATUS") {
+		t.Fatalf("injected = %v, error = %v", inserted, err)
+	}
+	output.Reset()
+	commentary = strings.Split(commentary, `data: {"type":"response.completed"`)[0]
+	inserted, err = streamNotice(&output, strings.NewReader(commentary+noticeTestStream), "STATUS\n\n")
+	if err != nil || !inserted {
+		t.Fatalf("injected = %v, error = %v", inserted, err)
+	}
+	var deltas []string
+	for _, event := range readNoticeEvents(t, output.String()) {
+		if text, ok := event["delta"].(string); ok {
+			deltas = append(deltas, text)
+		}
+	}
+	if len(deltas) != 2 || deltas[0] != "Hello" || deltas[1] != "STATUS\n\nHello" {
+		t.Fatalf("deltas = %#v", deltas)
 	}
 }
 
-func TestAccountNoticeUsesPublicFallbackAndUnknownQuota(t *testing.T) {
-	item := accountNotice(lease{AccountID: "public-a", AccessToken: "secret", ChatGPTAccountID: "private"})
-	body, _ := json.Marshal(item)
-	if !strings.Contains(string(body), "Codex Broker: public-a · short — · weekly —") || strings.Contains(string(body), "secret") || strings.Contains(string(body), "private") {
-		t.Fatalf("notice = %s", body)
-	}
-}
-
-func TestNoticeOnlyForSuccessfulUserResponse(t *testing.T) {
+func TestPrepareNoticePreservesAnswersAndToolContinuations(t *testing.T) {
 	for _, tc := range []struct {
-		name, path, input string
-		notice            bool
+		input  string
+		notice bool
 	}{
-		{"user", "/v1/responses", `{"input":[{"role":"user","content":"hello"}]}`, true},
-		{"tool", "/v1/responses", `{"input":[{"type":"function_call_output","output":"done"}]}`, false},
-		{"compact", "/v1/responses/compact", `{"input":[{"role":"user","content":"hello"}]}`, false},
+		{`{"input":[{"role":"user","content":"hi"}]}`, true},
+		{`{"input":"hi"}`, true},
+		{`{"input":[{"role":"user"},{"type":"function_call_output","output":"done"}]}`, true},
+		{`{"input":[{"type":"function_call_output","output":"done"}]}`, true},
+		{`{"input":[{"role":"assistant","content":"hi"}]}`, false},
+		{`{}`, false}, {`{"input":null}`, false}, {`invalid`, false},
+	} {
+		body, notice := prepareNotice([]byte(tc.input))
+		if notice != tc.notice || string(body) != tc.input {
+			t.Fatalf("prepared = %s, notice = %v", body, notice)
+		}
+	}
+	for _, content := range []any{accountNotice(lease{AccountID: "a"}) + "Actual answer", []any{map[string]any{"type": "output_text", "text": accountNotice(lease{AccountID: "a"}) + "Actual answer"}}} {
+		input, _ := json.Marshal(map[string]any{"model": "test", "input": []any{
+			map[string]any{"role": "assistant", "id": noticePrefix + "old", "content": []any{}},
+			map[string]any{"role": "assistant", "id": "msg_answer", "content": content},
+			map[string]any{"role": "user", "content": "next"},
+		}})
+		body, notice := prepareNotice(input)
+		if !notice || strings.Contains(string(body), "Codex Broker:") || strings.Contains(string(body), noticePrefix) || !strings.Contains(string(body), "Actual answer") || !strings.Contains(string(body), `"model":"test"`) {
+			t.Fatalf("prepared = %s", body)
+		}
+	}
+}
+
+func TestAccountNoticeUsesPublicFallback(t *testing.T) {
+	text := accountNotice(lease{AccountID: "public-a", AccessToken: "secret", ChatGPTAccountID: "private"})
+	if text != "Codex Broker: public-a · short — · weekly —\n\n" {
+		t.Fatalf("notice = %s", text)
+	}
+}
+
+func TestPlainTextSSEAfterFailover(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, response, contentType string
+		stream, notice                    bool
+	}{
+		{"plain_sse", "/v1/responses", noticeTestStream, "text/plain; charset=utf-8", true, true},
+		{"sse", "/v1/responses", noticeTestStream, "text/event-stream", true, true},
+		{"json", "/v1/responses", `{"output":[]}`, "application/json", true, false},
+		{"non_streaming", "/v1/responses", `{"output":[]}`, "application/json", false, false},
+		{"compact", "/v1/responses/compact", noticeTestStream, "text/plain", true, false},
+		{"tool_continuation", "/v1/responses", `data: {"type":"response.created","response":{}}` + "\n\n" + `data: {"type":"response.output_item.done","item":{"id":"tool","type":"function_call","name":"shell","arguments":"{}"}}` + "\n\n" + `data: {"type":"response.completed","response":{"output":[]}}` + "\n\n", "text/plain", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var routes atomic.Int32
@@ -109,57 +157,68 @@ func TestNoticeOnlyForSuccessfulUserResponse(t *testing.T) {
 					writeJSON(w, 429, map[string]string{"error": "quota"})
 					return
 				}
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Content-Length", fmt.Sprint(len(noticeTestStream)))
-				_, _ = io.WriteString(w, noticeTestStream)
+				w.Header().Set("Content-Type", tc.contentType)
+				w.Header().Set("Content-Length", fmt.Sprint(len(tc.response)))
+				_, _ = io.WriteString(w, tc.response)
 			}))
 			defer upstream.Close()
-			server := httptest.NewServer(newTestAdapter(t, broker.URL, ca, upstream).Handler())
-			defer server.Close()
-			request, _ := http.NewRequest("POST", server.URL+tc.path, strings.NewReader(tc.input))
+			adapter := newTestAdapter(t, broker.URL, ca, upstream)
+			var logs bytes.Buffer
+			adapter.logf = func(format string, args ...any) { fmt.Fprintf(&logs, format+"\n", args...) }
+			body := fmt.Sprintf(`{"stream":%t,"input":[{"role":"user","content":"hello"}]}`, tc.stream)
+			request := httptest.NewRequest("POST", tc.path, strings.NewReader(body))
 			request.Header.Set("Authorization", "Bearer native")
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				t.Fatal(err)
+			response := httptest.NewRecorder()
+			adapter.Handler().ServeHTTP(response, request)
+			if response.Code != 200 || routes.Load() != 2 || strings.Contains(response.Body.String(), "Codex Broker: Account b") != tc.notice || strings.Contains(response.Body.String(), "Codex Broker: Account a") {
+				t.Fatalf("response = %d %s", response.Code, response.Body.String())
 			}
-			defer response.Body.Close()
-			body, err := io.ReadAll(response.Body)
-			if err != nil {
-				t.Fatal(err)
+			if tc.notice && (response.Header().Get("Content-Type") != "text/event-stream" || response.Header().Get("Content-Length") != "" || !strings.Contains(logs.String(), "result=injected")) {
+				t.Fatalf("headers = %#v, logs = %s", response.Header(), logs.String())
 			}
-			if response.StatusCode != 200 || routes.Load() != 2 || strings.Contains(string(body), "Codex Broker: Account b") != tc.notice || strings.Contains(string(body), "Codex Broker: Account a") {
-				t.Fatalf("response = %d %s", response.StatusCode, body)
+			if !tc.notice && tc.name != "tool_continuation" && response.Body.String() != tc.response {
+				t.Fatalf("changed response = %s", response.Body.String())
 			}
-			if !tc.notice && string(body) != noticeTestStream {
-				t.Fatalf("changed continuation: %s", body)
+			for _, secret := range []string{"access-", "upstream-", "Account b", "native", "cbk_"} {
+				if strings.Contains(logs.String(), secret) {
+					t.Fatalf("log contains %q", secret)
+				}
 			}
 		})
 	}
 }
 
-func TestNoticeStreamsBeforeUpstreamCompletes(t *testing.T) {
+func TestKnownFinalPhaseStreamsImmediately(t *testing.T) {
 	r, w := io.Pipe()
 	defer r.Close()
 	defer w.Close()
 	done := make(chan error, 1)
-	go func() {
-		done <- streamNotice(w, strings.NewReader(noticeTestStream), accountNotice(lease{AccountID: "a"}))
-	}()
-	reader := strings.Builder{}
+	stream := strings.Replace(noticeTestStream, `"content":[]`, `"phase":"final_answer","content":[]`, 1)
+	go func() { _, err := streamNotice(w, strings.NewReader(stream), "STATUS\n\n"); done <- err }()
+	var output strings.Builder
 	buffer := make([]byte, 4096)
-	for !strings.Contains(reader.String(), "response.output_item.done") {
+	for !strings.Contains(output.String(), "STATUS") {
 		n, err := r.Read(buffer)
 		if err != nil {
 			t.Fatal(err)
 		}
-		reader.Write(buffer[:n])
+		output.Write(buffer[:n])
 	}
-	if !strings.Contains(reader.String(), "Codex Broker: a") || strings.Contains(reader.String(), "Hello") {
-		t.Fatalf("early stream = %s", reader.String())
+	if strings.Contains(output.String(), "response.completed") {
+		t.Fatal("buffered completed response")
 	}
 	go io.Copy(io.Discard, r)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTruncatedMessageFails(t *testing.T) {
+	stream := strings.Split(noticeTestStream, `data: {"type":"response.output_item.done"`)[0]
+	var output bytes.Buffer
+	_, err := streamNotice(&output, strings.NewReader(stream), "STATUS\n\n")
+	if err == nil {
+		t.Fatal("accepted incomplete message")
 	}
 }
 
