@@ -23,7 +23,7 @@ WINDOWKEEPER_BROWSER_OAUTH_MODE=manual
 EOF
 
 openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out "$certs/ca.key" 2>/dev/null
-openssl req -x509 -new -key "$certs/ca.key" -sha256 -days 3650 -subj '/CN=Codex Broker Local CA' -out "$certs/ca.crt"
+openssl req -x509 -new -key "$certs/ca.key" -sha256 -days 3650 -subj '/CN=Codex Broker Local CA' -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' -out "$certs/ca.crt"
 
 cat >"$certs/server.ext" <<EOF
 subjectAltName=IP:$ip,DNS:codex-broker
