@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 )
 
 const (
@@ -350,61 +352,13 @@ func (a *Adapter) forward(source *http.Request, body []byte, selected lease) (*h
 	target := *a.upstreamURL
 	target.Path = strings.TrimSuffix(target.Path, "/") + strings.TrimPrefix(source.URL.Path, "/v1")
 	target.RawQuery = source.URL.RawQuery
-	request, err := http.NewRequestWithContext(source.Context(), http.MethodPost, target.String(), bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	copyHeaders(request.Header, source.Header)
-	for _, name := range []string{"Authorization", "ChatGPT-Account-ID", "ChatGPT-Account-Id", "Cookie", "Proxy-Authorization", "X-Api-Key", "Api-Key"} {
-		request.Header.Del(name)
-	}
-	request.Header.Set("Authorization", "Bearer "+selected.AccessToken)
-	request.Header.Set("ChatGPT-Account-ID", selected.ChatGPTAccountID)
-	if request.Header.Get("Originator") == "" {
-		request.Header.Set("Originator", "codex_cli_rs")
-	}
-	return a.upstream.Do(request)
+	return responsesproxy.Forward(a.upstream, source, target.String(), body, selected.AccessToken, selected.ChatGPTAccountID)
 }
 
-func copyHeaders(destination, source http.Header) {
-	for name, values := range source {
-		if hopHeader(name) {
-			continue
-		}
-		for _, value := range values {
-			destination.Add(name, value)
-		}
-	}
-}
-
-func hopHeader(name string) bool {
-	switch strings.ToLower(name) {
-	case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade":
-		return true
-	}
-	return false
-}
-
-func failureKind(status int) string {
-	if status == http.StatusUnauthorized || status == http.StatusForbidden {
-		return "auth"
-	}
-	if status == http.StatusTooManyRequests {
-		return "quota"
-	}
-	return ""
-}
-
+func copyHeaders(destination, source http.Header) { responsesproxy.CopyHeaders(destination, source) }
+func failureKind(status int) string               { return responsesproxy.FailureKind(status) }
 func copyResponse(w http.ResponseWriter, response *http.Response) {
-	defer response.Body.Close()
-	copyHeaders(w.Header(), response.Header)
-	w.Header().Del("Set-Cookie")
-	w.WriteHeader(response.StatusCode)
-	writer := io.Writer(w)
-	if flusher, ok := w.(http.Flusher); ok {
-		writer = flushWriter{w, flusher}
-	}
-	_, _ = io.Copy(writer, response.Body)
+	responsesproxy.CopyResponse(w, response)
 }
 
 func writeResponse(w http.ResponseWriter, response *http.Response, body []byte) {

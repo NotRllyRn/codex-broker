@@ -19,6 +19,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 	"github.com/NotRllyRn/codex-broker/internal/webassets"
 	"github.com/flosch/pongo2/v6"
 )
@@ -28,6 +29,8 @@ const csrfCookie = "wk_csrf"
 
 type Server struct {
 	App                                       *broker.Application
+	proxyClient                               *http.Client
+	proxyStats                                proxyStats
 	renderer                                  *renderer
 	mux                                       *http.ServeMux
 	loginThrottle, clientAuth, enrollmentAuth *throttle
@@ -73,6 +76,7 @@ func New(application *broker.Application) (http.Handler, error) {
 		return nil, err
 	}
 	server := &Server{App: application, renderer: templates, mux: http.NewServeMux(), loginThrottle: newThrottle(5, time.Minute), clientAuth: newThrottle(5, time.Minute), enrollmentAuth: newThrottle(20, time.Minute)}
+	server.proxyClient = responsesproxy.NewClient()
 	server.routes()
 	return server.rootPath(server.middleware(server.mux)), nil
 }
@@ -112,6 +116,8 @@ func (s *Server) routes() {
 	route("GET /health/ready", s.ready)
 	route("GET /api/v1/health", s.apiHealth)
 	route("POST /api/v1/route", s.route)
+	route("POST /v1/responses", s.responses)
+	route("POST /v1/responses/compact", s.responses)
 	route("POST /api/private/v1/public-enrollments/availability", s.enrollmentAvailability)
 	route("POST /api/private/v1/public-enrollments", s.enrollmentStart)
 	route("POST /api/private/v1/public-enrollments/status", s.enrollmentStatus)
@@ -142,6 +148,7 @@ func (s *Server) routes() {
 	route("POST /settings/webhooks/{id}/enabled", s.webhookEnabled)
 	route("POST /settings/webhooks/{id}/delete", s.webhookDelete)
 	route("GET /api/internal/v1/dashboard", s.internalDashboard)
+	route("GET /api/internal/v1/proxy", s.internalProxy)
 	route("GET /api/internal/v1/operations/{id}", s.internalOperation)
 	route("GET /api/internal/v1/login-attempts/{id}/interaction", s.interaction)
 	route("POST /api/internal/v1/login-attempts/{id}/browser-callback", s.callback)
@@ -155,7 +162,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v1/") {
 			w.Header().Set("Cache-Control", "no-store, max-age=0")
 			w.Header().Set("Pragma", "no-cache")
 		}
