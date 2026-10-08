@@ -63,7 +63,11 @@ Use the broker's existing HTTPS listener, a named `cbk_` key as the API key, and
 no extra configuration, port, credential type, or migration is required.
 
 Bodies remain opaque and must match ChatGPT Codex's supported protocol. The
-proxy forwards non-streaming and streaming responses without injecting notices.
+transport forwards responses without injecting notices. Production checks on
+2026-10-08 confirmed that ChatGPT Codex rejects `stream:false` with `400` and
+returns `404` for standalone `/responses/compact`, including when called
+directly upstream. Clients must use `stream:true`; the broker passes these
+upstream limitations through unchanged.
 Before delivering output, `401/403` reports an auth failure to the router for
 refresh or failover; a refreshed account is tried once more. A second auth failure
 is returned without further replay. `429` reports quota failure and selects

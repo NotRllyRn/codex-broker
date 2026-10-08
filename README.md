@@ -80,7 +80,10 @@ API key:  cbk_… (create a separate named key for each app in Settings)
 
 Include the configured root path before `/v1`, if any. Trust the broker's CA on
 that client. The same broker listener supports `POST /v1/responses` and
-`POST /v1/responses/compact`, with streaming or non-streaming responses.
+`POST /v1/responses/compact`, forwarding bodies and upstream errors unchanged.
+Production checks on 2026-10-08 confirmed that ChatGPT Codex requires
+`stream:true` and currently returns `404` for standalone compaction. These
+endpoints do not provide the full OpenAI API feature set.
 
 For example, using a key held in `BROKER_CLIENT_KEY`:
 
