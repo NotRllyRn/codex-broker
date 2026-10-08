@@ -41,6 +41,30 @@ and the client-key secret private. Never expose broker port `8787` to the
 Internet. See [Operations](OPERATIONS.md) for backups, upgrades, recovery, and
 hardening.
 
+## NixOS
+
+Import `codex-broker.nixosModules.default` from this repository's flake, then
+configure the service with a Codex package pinned to the supported version:
+
+```nix
+services.codex-broker = {
+  enable = true;
+  codex = myPinnedCodex; # Must provide codex-cli 0.145.0.
+  vaultKeyFile = "/run/secrets/broker-vault";
+  adminPasswordFile = "/run/secrets/admin-credential";
+};
+```
+
+The listener defaults to `127.0.0.1:8787`. For LAN access, set `host`,
+`tls.certFile`, and `tls.keyFile`; set `openFirewall = true` if needed.
+Generate the vault key with `nix run . -- vault generate-key`. Provision secret
+files outside the Nix store; systemd loads them as credentials. Custom users
+and groups must already exist; the module creates state directories with mode
+`0700`. The optional `publicEnrollment` service uses a separate dynamic user
+and receives only its enrollment key and TLS credentials.
+
+Build the broker with `nix build .`; validate the module with `nix flake check`.
+
 ## Connect an app
 
 ### Pi

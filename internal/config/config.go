@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/NotRllyRn/codex-broker/internal/platform"
 	"github.com/joho/godotenv"
 )
 
@@ -85,6 +86,10 @@ func Load() (Config, error) {
 		LogLevel:                    env("LOG_LEVEL", "INFO"),
 	}
 	var err error
+	c.PublicEnrollmentKey, err = platform.ReadProtected(env("PUBLIC_ENROLLMENT_KEY_FILE", ""), c.PublicEnrollmentKey)
+	if err != nil {
+		return Config{}, err
+	}
 	for target, spec := range map[*int]struct {
 		name       string
 		value, min int
