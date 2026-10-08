@@ -57,10 +57,15 @@ type routeRequest struct {
 }
 
 type lease struct {
-	Status           string `json:"status"`
-	AccountID        string `json:"account_id"`
-	AccessToken      string `json:"access_token"`
-	ChatGPTAccountID string `json:"chatgpt_account_id"`
+	Status                 string `json:"status"`
+	AccountID              string `json:"account_id"`
+	AccessToken            string `json:"access_token"`
+	ChatGPTAccountID       string `json:"chatgpt_account_id"`
+	AccountLabel           string `json:"account_label"`
+	ShortRemainingPercent  *int64 `json:"short_remaining_percent"`
+	WeeklyRemainingPercent *int64 `json:"weekly_remaining_percent"`
+	ShortResetsAt          string `json:"short_resets_at"`
+	WeeklyResetsAt         string `json:"weekly_resets_at"`
 }
 
 type wait struct {
@@ -171,6 +176,11 @@ func noRedirect(*http.Request, []*http.Request) error { return http.ErrUseLastRe
 func (a *Adapter) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.health)
+	// Codex treats 426 as an immediate HTTP fallback, unlike a retried 405.
+	mux.HandleFunc("GET /v1/responses", func(w http.ResponseWriter, r *http.Request) {
+		a.logf("request transport result=http_fallback")
+		http.Error(w, "Use HTTP POST for Responses", http.StatusUpgradeRequired)
+	})
 	mux.HandleFunc("POST /v1/responses", a.responses)
 	mux.HandleFunc("POST /v1/responses/compact", a.responses)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -213,6 +223,7 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.logf("request received path=%s", r.URL.Path)
+	body = prepareNotice(body)
 	turnID := randomID()
 	request := routeRequest{SessionID: a.sessionID, TurnID: turnID, PreferredAccountID: a.preference()}
 	attempts := map[string]int{}
@@ -260,6 +271,11 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 		kind := failureKind(response.StatusCode)
 		if kind == "" {
 			a.setPreference(selected.AccountID)
+			if r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK {
+				a.copyNoticeResponse(w, response, *selected)
+				return
+			}
+			a.logf("request notice path=%s result=skipped", r.URL.Path)
 			copyResponse(w, response)
 			return
 		}

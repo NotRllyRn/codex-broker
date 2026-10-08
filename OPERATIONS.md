@@ -35,7 +35,7 @@ Each account has one mutable encrypted `ACTIVE` credential. Every authenticated 
 
 An optional `EXPORT` is an immutable manual snapshot. Normal usage, routing, and reauthentication never replace it. Do not distribute one export to multiple independent refresh-token writers.
 
-A fixed minimal ephemeral turn keeps each verified account's active short window moving. When a weekly window expires, the account is held until its rolling `7 days / eligible accounts` release slot; ordinary routing releases the oldest held account early when no in-cycle account remains. Usage reads and credential maintenance continue while held. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
+A fixed minimal ephemeral turn starts each account's weekly cycle at its rolling `7 days / eligible accounts` release slot (24 hours for seven accounts, 21 hours for eight). Pulses run one account at a time; short-window resets do not trigger extra pulses. When a weekly window expires, the account is held until its next slot. Routing waits when only held accounts remain, preserving the stagger. Existing clustered windows spread out as they expire; externally using a held account can delay its slot until that upstream weekly window expires. Usage reads and credential maintenance continue while held. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
 
 The regular usage poll also reads the authenticated Codex profile summary from ChatGPT. The latest successful response is cached per account for the dashboard; a failed profile read marks that cache stale but retains its last good values and does not invalidate otherwise-successful rate-limit evidence.
 
@@ -51,7 +51,7 @@ Copy the secret once; only its hash and prefix are stored. Revoke unused or expo
 
 ## Routing and exhaustion
 
-A client calls `POST /api/v1/route` once per user turn. The broker skips the reported failed account and ranks in-cycle accounts by earliest weekly reset, then earliest short reset, preferred-account affinity, and stable creation order. Held accounts are excluded while in-cycle capacity remains. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
+A client calls `POST /api/v1/route` once per user turn. The broker skips the reported failed account and ranks in-cycle accounts by earliest weekly reset, then earliest short reset, preferred-account affinity, and stable creation order. Held accounts are excluded until their scheduled cycle pulse succeeds. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
 
 When all eligible accounts are exhausted, the response includes the earliest authoritative reset plus configured padding and an integer `Retry-After`. Unknown reset evidence fails explicitly rather than fabricating a wait.
 

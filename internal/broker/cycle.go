@@ -48,11 +48,6 @@ func weeklyStart(member cycleMember, now int64) (int64, bool) {
 	return started, true
 }
 
-func pulseRetryMS(service *Service) int64 {
-	seconds := max(service.Config.WindowPulseRetrySeconds, service.Config.UsagePollSeconds*2, 60)
-	return int64(seconds) * 1000
-}
-
 func loadCycleMembers(ctx context.Context, db store.Executor) ([]cycleMember, error) {
 	rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.created_at_ms,u.weekly_used_percent_raw,u.weekly_resets_at_s,u.weekly_duration_minutes,COALESCE(p.cycle_state,''),p.weekly_started_at_ms,EXISTS(SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.kind='window.pulse' AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`)
 	if err != nil {
@@ -64,6 +59,9 @@ func loadCycleMembers(ctx context.Context, db store.Executor) ([]cycleMember, er
 		var item cycleMember
 		if err := rows.Scan(&item.id, &item.createdAtMS, &item.weeklyUsed, &item.weeklyResetS, &item.weeklyDurationMinutes, &item.state, &item.weeklyStartedAtMS, &item.hasActivePulseOperation); err != nil {
 			return nil, err
+		}
+		if item.state == "IN_CYCLE" && item.weeklyStartedAtMS.Valid && item.weeklyResetS.Valid && item.weeklyResetS.Int64*1000 > item.weeklyStartedAtMS.Int64 {
+			item.weeklyStartedAtMS.Int64 = min(item.weeklyStartedAtMS.Int64, item.weeklyResetS.Int64*1000-weeklyCycleMS)
 		}
 		result = append(result, item)
 	}
@@ -85,14 +83,14 @@ func (s *Service) reconcileCycle(ctx context.Context, now int64) error {
 			state := member.state
 			switch state {
 			case "HELD":
-				member.weeklyStartedAtMS = sql.NullInt64{}
+				// Preserve the previous cycle start so overdue accounts keep their order.
 			case "RELEASING":
 				if !member.hasActivePulseOperation {
-					state, member.weeklyStartedAtMS = "HELD", sql.NullInt64{}
+					state = "HELD"
 				}
 			case "IN_CYCLE":
 				if member.weeklyStartedAtMS.Valid && member.weeklyStartedAtMS.Int64+weeklyCycleMS <= now {
-					state, member.weeklyStartedAtMS = "HELD", sql.NullInt64{}
+					state = "HELD"
 				} else if !member.weeklyStartedAtMS.Valid {
 					started, active := weeklyStart(*member, now)
 					if !active || !member.weeklyUsed.Valid || member.weeklyUsed.Int64 <= 0 {
@@ -106,7 +104,7 @@ func (s *Service) reconcileCycle(ctx context.Context, now int64) error {
 				if active && member.weeklyUsed.Valid && member.weeklyUsed.Int64 > 0 {
 					state, member.weeklyStartedAtMS = "IN_CYCLE", sql.NullInt64{Int64: started, Valid: true}
 				} else {
-					state, member.weeklyStartedAtMS = "HELD", sql.NullInt64{}
+					state = "HELD"
 				}
 			}
 			member.state = state
@@ -118,11 +116,10 @@ func (s *Service) reconcileCycle(ctx context.Context, now int64) error {
 			}
 		}
 		var last sql.NullInt64
-		var previousCount int
-		if err := db.QueryRowContext(ctx, "SELECT last_release_at_ms,member_count FROM weekly_cycle_state WHERE singleton_id=1").Scan(&last, &previousCount); err != nil {
+		if err := db.QueryRowContext(ctx, "SELECT last_release_at_ms FROM weekly_cycle_state WHERE singleton_id=1").Scan(&last); err != nil {
 			return err
 		}
-		if latestStart.Valid && (previousCount != len(members) || !last.Valid || latestStart.Int64 > last.Int64) {
+		if latestStart.Valid && (!last.Valid || latestStart.Int64 > last.Int64) {
 			last = latestStart
 		}
 		if !last.Valid && len(members) > 0 {
@@ -150,17 +147,21 @@ func buildCyclePlan(members []cycleMember, lastRelease sql.NullInt64, now int64)
 	}
 	ready := make([]readyMember, 0, len(members))
 	for _, member := range members {
-		available := now
-		if member.state == "IN_CYCLE" {
-			if member.weeklyStartedAtMS.Valid && member.weeklyStartedAtMS.Int64+weeklyCycleMS > now {
-				available = member.weeklyStartedAtMS.Int64 + weeklyCycleMS
-			} else if member.weeklyResetS.Valid && member.weeklyResetS.Int64*1000 > now {
-				available = member.weeklyResetS.Int64 * 1000
-			}
+		available := member.createdAtMS
+		if member.weeklyStartedAtMS.Valid {
+			available = member.weeklyStartedAtMS.Int64 + weeklyCycleMS
+		} else if member.state == "IN_CYCLE" && member.weeklyResetS.Valid {
+			available = member.weeklyResetS.Int64 * 1000
+		}
+		if member.weeklyResetS.Valid && (member.weeklyStartedAtMS.Valid || member.weeklyUsed.Valid && member.weeklyUsed.Int64 > 0) {
+			available = max(available, member.weeklyResetS.Int64*1000)
 		}
 		ready = append(ready, readyMember{member, available})
 	}
 	sort.Slice(ready, func(i, j int) bool {
+		if (ready[i].state == "RELEASING") != (ready[j].state == "RELEASING") {
+			return ready[i].state == "RELEASING"
+		}
 		if ready[i].readyAtMS != ready[j].readyAtMS {
 			return ready[i].readyAtMS < ready[j].readyAtMS
 		}
@@ -186,11 +187,18 @@ func (s *Service) cyclePlan(ctx context.Context, now int64) ([]cyclePlanItem, er
 	if !s.Config.WindowPulseEnabled {
 		return nil, nil
 	}
-	members, err := loadCycleMembers(ctx, s.Store.DB)
+	return cyclePlan(ctx, s.Store.DB, now)
+}
+
+func cyclePlan(ctx context.Context, db store.Executor, now int64) ([]cyclePlanItem, error) {
+	members, err := loadCycleMembers(ctx, db)
 	if err != nil {
 		return nil, err
 	}
 	for index := range members {
+		if members[index].state == "IN_CYCLE" && members[index].weeklyStartedAtMS.Valid && members[index].weeklyStartedAtMS.Int64+weeklyCycleMS <= now {
+			members[index].state = "HELD"
+		}
 		if members[index].state == "" {
 			members[index].state = "HELD"
 			if started, active := weeklyStart(members[index], now); active && members[index].weeklyUsed.Valid && members[index].weeklyUsed.Int64 > 0 {
@@ -199,33 +207,8 @@ func (s *Service) cyclePlan(ctx context.Context, now int64) ([]cyclePlanItem, er
 		}
 	}
 	var last sql.NullInt64
-	if err := s.Store.DB.QueryRowContext(ctx, "SELECT last_release_at_ms FROM weekly_cycle_state WHERE singleton_id=1").Scan(&last); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT last_release_at_ms FROM weekly_cycle_state WHERE singleton_id=1").Scan(&last); err != nil {
 		return nil, err
 	}
 	return buildCyclePlan(members, last, now), nil
-}
-
-func (s *Service) releaseHeld(ctx context.Context, accountID string, now int64) (bool, error) {
-	if !s.Config.WindowPulseEnabled {
-		return false, nil
-	}
-	released := false
-	err := s.Store.Write(ctx, func(db store.Executor) error {
-		if _, err := db.ExecContext(ctx, "INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state) VALUES(?,0,'HELD') ON CONFLICT(account_id) DO NOTHING", accountID); err != nil {
-			return err
-		}
-		next := now + pulseRetryMS(s)
-		result, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='IN_CYCLE',weekly_started_at_ms=?,last_success_at_ms=?,next_pulse_at_ms=? WHERE account_id=? AND cycle_state='HELD'", now, now, next, accountID)
-		if err != nil {
-			return err
-		}
-		changed, err := result.RowsAffected()
-		if err != nil || changed == 0 {
-			return err
-		}
-		released = true
-		_, err = db.ExecContext(ctx, "UPDATE weekly_cycle_state SET last_release_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", now)
-		return err
-	})
-	return released, err
 }

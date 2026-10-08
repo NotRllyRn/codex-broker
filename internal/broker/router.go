@@ -18,6 +18,9 @@ type Router struct {
 
 func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (*RouteLease, *PoolWait, error) {
 	now := core.NowMS()
+	if err := r.Service.reconcileCycle(ctx, now); err != nil {
+		return nil, nil, err
+	}
 	accounts, err := r.accounts(ctx, keyID, now)
 	if err != nil {
 		return nil, nil, err
@@ -35,7 +38,7 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		if request.FailureKind == "quota" {
 			_, _ = r.Service.Refresh(ctx, failed.PublicID, "CLIENT_FAILURE")
 		}
-		if request.FailureKind == "auth" {
+		if request.FailureKind == "auth" && (!r.Service.Config.WindowPulseEnabled || failed.CycleState == "IN_CYCLE") {
 			if lease, error := r.Service.Lease(ctx, *failed, now, true); error == nil {
 				if err := r.markRouted(ctx, failed.ID, now); err != nil {
 					return nil, nil, err
@@ -72,25 +75,6 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 		usable = append(usable, account)
 	}
-	if len(usable) == 0 && len(held) > 0 {
-		sort.Slice(held, func(i, j int) bool {
-			if held[i].CreatedAtMS != held[j].CreatedAtMS {
-				return held[i].CreatedAtMS < held[j].CreatedAtMS
-			}
-			return held[i].ID < held[j].ID
-		})
-		selected := held[0]
-		released, err := r.Service.releaseHeld(ctx, selected.ID, now)
-		if err != nil {
-			return nil, nil, err
-		}
-		if released {
-			selected.CycleState = "IN_CYCLE"
-			usable = append(usable, selected)
-		} else {
-			releasing = true
-		}
-	}
 	if len(usable) > 0 {
 		sort.Slice(usable, func(i, j int) bool { return rankLess(usable[i], usable[j], request.PreferredAccountID, now) })
 		selected := usable[0]
@@ -108,6 +92,18 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		return nil, &PoolWait{now + 10_000, 10}, nil
 	}
 	retry := nextRetry(accounts, now)
+	if len(held) > 0 {
+		plan, err := r.Service.cyclePlan(ctx, now)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(plan) > 0 {
+			candidate := max(now+int64(r.Service.Config.WindowPulsePollSeconds)*1000, plan[0].releaseAtMS, now+1000)
+			if retry == 0 || candidate < retry {
+				retry = candidate
+			}
+		}
+	}
 	if retry == 0 {
 		return nil, nil, core.NewError("POOL_RESET_UNKNOWN", "No routable account has a reliable retry time", 503)
 	}

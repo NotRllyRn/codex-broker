@@ -59,6 +59,16 @@ turns. Confirm ChatGPT Voice uses its native call and WebSocket routes and that
 a voice-directed local Codex task reaches the adapter. Force pre-output `401`
 and `429` responses and verify refresh/failover, then revoke the client key and
 verify the next request fails before reaching OpenAI.
+Confirm the account/quota prefix appears at the start of the final answer
+outside the collapsed activity section, survives reopening the chat, names the
+successful account after failover, and does not appear on commentary, tool
+calls, or compaction. Verify this also works when upstream SSE is labeled
+`text/plain`, and the adapter logs `request notice result=injected`. Inspect
+subsequent Responses inputs to confirm the adapter strips its status prefix
+while preserving the model's answer before forwarding it upstream.
+Confirm the status uses `🔨 account · 5h quota reset · 7d quota reset`, and verify
+WebSocket attempts immediately fall back to HTTP without a 405/reconnection
+notice. Confirm a completed response does not subsequently log a stream failure.
 Confirm the LaunchAgent survives logout/login and that Keychain, adapter logs,
 and Codex state contain no leased access token or native ChatGPT bearer.
 

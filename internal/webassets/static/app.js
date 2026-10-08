@@ -22,12 +22,17 @@ themeButton?.addEventListener("click", () => {
 	updateThemeLabel();
 });
 
+for (const node of document.querySelectorAll("time[datetime]")) {
+	const date = new Date(node.dateTime);
+	if (!Number.isNaN(date.getTime())) node.textContent = date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+}
+
 const timestampPattern =
 	/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})|\b(?:\d{13}|\d{10})\b/g;
 const timestampNodes = [];
 const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
 while (walker.nextNode()) {
-	if (walker.currentNode.parentElement?.closest("script, style")) continue;
+	if (walker.currentNode.parentElement?.closest("script, style, time[datetime]")) continue;
 	timestampPattern.lastIndex = 0;
 	if (timestampPattern.test(walker.currentNode.data))
 		timestampNodes.push([walker.currentNode, walker.currentNode.data]);

@@ -86,6 +86,41 @@ before response headers reach the app; a partially streamed response is never
 replayed. Both normal Responses requests and Codex's remote-compaction requests
 use the selected broker account.
 
+The adapter prefixes the actual final answer with the selected account and
+remaining quota, for example:
+
+```text
+🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h
+```
+
+It uses the successful account after any pre-output failover. Unknown quota
+values and reset times appear as `—`. Each percentage is the remaining quota;
+the following duration is the time until that window resets. Commentary and
+tool calls do not add notices; the final
+answer after tool use does. Compaction and non-streaming responses pass through.
+The adapter removes its status prefix from subsequent model inputs while
+retaining the actual answer. This is part of the answer rather than T3 Code's
+warning banner; rendering in the ChatGPT macOS app requires the live gate below.
+
+Successful Responses bodies are checked for SSE events regardless of the
+request's input format or streaming flag, even when the backend labels them
+`text/plain`; validated streams are returned as `text/event-stream`. If an
+assistant message's phase is only supplied on completion, that message is held
+until completion to distinguish commentary from the final answer. Messages
+identified as final answers at their start stream immediately.
+
+Logs report `request notice result=injected`, `result=skipped`, or
+`result=failed` without account labels, quota values, prompts, or responses.
+
+The adapter answers WebSocket handshakes with HTTP `426`, which Codex treats as
+an immediate switch to HTTP/SSE. This avoids the five retries and `405 Method
+Not Allowed` notice. No additional ChatGPT configuration is needed. Existing
+reconnection notices remain in old turns; verify with a new turn after upgrading.
+The adapter stops reading at the terminal response event so normal client
+completion does not trigger a subsequent stream-read failure.
+
+Rerun the installer and restart ChatGPT to install this adapter change.
+
 Check the service and log with:
 
 ```bash
