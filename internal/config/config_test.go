@@ -2,6 +2,9 @@ package config
 
 import (
 	"net/netip"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -31,5 +34,32 @@ func TestLoadRejectsUnsafeProxyAndEnrollmentOrigin(t *testing.T) {
 	t.Setenv("WINDOWKEEPER_PUBLIC_ENROLLMENT_BROKER_URL", "http://broker.example")
 	if _, err := Load(); err == nil {
 		t.Fatal("HTTP enrollment origin was accepted")
+	}
+}
+
+func TestPublicEnrollmentKeyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "enrollment-key")
+	key := strings.Repeat("k", 32)
+	if err := os.WriteFile(path, []byte(key+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY_FILE", path)
+	t.Setenv("WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY", "ignored")
+	settings, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.PublicEnrollmentKey != key {
+		t.Fatal("credential file did not override the environment value")
+	}
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("unprotected enrollment key was accepted")
+	}
+	t.Setenv("WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY_FILE", path+"-missing")
+	if _, err := Load(); err == nil {
+		t.Fatal("missing enrollment key was accepted")
 	}
 }

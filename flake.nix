@@ -46,6 +46,13 @@
         };
       });
 
+      checks = forAllSystems (
+        system:
+        nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
+          module = import ./nix/checks.nix { inherit self nixpkgs system; };
+        }
+      );
+
       # NixOS module: `services.codex-broker`.
       nixosModules.default = self.nixosModules.codex-broker;
       nixosModules.codex-broker =
@@ -73,8 +80,8 @@
             WINDOWKEEPER_TRUSTED_PROXIES =
               if cfg.trustedProxies == [ ] then null else lib.concatStringsSep "," cfg.trustedProxies;
 
-            WINDOWKEEPER_TLS_CERT_FILE = cfg.tls.certFile;
-            WINDOWKEEPER_TLS_KEY_FILE = cfg.tls.keyFile;
+            WINDOWKEEPER_TLS_CERT_FILE = lib.mapNullable (_: "%d/tls-cert") cfg.tls.certFile;
+            WINDOWKEEPER_TLS_KEY_FILE = lib.mapNullable (_: "%d/tls-key") cfg.tls.keyFile;
 
             WINDOWKEEPER_COOKIE_SECURE = cfg.cookieSecure;
             WINDOWKEEPER_SESSION_IDLE_MINUTES = toString cfg.session.idleMinutes;
@@ -110,30 +117,40 @@
             WINDOWKEEPER_PUBLIC_ENROLLMENT_CA_CERT = cfg.publicEnrollment.caCert;
             WINDOWKEEPER_PUBLIC_ENROLLMENT_HOST = cfg.publicEnrollment.host;
             WINDOWKEEPER_PUBLIC_ENROLLMENT_PORT = toString cfg.publicEnrollment.port;
-            WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE = cfg.publicEnrollment.tls.certFile;
-            WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE = cfg.publicEnrollment.tls.keyFile;
+            WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE = lib.mapNullable (
+              _: "%d/public-tls-cert"
+            ) cfg.publicEnrollment.tls.certFile;
+            WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE = lib.mapNullable (
+              _: "%d/public-tls-key"
+            ) cfg.publicEnrollment.tls.keyFile;
             WINDOWKEEPER_PUBLIC_ENROLLMENT_MAX_ACTIVE = toString cfg.publicEnrollment.maxActive;
-            WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR =
-              toString cfg.publicEnrollment.attemptsPerHour;
+            WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR = toString cfg.publicEnrollment.attemptsPerHour;
           };
 
           # LoadCredential entries: systemd stages each file in $CREDENTIALS_DIRECTORY
           # as a 0400 root-readable-by-service regular file, which satisfies the
           # broker's ReadProtected() check (regular file, no group/other bits).
+          publicCredentials = lib.filter (x: x != null) [
+            (lib.mapNullable (f: "public-enrollment-key:${f}") cfg.publicEnrollment.keyFile)
+            (lib.mapNullable (f: "public-tls-cert:${f}") cfg.publicEnrollment.tls.certFile)
+            (lib.mapNullable (f: "public-tls-key:${f}") cfg.publicEnrollment.tls.keyFile)
+          ];
+
           credentials = lib.filter (x: x != null) [
             (lib.mapNullable (f: "vault-key:${f}") cfg.vaultKeyFile)
             (lib.mapNullable (f: "admin-password:${f}") cfg.adminPasswordFile)
             (lib.mapNullable (f: "public-enrollment-key:${f}") cfg.publicEnrollment.keyFile)
+            (lib.mapNullable (f: "tls-cert:${f}") cfg.tls.certFile)
+            (lib.mapNullable (f: "tls-key:${f}") cfg.tls.keyFile)
           ];
 
           # Point the broker's *_FILE variables at the staged credentials.
           credentialEnv = lib.filterAttrs (_: v: v != null) {
-            WINDOWKEEPER_VAULT_KEY_FILE =
-              lib.mapNullable (_: "%d/vault-key") cfg.vaultKeyFile;
-            WINDOWKEEPER_ADMIN_PASSWORD_FILE =
-              lib.mapNullable (_: "%d/admin-password") cfg.adminPasswordFile;
-            WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY_FILE =
-              lib.mapNullable (_: "%d/public-enrollment-key") cfg.publicEnrollment.keyFile;
+            WINDOWKEEPER_VAULT_KEY_FILE = lib.mapNullable (_: "%d/vault-key") cfg.vaultKeyFile;
+            WINDOWKEEPER_ADMIN_PASSWORD_FILE = lib.mapNullable (_: "%d/admin-password") cfg.adminPasswordFile;
+            WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY_FILE = lib.mapNullable (
+              _: "%d/public-enrollment-key"
+            ) cfg.publicEnrollment.keyFile;
           };
         in
         {
@@ -150,13 +167,13 @@
             user = lib.mkOption {
               type = lib.types.str;
               default = "codex-broker";
-              description = "User account under which the broker runs. Created if it does not exist.";
+              description = "User account under which the broker runs. Custom accounts must already exist.";
             };
 
             group = lib.mkOption {
               type = lib.types.str;
               default = "codex-broker";
-              description = "Group under which the broker runs. Created if it does not exist.";
+              description = "Group under which the broker runs. Custom accounts must already exist.";
             };
 
             dataDir = lib.mkOption {
@@ -164,7 +181,8 @@
               default = "/var/lib/codex-broker";
               description = ''
                 Persistent state directory (SQLite database, vault state, logs).
-                Managed as a systemd StateDirectory. Must differ from {option}`runtimeDir`.
+                Created with mode 0700; the default uses systemd StateDirectory.
+                Must differ from {option}`runtimeDir`.
                 Maps to WINDOWKEEPER_DATA_DIR.
               '';
             };
@@ -174,7 +192,8 @@
               default = "/run/codex-broker";
               description = ''
                 Ephemeral runtime directory for per-account codex process state.
-                Managed as a systemd RuntimeDirectory. Must differ from {option}`dataDir`.
+                Created with mode 0700; the default uses systemd RuntimeDirectory.
+                Must differ from {option}`dataDir`.
                 Maps to WINDOWKEEPER_RUNTIME_DIR.
               '';
             };
@@ -190,7 +209,7 @@
 
             host = lib.mkOption {
               type = lib.types.str;
-              default = "0.0.0.0";
+              default = "127.0.0.1";
               example = "127.0.0.1";
               description = ''
                 Bind address for the authenticated broker listener. Non-loopback
@@ -218,7 +237,10 @@
             trustedProxies = lib.mkOption {
               type = lib.types.listOf lib.types.str;
               default = [ ];
-              example = [ "10.0.0.0/8" "192.168.1.1" ];
+              example = [
+                "10.0.0.0/8"
+                "192.168.1.1"
+              ];
               description = ''
                 IP addresses or CIDR ranges of trusted reverse proxies whose
                 forwarded-for headers are honored. A `*` wildcard is rejected.
@@ -254,7 +276,7 @@
             adminPasswordFile = lib.mkOption {
               type = lib.types.nullOr lib.types.path;
               default = null;
-              example = "/run/secrets/codex-broker-admin-password";
+              example = lib.literalExpression ''"/run/secrets/admin-credential"'';
               description = ''
                 Path to a file containing the administrator password. On start the
                 broker bootstraps the admin account with this value if it is unset.
@@ -263,7 +285,11 @@
             };
 
             cookieSecure = lib.mkOption {
-              type = lib.types.enum [ "auto" "true" "false" ];
+              type = lib.types.enum [
+                "auto"
+                "true"
+                "false"
+              ];
               default = "auto";
               description = ''
                 Whether to set the Secure flag on session cookies. `auto` decides
@@ -286,7 +312,7 @@
 
             usage = {
               pollSeconds = lib.mkOption {
-                type = lib.types.ints.positive;
+                type = lib.types.ints.between 60 2147483647;
                 default = 300;
                 description = "Interval (>=60s) between usage-limit polls. Maps to WINDOWKEEPER_USAGE_POLL_SECONDS.";
               };
@@ -304,12 +330,12 @@
                 description = "Enable the background window-pulse worker. Maps to WINDOWKEEPER_WINDOW_PULSE_ENABLED.";
               };
               pollSeconds = lib.mkOption {
-                type = lib.types.ints.positive;
+                type = lib.types.ints.between 10 2147483647;
                 default = 60;
                 description = "Window-pulse poll interval (>=10s). Maps to WINDOWKEEPER_WINDOW_PULSE_POLL_SECONDS.";
               };
               retrySeconds = lib.mkOption {
-                type = lib.types.ints.positive;
+                type = lib.types.ints.between 60 2147483647;
                 default = 900;
                 description = "Window-pulse retry interval (>=60s). Maps to WINDOWKEEPER_WINDOW_PULSE_RETRY_SECONDS.";
               };
@@ -340,13 +366,25 @@
 
             browserOAuth = {
               mode = lib.mkOption {
-                type = lib.types.enum [ "disabled" "manual" "host-loopback" ];
+                type = lib.types.enum [
+                  "disabled"
+                  "manual"
+                  "host-loopback"
+                ];
                 default = "manual";
                 description = "Browser OAuth login mode. Maps to WINDOWKEEPER_BROWSER_OAUTH_MODE.";
               };
               callbackPorts = lib.mkOption {
-                type = lib.types.listOf (lib.types.enum [ 1455 1457 ]);
-                default = [ 1455 1457 ];
+                type = lib.types.listOf (
+                  lib.types.enum [
+                    1455
+                    1457
+                  ]
+                );
+                default = [
+                  1455
+                  1457
+                ];
                 description = ''
                   OAuth callback ports. Only the pinned compatibility values 1455
                   and 1457 are accepted. Maps to WINDOWKEEPER_BROWSER_OAUTH_CALLBACK_PORTS.
@@ -366,18 +404,20 @@
 
             codex = lib.mkOption {
               type = lib.types.package;
-              default = pkgs.codex;
-              defaultText = lib.literalExpression "pkgs.codex";
-              example = lib.literalExpression "pkgs.codex";
               description = ''
-                The managed `codex` package. Its `bin/codex` executable maps to
+                The managed `codex` package, pinned to version 0.145.0. Its `bin/codex` executable maps to
                 WINDOWKEEPER_CODEX_EXECUTABLE and its version maps to
                 WINDOWKEEPER_CODEX_VERSION.
               '';
             };
 
             logLevel = lib.mkOption {
-              type = lib.types.enum [ "DEBUG" "INFO" "WARN" "ERROR" ];
+              type = lib.types.enum [
+                "DEBUG"
+                "INFO"
+                "WARN"
+                "ERROR"
+              ];
               default = "INFO";
               description = "Log verbosity. Maps to WINDOWKEEPER_LOG_LEVEL.";
             };
@@ -455,6 +495,10 @@
           config = lib.mkIf cfg.enable {
             assertions = [
               {
+                assertion = cfg.codex.version == "0.145.0";
+                message = "services.codex-broker: codex must be pinned to the supported version 0.145.0.";
+              }
+              {
                 assertion = cfg.dataDir != cfg.runtimeDir;
                 message = "services.codex-broker: dataDir and runtimeDir must differ.";
               }
@@ -474,6 +518,15 @@
                 assertion = !cfg.publicEnrollment.enable || cfg.publicEnrollment.caCert != null;
                 message = "services.codex-broker: publicEnrollment.enable requires publicEnrollment.caCert.";
               }
+              {
+                assertion =
+                  !cfg.publicEnrollment.enable
+                  || cfg.publicEnrollment.host == "127.0.0.1"
+                  || cfg.publicEnrollment.host == "::1"
+                  || cfg.publicEnrollment.host == "localhost"
+                  || (cfg.publicEnrollment.tls.certFile != null && cfg.publicEnrollment.tls.keyFile != null);
+                message = "services.codex-broker: a non-loopback public host requires publicEnrollment.tls.certFile and keyFile.";
+              }
             ];
 
             users.users = lib.mkIf (cfg.user == "codex-broker") {
@@ -487,9 +540,17 @@
               codex-broker = { };
             };
 
+            systemd.tmpfiles.rules = [
+              "d ${cfg.dataDir} 0700 ${cfg.user} ${cfg.group} -"
+              "d ${cfg.runtimeDir} 0700 ${cfg.user} ${cfg.group} -"
+            ]
+            ++ lib.optional (cfg.logDir != null) "d ${cfg.logDir} 0700 ${cfg.user} ${cfg.group} -";
+
             networking.firewall = lib.mkIf cfg.openFirewall {
-              allowedTCPPorts =
-                [ cfg.port ] ++ lib.optional cfg.publicEnrollment.enable cfg.publicEnrollment.port;
+              allowedTCPPorts = [
+                cfg.port
+              ]
+              ++ lib.optional cfg.publicEnrollment.enable cfg.publicEnrollment.port;
             };
 
             systemd.services.codex-broker = {
@@ -510,6 +571,8 @@
                 # dataDir persists as StateDirectory; runtimeDir is ephemeral.
                 StateDirectory = lib.mkIf (cfg.dataDir == "/var/lib/codex-broker") "codex-broker";
                 RuntimeDirectory = lib.mkIf (cfg.runtimeDir == "/run/codex-broker") "codex-broker";
+                StateDirectoryMode = "0700";
+                RuntimeDirectoryMode = "0700";
                 RuntimeDirectoryPreserve = "yes";
 
                 LoadCredential = credentials;
@@ -527,9 +590,15 @@
                 RestrictRealtime = true;
                 RestrictSUIDSGID = true;
                 LockPersonality = true;
-                MemoryDenyWriteExecute = false; # Go runtime needs W^X exemptions.
-                SystemCallFilter = [ "@system-service" "~@privileged" ];
-                ReadWritePaths = [ cfg.dataDir cfg.runtimeDir ] ++ lib.optional (cfg.logDir != null) cfg.logDir;
+                SystemCallFilter = [
+                  "@system-service"
+                  "~@privileged"
+                ];
+                ReadWritePaths = [
+                  cfg.dataDir
+                  cfg.runtimeDir
+                ]
+                ++ lib.optional (cfg.logDir != null) cfg.logDir;
                 CapabilityBoundingSet = "";
                 AmbientCapabilities = "";
               };
@@ -538,23 +607,32 @@
             systemd.services.codex-broker-public = lib.mkIf cfg.publicEnrollment.enable {
               description = "Codex Broker public enrollment listener";
               wantedBy = [ "multi-user.target" ];
-              after = [ "codex-broker.service" "network-online.target" ];
+              after = [
+                "codex-broker.service"
+                "network-online.target"
+              ];
               wants = [ "network-online.target" ];
 
-              environment = settingsEnv // credentialEnv;
+              environment = lib.filterAttrs (name: _: lib.hasPrefix "WINDOWKEEPER_PUBLIC_ENROLLMENT_" name) (
+                settingsEnv // credentialEnv
+              );
 
               serviceConfig = {
                 ExecStart = "${lib.getExe cfg.package} public-serve";
-                User = cfg.user;
-                Group = cfg.group;
+                DynamicUser = true;
                 Restart = "on-failure";
                 RestartSec = "5s";
 
-                LoadCredential = credentials;
+                LoadCredential = publicCredentials;
 
                 NoNewPrivileges = true;
                 ProtectSystem = "strict";
                 ProtectHome = true;
+                InaccessiblePaths = [
+                  cfg.dataDir
+                  cfg.runtimeDir
+                ]
+                ++ lib.optional (cfg.logDir != null) cfg.logDir;
                 PrivateTmp = true;
                 PrivateDevices = true;
                 ProtectKernelTunables = true;
@@ -564,7 +642,10 @@
                 RestrictRealtime = true;
                 RestrictSUIDSGID = true;
                 LockPersonality = true;
-                SystemCallFilter = [ "@system-service" "~@privileged" ];
+                SystemCallFilter = [
+                  "@system-service"
+                  "~@privileged"
+                ];
                 CapabilityBoundingSet = "";
                 AmbientCapabilities = "";
               };
