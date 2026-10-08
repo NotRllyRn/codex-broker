@@ -5,8 +5,8 @@ shared pool, giving your apps access to higher usage limits without
 needing to manage each account separately.
 
 It owns each account's refresh token, tracks usage limits, and
-leases short-lived access tokens. The dashboard also caches per-account Codex
-profile activity and presents combined token, streak, task, skill, and account
+leases short-lived access tokens or proxies Responses requests. The dashboard
+also caches per-account Codex profile activity and presents combined token, streak, task, skill, and account
 share statistics without requiring a fresh upstream read after restart.
 
 ## Supported apps
@@ -16,10 +16,12 @@ share statistics without requiring a fresh upstream read after restart.
 | [Pi](https://github.com/badlogic/pi-mono) | Extension included in this repository | [Install the extension](#pi) |
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | Version-pinned maintained fork | [Run the installer](#hermes-agent) |
 | [T3 Code](https://github.com/pingdotgg/t3code) | [`codex-broker` fork branch](https://github.com/NotRllyRn/t3code/tree/codex-broker) | [Build and connect the fork](#t3-code) |
+| Responses-compatible apps | Built-in HTTP proxy | [Set the base URL and client key](#responses-compatible-apps) |
 | ChatGPT for macOS (Codex) | Loopback Go adapter included in this repository | [Install the adapter](#chatgpt-for-macos) |
 
-All integrations use in-memory access-only leases. They never store broker
-refresh tokens or a complete broker-managed `auth.json`.
+All integrations use existing revocable `cbk_` client keys. Leased access tokens
+stay in memory; proxy clients receive only Responses output. Apps never receive
+broker refresh tokens or a complete broker-managed `auth.json`.
 
 ## Start the broker
 
@@ -66,6 +68,39 @@ and receives only its enrollment key and TLS credentials.
 Build the broker with `nix build .`; validate the module with `nix flake check`.
 
 ## Connect an app
+
+### Responses-compatible apps
+
+For an app that supports a custom OpenAI Responses base URL, set:
+
+```text
+Base URL: https://192.168.1.20:8787/v1
+API key:  cbk_… (create a separate named key for each app in Settings)
+```
+
+Include the configured root path before `/v1`, if any. Trust the broker's CA on
+that client. The same broker listener supports `POST /v1/responses` and
+`POST /v1/responses/compact`, with streaming or non-streaming responses.
+
+For example, using a key held in `BROKER_CLIENT_KEY`:
+
+```bash
+curl --cacert deployment/certs/ca.crt https://192.168.1.20:8787/v1/responses \
+  -H "Authorization: Bearer $BROKER_CLIENT_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"YOUR_CODEX_MODEL","input":"Hello","store":false,"stream":true}'
+```
+
+The broker forwards request and response bodies unchanged. Your app must send
+requests supported by ChatGPT Codex; this endpoint does not translate Chat
+Completions or emulate unsupported Responses features. It exposes no models,
+embeddings, or WebSocket API. Keep the existing macOS adapter for ChatGPT's
+native integration and response notices; direct macOS routing is not yet verified.
+
+The dashboard shows active requests, recent client keys, request totals, and
+account failovers since restart. When the pool has a known retry time, requests
+return `429` with `Retry-After` immediately. No inference history is retained.
+The lease API remains available for Pi, Hermes, and T3 Code.
 
 ### Pi
 

@@ -47,13 +47,43 @@ Create a key in Settings or offline:
 codex-broker client-key create "Pi desktop"
 ```
 
-Copy the secret once; only its hash and prefix are stored. Revoke unused or exposed keys immediately. Revocation blocks future leases, not access tokens already issued upstream.
+Copy the secret once; only its hash and prefix are stored. Revoke unused or exposed keys immediately. Revocation blocks new leases and proxy requests. Existing streams and access tokens already issued upstream remain usable.
 
 ## Routing and exhaustion
 
 A client calls `POST /api/v1/route` once per user turn. The broker skips the reported failed account and ranks in-cycle accounts by earliest weekly reset, then earliest short reset, preferred-account affinity, and stable creation order. Held accounts are excluded until their scheduled cycle pulse succeeds. Disabled, deleted, unauthenticated, credential-less, or known-exhausted accounts are ineligible.
 
 When all eligible accounts are exhausted, the response includes the earliest authoritative reset plus configured padding and an integer `Retry-After`. Unknown reset evidence fails explicitly rather than fabricating a wait.
+
+## Responses proxy
+
+Use the broker's existing HTTPS listener, a named `cbk_` key as the API key, and
+`https://broker:8787/v1` as the base URL. Include any configured root path.
+`POST /v1/responses` and `POST /v1/responses/compact` call the router in process;
+no extra configuration, port, credential type, or migration is required.
+
+Bodies remain opaque and must match ChatGPT Codex's supported protocol. The
+proxy forwards non-streaming and streaming responses without injecting notices.
+Before delivering output, `401/403` reports an auth failure to the router for
+refresh or failover; a refreshed account is tried once more. A second auth failure
+is returned without further replay. `429` reports quota failure and selects
+another account. Other upstream errors pass through. Transport failures and
+redirects return `502`; a broken response stream is aborted without replay.
+
+Known pool exhaustion returns immediate `429`, `Retry-After`, and an OpenAI-style
+`pool_exhausted` error. Unknown retry evidence returns `503` rather than inventing
+a reset time. Respect `Retry-After` in clients. For `401`, check the client key;
+for upstream authentication errors, check account sign-in status. For `502`, check
+outbound connectivity and TLS trust. Disable response buffering in any reverse
+proxy to preserve streaming, and allow long-running Responses requests.
+
+The dashboard polls admin-session-protected `GET /api/internal/v1/proxy` every
+five seconds. Active counts open requests, recent clients are distinct keys used
+within five minutes (or still active), and failovers count account changes rather
+than same-account refreshes. Counters reset on restart. Names and key prefixes
+identify clients; prompts, responses, models, and token usage are not recorded.
+Keep the macOS adapter for its ChatGPT-specific behavior until direct routing and
+native Voice routes have been verified on a Mac.
 
 ## Incidents
 

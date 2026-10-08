@@ -18,6 +18,7 @@ type proxyClientStats struct {
 }
 
 type proxySnapshot struct {
+	Ready         bool               `json:"ready"`
 	Active        int                `json:"active"`
 	Requests      uint64             `json:"requests"`
 	Failovers     uint64             `json:"failovers"`
@@ -74,5 +75,7 @@ func (s *Server) internalProxy(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
 		return err
 	}
-	return writeJSON(w, 200, s.proxyStats.snapshot())
+	snapshot := s.proxyStats.snapshot()
+	snapshot.Ready = s.App.Ready
+	return writeJSON(w, 200, snapshot)
 }

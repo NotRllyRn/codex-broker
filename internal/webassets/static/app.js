@@ -1,7 +1,7 @@
 const root = document.documentElement;
 const rootPath = root.dataset.rootPath || "";
 const appPath = (path) => `${rootPath}${path}`;
-document.querySelectorAll('[href^="/"], [action^="/"]').forEach((element) => {
+document.querySelectorAll('a[href^="/"], form[action^="/"]').forEach((element) => {
 	const attribute = element.hasAttribute("href") ? "href" : "action";
 	element.setAttribute(attribute, appPath(element.getAttribute(attribute)));
 });
@@ -416,4 +416,34 @@ if (loginProgress) {
 		}
 	});
 	pollInteraction();
+}
+
+const proxyCard = document.querySelector("[data-proxy-card]");
+if (proxyCard) {
+	const status = proxyCard.querySelector("[data-proxy-status]");
+	async function updateProxy() {
+		try {
+			const response = await fetch(appPath("/api/internal/v1/proxy"), { cache: "no-store" });
+			if (!response.ok) throw new Error("Proxy counters unavailable");
+			const data = await response.json();
+			status.textContent = data.ready ? "Ready ●" : "Unavailable ○";
+			status.dataset.ready = String(data.ready);
+			proxyCard.querySelector("[data-proxy-totals]").textContent = `${data.active} active · ${data.recent_clients.length} recent clients · ${data.requests} requests · ${data.failovers} failovers`;
+			proxyCard.querySelector("[data-proxy-clients]").replaceChildren(...data.recent_clients.map((client) => {
+				const row = document.createElement("li");
+				const name = document.createElement("span");
+				name.textContent = `${client.name} · ${client.key_prefix}`;
+				const activity = document.createElement("span");
+				activity.textContent = `${client.active ? `● ${client.active} active` : "○ idle"} · ${Date.now() - Date.parse(client.last_seen) < 60_000 ? "just now" : relativeTime(client.last_seen)}`;
+				row.append(name, activity);
+				return row;
+			}));
+		} catch {
+			status.textContent = "Counters unavailable ○";
+			delete status.dataset.ready;
+		} finally {
+			setTimeout(updateProxy, 5_000);
+		}
+	}
+	updateProxy();
 }

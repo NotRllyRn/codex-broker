@@ -29,6 +29,7 @@ Required coverage includes:
 - persistent administrator sessions, CSRF, logout/password-change revocation, and Orbit-only UI;
 - non-loopback TLS startup guard and trusted/untrusted CA behavior;
 - Pi one-lease-per-user-turn behavior, bounded pre-output failover, wait/resume, and no secret persistence;
+- server Responses and compaction proxy: valid/revoked client keys, leased credentials, opaque request/response bodies, non-streaming and SSE flush, auth refresh/failover, quota failover, immediate exhaustion with exact retry time, bounded retries, cancellation, redirects, header stripping, request limits, no secret/inference logging, and admin-only per-key memory counters;
 - macOS adapter loopback-only binding, broker TLS, bounded bodies, streamed Responses forwarding, pre-output failover, cycle bounds, cancellation, and no secret persistence;
 - absence of legacy activation endpoints/tables and correct coalesced minimal window pulses with retry and credential checkpointing.
 

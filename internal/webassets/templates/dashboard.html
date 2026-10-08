@@ -10,8 +10,8 @@
     <p class="kicker">Credential broker</p>
     <h1>Codex accounts, one authority.</h1>
     <p class="intro-copy">
-      Monitor account capacity and issue short-lived in-memory leases to trusted
-      clients.
+      Monitor account capacity, lease access tokens, and proxy Responses for your
+      apps.
     </p>
   </div>
   <div class="intro-actions">
@@ -29,6 +29,15 @@
     <span>{{ counts.ACTION_REQUIRED + counts.ERROR }}</span
     ><small>Need action</small>
   </div>
+</section>
+<section class="proxy-card" data-proxy-card aria-labelledby="proxy-title">
+  <header>
+    <div><h2 id="proxy-title">OpenAI proxy</h2><code>{{ root_path }}/v1/responses</code></div>
+    <span data-proxy-status>Loading…</span>
+  </header>
+  <p class="proxy-totals" data-proxy-totals>Loading request counters…</p>
+  <ul data-proxy-clients aria-label="Recent proxy clients"></ul>
+  <small>Since broker restart · Recent clients: last five minutes</small>
 </section>
 <section class="profile-dashboard" data-profile-dashboard aria-labelledby="profile-dashboard-title">
   <header class="profile-heading">

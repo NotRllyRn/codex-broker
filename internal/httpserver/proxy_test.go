@@ -446,3 +446,38 @@ func TestProxyDoesNotLogInferenceOrCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestProxyRootPath(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	s.App.Config.RootPath = "/broker"
+	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != responsesproxy.UpstreamURL+"/responses/compact" {
+			t.Fatalf("upstream=%s", r.URL)
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("opaque"))}, nil
+	})
+	r := httptest.NewRequest("POST", "/broker/v1/responses/compact", strings.NewReader("{}"))
+	r.Header.Set("Authorization", "Bearer "+key.Token)
+	w := httptest.NewRecorder()
+	s.rootPath(s.middleware(s.mux)).ServeHTTP(w, r)
+	if w.Code != 200 || w.Body.String() != "opaque" {
+		t.Fatalf("response=%d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestProxyRecentClientsIncludeLongStreams(t *testing.T) {
+	stats := proxyStats{}
+	done := stats.begin(auth.ClientKey{ID: "active", Name: "Active"})
+	end := stats.begin(auth.ClientKey{ID: "idle", Name: "Idle"})
+	end()
+	stats.clients["active"].LastSeen = time.Now().Add(-10 * time.Minute)
+	stats.clients["idle"].LastSeen = time.Now().Add(-10 * time.Minute)
+	snapshot := stats.snapshot()
+	if len(snapshot.RecentClients) != 1 || snapshot.RecentClients[0].Name != "Active" || snapshot.Requests != 2 {
+		t.Fatalf("snapshot=%+v", snapshot)
+	}
+	done()
+	if len(stats.snapshot().RecentClients) != 0 {
+		t.Fatal("stale idle clients retained in snapshot")
+	}
+}
