@@ -75,6 +75,9 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 		usable = append(usable, account)
 	}
+	if len(usable) == 0 && len(held) > 0 && !releasing {
+    	usable = held
+	}
 	if len(usable) > 0 {
 		sort.Slice(usable, func(i, j int) bool { return rankLess(usable[i], usable[j], request.PreferredAccountID, now) })
 		selected := usable[0]
