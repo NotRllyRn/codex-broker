@@ -100,6 +100,12 @@ Completions or emulate unsupported Responses features. It exposes no models,
 embeddings, or WebSocket API. Keep the existing macOS adapter for ChatGPT's
 native integration and response notices; direct macOS routing is not yet verified.
 
+Routing prefers accounts already in rotation. When none has usable capacity,
+it activates an eligible held account immediately, bypassing the staggered
+schedule. Use **Pulse** on a dashboard account card or account page to send a
+small request and start that account's rotation manually. Pulse history records
+the result; depleted, disabled, or busy accounts cannot start a new pulse.
+
 The dashboard shows active requests, recent client keys, request totals, and
 account failovers since restart. When the pool has a known retry time, requests
 return `429` with `Retry-After` immediately. No inference history is retained.

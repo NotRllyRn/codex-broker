@@ -61,7 +61,7 @@ func TestAccountDetailRendersPulseHistory(t *testing.T) {
 	}
 	response := httptest.NewRecorder()
 	detail := map[string]any{
-		"account": map[string]any{"display_name": "Account", "labels": []string{}, "enabled": true},
+		"account": map[string]any{"display_name": "Account", "public_token": "public", "labels": []string{}, "enabled": true},
 		"usage":   map[string]any{},
 		"pulse_operations": []map[string]any{{
 			"operation_id": "pulse", "trigger": "CYCLE_RELEASE", "state": "SUCCEEDED", "created_at": "2026-09-30T13:54:47.000000Z", "progress_summary": "Usage windows kept active",
@@ -74,7 +74,7 @@ func TestAccountDetailRendersPulseHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := response.Body.String()
-	for _, expected := range []string{"Recent window pulses", "latest 100 pulses", "Cycle Release pulse", "Succeeded", "2026-09-30T13:54:47.000000Z", "Usage windows kept active"} {
+	for _, expected := range []string{`action="/accounts/public/pulse"`, ">Pulse</button>", "Recent window pulses", "latest 100 pulses", "Cycle Release pulse", "Succeeded", "2026-09-30T13:54:47.000000Z", "Usage windows kept active"} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("pulse history does not contain %q", expected)
 		}

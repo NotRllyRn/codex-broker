@@ -130,6 +130,7 @@ func (s *Server) routes() {
 	route("GET /accounts/{public}", s.accountDetail)
 	route("POST /accounts/{public}/auth-export", s.authExport)
 	route("POST /accounts/{public}/refresh", s.refresh)
+	route("POST /accounts/{public}/pulse", s.pulse)
 	route("POST /accounts/{public}/reauthenticate", s.reauthenticate)
 	route("POST /accounts/{public}/labels", s.labels)
 	route("POST /accounts/{public}/enabled", s.enabled)

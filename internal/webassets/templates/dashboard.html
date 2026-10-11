@@ -159,6 +159,10 @@
       </div>
       <footer>
         <a href="/accounts/{{ account.public_token }}">Inspect account</a>
+        <form method="post" action="/accounts/{{ account.public_token }}/pulse">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+          <button class="quiet-button" type="submit" title="Send a small request to start this account’s rotation now">Pulse</button>
+        </form>
       </footer>
     </article>
     {% endfor %}

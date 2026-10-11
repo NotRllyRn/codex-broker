@@ -505,6 +505,53 @@ func pointerAny(value *int64) any {
 	}
 	return *value
 }
+
+// Pulse starts an account's cycle immediately, bypassing the staggered schedule.
+func (s *Service) Pulse(ctx context.Context, public string) (string, error) {
+	account, err := s.account(ctx, public)
+	if err != nil {
+		return "", err
+	}
+	operation, created, now := "", false, core.NowMS()
+	err = s.Store.Write(ctx, func(db store.Executor) error {
+		err := db.QueryRowContext(ctx, "SELECT operation_id FROM operations WHERE account_id=? AND kind='window.pulse' AND state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED') LIMIT 1", account.ID).Scan(&operation)
+		if err == nil {
+			return nil
+		}
+		if err != sql.ErrNoRows {
+			return err
+		}
+		var eligible bool
+		err = db.QueryRowContext(ctx, `SELECT a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED',u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
+		if err != nil {
+			return err
+		}
+		if !eligible || exhausted(account, now) {
+			return core.NewError("WINDOW_PULSE_NOT_ELIGIBLE", "Pulse requires an enabled, verified account with available usage and no credential recovery", 409)
+		}
+		var busy bool
+		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM operations WHERE account_id=? AND state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))", account.ID).Scan(&busy); err != nil {
+			return err
+		}
+		if busy {
+			return core.NewError("ACCOUNT_BUSY", "Wait for the current account operation to finish", 409)
+		}
+		operation, created = core.NewID(), true
+		if _, err := db.ExecContext(ctx, "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation, account.ID, "window.pulse", "USER", "QUEUED", nil, nil, nil, nil, nil, now, nil, nil, nil, nil, 1); err != nil {
+			return err
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state) VALUES(?,?,'RELEASING') ON CONFLICT(account_id) DO UPDATE SET cycle_state='RELEASING',last_attempt_at_ms=excluded.last_attempt_at_ms,last_error_code=NULL`, account.ID, now)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if created && !s.runAsync(func() { s.runPulse(s.workerCtx, public, operation) }) {
+		_ = s.FailOperation(context.Background(), operation, "SERVICE_STOPPING", "Service is stopping")
+	}
+	return operation, nil
+}
+
 func (s *Service) QueuePulses(ctx context.Context) error {
 	now := core.NowMS()
 	if err := s.reconcileCycle(ctx, now); err != nil {

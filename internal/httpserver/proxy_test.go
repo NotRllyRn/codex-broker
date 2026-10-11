@@ -125,7 +125,20 @@ func TestProxyFakeAppServer(t *testing.T) {
 			writeProxyAuth(t, home, "refreshed")
 			result["account"] = map[string]string{"type": "chatgpt", "email": "test@example.com"}
 		}
+		switch request["method"] {
+		case "model/list":
+			result["data"] = []any{map[string]any{"model": "test-mini", "inputModalities": []string{"text"}, "supportedReasoningEfforts": []any{map[string]string{"reasoningEffort": "low"}}}}
+		case "thread/start":
+			result["thread"] = map[string]string{"id": "thread"}
+		case "turn/start":
+			result["turn"] = map[string]string{"id": "turn"}
+		case "account/rateLimits/read":
+			result["rateLimitsByLimitId"] = map[string]any{"codex": map[string]any{"primary": map[string]any{"usedPercent": 1, "windowDurationMins": 300, "resetsAt": time.Now().Add(5 * time.Hour).Unix()}, "secondary": map[string]any{"usedPercent": 1, "windowDurationMins": 10080, "resetsAt": time.Now().Add(7 * 24 * time.Hour).Unix()}}}
+		}
 		_ = encoder.Encode(map[string]any{"id": id, "result": result})
+		if request["method"] == "turn/start" {
+			_ = encoder.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"turn": map[string]string{"id": "turn", "status": "completed"}}})
+		}
 	}
 }
 
@@ -537,6 +550,86 @@ func TestProxyHeldAccountFallback(t *testing.T) {
 			}
 			if state != wantState {
 				t.Fatalf("fallback state=%s want=%s", state, wantState)
+			}
+		})
+	}
+}
+
+func TestManualPulseStartsRotation(t *testing.T) {
+	s, _ := proxyFixture(t, 1)
+	s.App.Service.Config.WindowPulseEnabled = true
+	now := time.Now().UnixMilli()
+	_, err := s.App.Store.DB.Exec("INSERT INTO admin_sessions VALUES(?,?,?,?,?,?,?,?,?)", auth.Digest("session"), auth.Digest("csrf"), now, now, now+3600000, now+3600000, nil, nil, auth.Digest("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An account need not have a pulse state yet; manual release creates it.
+	request := func(session, csrf string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/accounts/account0/pulse", nil)
+		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
+		r.Header.Set("X-CSRF-Token", csrf)
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		return w
+	}
+	for _, credentials := range [][2]string{{"", ""}, {"session", "wrong"}} {
+		if w := request(credentials[0], credentials[1]); w.Code != 401 && w.Code != 403 {
+			t.Fatalf("unprotected pulse: %d %s", w.Code, w.Body.String())
+		}
+	}
+	w := request("session", "csrf")
+	if w.Code != 303 || !strings.HasPrefix(w.Header().Get("Location"), "/operations/") {
+		t.Fatalf("pulse response: %d %s", w.Code, w.Body.String())
+	}
+	operation := strings.TrimPrefix(w.Header().Get("Location"), "/operations/")
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		var state, trigger string
+		if err := s.App.Store.DB.QueryRow("SELECT state,trigger FROM operations WHERE operation_id=?", operation).Scan(&state, &trigger); err != nil {
+			t.Fatal(err)
+		}
+		if state == "FAILED" {
+			value, _ := s.App.Service.Operation(context.Background(), operation)
+			t.Fatalf("pulse failed: %#v", value)
+		}
+		if state == "SUCCEEDED" {
+			var cycle string
+			var started, next, released int64
+			if err := s.App.Store.DB.QueryRow("SELECT cycle_state,weekly_started_at_ms,next_pulse_at_ms,last_release_at_ms FROM window_pulse_state CROSS JOIN weekly_cycle_state WHERE account_id='account0'").Scan(&cycle, &started, &next, &released); err != nil {
+				t.Fatal(err)
+			}
+			if cycle != "IN_CYCLE" || trigger != "USER" || started < now-1000 || next <= now || released < now {
+				t.Fatalf("cycle=%s trigger=%s start=%d next=%d released=%d", cycle, trigger, started, next, released)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("pulse did not finish")
+}
+
+func TestManualPulseEligibilityAndDeduplication(t *testing.T) {
+	for _, scenario := range []string{"disabled", "auth required", "worker busy", "depleted", "operation busy", "already pulsing"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, _ := proxyFixture(t, 1)
+			statement := map[string]string{
+				"disabled":        `UPDATE accounts SET enabled=0`,
+				"auth required":   `UPDATE account_state SET auth_state='AUTH_REQUIRED'`,
+				"worker busy":     `UPDATE account_state SET worker_state='CREDENTIAL_IN_USE'`,
+				"depleted":        `UPDATE usage_current SET short_used_percent_raw=100`,
+				"operation busy":  `INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('existing','account0','usage.refresh','USER','QUEUED',1,1)`,
+				"already pulsing": `INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('existing','account0','window.pulse','USER','RUNNING',1,1)`,
+			}[scenario]
+			if _, err := s.App.Store.DB.Exec(statement); err != nil {
+				t.Fatal(err)
+			}
+			operation, err := s.App.Service.Pulse(context.Background(), "account0")
+			if scenario == "already pulsing" {
+				if err != nil || operation != "existing" {
+					t.Fatalf("duplicate pulse: operation=%s err=%v", operation, err)
+				}
+			} else if err == nil || operation != "" {
+				t.Fatalf("ineligible pulse: operation=%s err=%v", operation, err)
 			}
 		})
 	}

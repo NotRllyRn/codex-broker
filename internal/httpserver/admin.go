@@ -133,6 +133,17 @@ func (s *Server) authExport(w http.ResponseWriter, r *http.Request) error {
 	_, err = w.Write(content)
 	return err
 }
+func (s *Server) pulse(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireForm(r); err != nil {
+		return err
+	}
+	operation, err := s.App.Service.Pulse(r.Context(), r.PathValue("public"))
+	if err != nil {
+		return err
+	}
+	s.redirect(w, r, "/operations/"+operation)
+	return nil
+}
 func (s *Server) refresh(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
 		return err
