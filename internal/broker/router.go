@@ -40,7 +40,7 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 		if request.FailureKind == "auth" && (!r.Service.Config.WindowPulseEnabled || failed.CycleState == "IN_CYCLE") {
 			if lease, error := r.Service.Lease(ctx, *failed, now, true); error == nil {
-				if err := r.markRouted(ctx, failed.ID, now); err != nil {
+				if err := r.markRouted(ctx, *failed, now); err != nil {
 					return nil, nil, err
 				}
 				result := routeLease(*failed, lease, now)
@@ -75,8 +75,8 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		}
 		usable = append(usable, account)
 	}
-	if len(usable) == 0 && len(held) > 0 && !releasing {
-    	usable = held
+	if len(usable) == 0 && len(held) > 0 {
+		usable = held
 	}
 	if len(usable) > 0 {
 		sort.Slice(usable, func(i, j int) bool { return rankLess(usable[i], usable[j], request.PreferredAccountID, now) })
@@ -85,7 +85,7 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := r.markRouted(ctx, selected.ID, now); err != nil {
+		if err := r.markRouted(ctx, selected, now); err != nil {
 			return nil, nil, err
 		}
 		result := routeLease(selected, lease, now)
@@ -95,18 +95,6 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		return nil, &PoolWait{now + 10_000, 10}, nil
 	}
 	retry := nextRetry(accounts, now)
-	if len(held) > 0 {
-		plan, err := r.Service.cyclePlan(ctx, now)
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(plan) > 0 {
-			candidate := max(now+int64(r.Service.Config.WindowPulsePollSeconds)*1000, plan[0].releaseAtMS, now+1000)
-			if retry == 0 || candidate < retry {
-				retry = candidate
-			}
-		}
-	}
 	if retry == 0 {
 		return nil, nil, core.NewError("POOL_RESET_UNKNOWN", "No routable account has a reliable retry time", 503)
 	}
@@ -115,9 +103,24 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 	return nil, &wait, nil
 }
 
-func (r Router) markRouted(ctx context.Context, accountID string, now int64) error {
+func (r Router) markRouted(ctx context.Context, account Account, now int64) error {
 	return r.Store.Write(ctx, func(db store.Executor) error {
-		_, err := db.ExecContext(ctx, "UPDATE account_state SET last_routed_at_ms=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, now, accountID)
+		if r.Service.Config.WindowPulseEnabled {
+			started, active := weeklyStart(cycleMember{weeklyResetS: account.WeeklyReset}, now)
+			if !active {
+				started = now
+			}
+			result, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='IN_CYCLE',weekly_started_at_ms=?,next_pulse_at_ms=?,last_error_code=NULL WHERE account_id=? AND cycle_state='HELD'", started, started+weeklyCycleMS, account.ID)
+			if err != nil {
+				return err
+			}
+			if changed, _ := result.RowsAffected(); changed > 0 {
+				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET last_release_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", now); err != nil {
+					return err
+				}
+			}
+		}
+		_, err := db.ExecContext(ctx, "UPDATE account_state SET last_routed_at_ms=?,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, now, account.ID)
 		return err
 	})
 }

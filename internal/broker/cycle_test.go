@@ -40,7 +40,7 @@ func TestCyclePlanSpacesClusteredAccounts(t *testing.T) {
 	}
 }
 
-func TestRouterWaitsForHeldAccount(t *testing.T) {
+func TestRouterActivatesHeldAccount(t *testing.T) {
 	ctx, root := context.Background(), t.TempDir()
 	database, err := store.Open(ctx, filepath.Join(root, "broker.db"))
 	if err != nil {
@@ -85,20 +85,19 @@ func TestRouterWaitsForHeldAccount(t *testing.T) {
 		t.Fatalf("initial cycle state = %#v, %v", accounts, err)
 	}
 	lease, wait, err := router.Route(ctx, "key", RouteRequest{})
-	if err != nil || wait == nil || lease != nil || wait.NextRetryAtMS <= now {
+	if err != nil || wait != nil || lease == nil || lease.AccountID != "public" {
 		t.Fatalf("route = %#v, %#v, %v", lease, wait, err)
 	}
-	lease, _, err = router.Route(ctx, "key", RouteRequest{FailedAccountID: "public", FailureKind: "auth"})
-	if err != nil || lease != nil {
-		t.Fatalf("auth retry bypassed hold: lease=%#v err=%v", lease, err)
+	if err := service.reconcileCycle(ctx, time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
 	}
 	var state string
 	var started, routed sql.NullInt64
 	if err := database.DB.QueryRowContext(ctx, "SELECT p.cycle_state,p.weekly_started_at_ms,s.last_routed_at_ms FROM window_pulse_state p JOIN account_state s USING(account_id) WHERE account_id='account'").Scan(&state, &started, &routed); err != nil {
 		t.Fatal(err)
 	}
-	if state != "HELD" || started.Valid || routed.Valid {
-		t.Fatalf("held account was routed: state=%s started=%v routed=%v", state, started, routed)
+	if state != "IN_CYCLE" || !started.Valid || !routed.Valid {
+		t.Fatalf("held account was not activated: state=%s started=%v routed=%v", state, started, routed)
 	}
 }
 

@@ -481,3 +481,63 @@ func TestProxyRecentClientsIncludeLongStreams(t *testing.T) {
 		t.Fatal("stale idle clients retained in snapshot")
 	}
 }
+
+func TestProxyHeldAccountFallback(t *testing.T) {
+	for _, scenario := range []string{"active", "short depleted", "weekly depleted", "excluded", "releasing", "all depleted"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, key := proxyFixture(t, 2)
+			s.App.Service.Config.WindowPulseEnabled = true
+			now := time.Now().UnixMilli()
+			_, err := s.App.Store.DB.Exec(`INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,weekly_started_at_ms) VALUES('account0',0,'IN_CYCLE',?),('account1',0,'HELD',NULL)`, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			statement := map[string]string{
+				"short depleted":  `UPDATE usage_current SET short_used_percent_raw=100 WHERE account_id='account0'`,
+				"weekly depleted": `UPDATE usage_current SET weekly_used_percent_raw=100 WHERE account_id='account0'`,
+				"excluded":        `INSERT INTO account_exclusions VALUES(?,'account0','quota',?,?)`,
+				"releasing":       `UPDATE window_pulse_state SET cycle_state='RELEASING' WHERE account_id='account0'; INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('pulse','account0','window.pulse','USER','QUEUED',1,1)`,
+				"all depleted":    `UPDATE usage_current SET weekly_used_percent_raw=100`,
+			}[scenario]
+			if statement != "" {
+				var args []any
+				if scenario == "excluded" {
+					args = []any{key.ID, now + 60000, now}
+				}
+				if _, err := s.App.Store.DB.Exec(statement, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			selected := ""
+			s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+				selected = r.Header.Get("ChatGPT-Account-ID")
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"output":[]}`))}, nil
+			})
+			w := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`)
+			if scenario == "all depleted" {
+				if w.Code != 503 || selected != "" {
+					t.Fatalf("depleted pool: status=%d selected=%s", w.Code, selected)
+				}
+				return
+			}
+			want := "account1"
+			if scenario == "active" {
+				want = "account0"
+			}
+			if w.Code != 200 || selected != want {
+				t.Fatalf("status=%d selected=%s want=%s body=%s", w.Code, selected, want, w.Body.String())
+			}
+			var state string
+			if err := s.App.Store.DB.QueryRow("SELECT cycle_state FROM window_pulse_state WHERE account_id='account1'").Scan(&state); err != nil {
+				t.Fatal(err)
+			}
+			wantState := "IN_CYCLE"
+			if scenario == "active" {
+				wantState = "HELD"
+			}
+			if state != wantState {
+				t.Fatalf("fallback state=%s want=%s", state, wantState)
+			}
+		})
+	}
+}
