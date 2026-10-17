@@ -13,10 +13,27 @@
       <section class="card" data-enrollment>
         <p class="kicker">Codex Broker</p>
         <h1>Connect your Codex account</h1>
-        <p class="notice">
-          Completing this sign-in grants this Codex Broker access
-          to use your Codex Usage. Only continue if you trust its operator.
-        </p>
+        <div class="privacy-notice">
+          <strong>Your chats stay private.</strong>
+          <p>
+            Connecting here does not give the operator access to your ChatGPT
+            conversations, memories, or Codex history.
+          </p>
+        </div>
+        <details class="learn-more">
+          <summary>What does connecting my account do?</summary>
+          <div>
+            <p>
+              Codex is OpenAI’s coding agent. It is included with ChatGPT Edu,
+              but each account has a limited usage allowance.
+            </p>
+            <p>
+              Connecting your account lets this Codex Broker use your available
+              Codex allowance for coding tasks, giving the operator more shared
+              capacity.
+            </p>
+          </div>
+        </details>
         {% if error %}
         <div class="error" role="alert">{{ error }}</div>
         {% else %}

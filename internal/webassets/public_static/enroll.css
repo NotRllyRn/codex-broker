@@ -65,11 +65,42 @@ h2 {
 p {
 	line-height: 1.6;
 }
-.notice {
-	margin: 1.5rem 0 2rem;
-	padding: 1rem;
-	border-left: 4px solid var(--accent);
-	background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+.privacy-notice {
+	margin: 1.5rem 0 0.75rem;
+	padding: 1rem 1.1rem;
+	border-left: 4px solid var(--good);
+	background: color-mix(in srgb, var(--good) 9%, var(--surface));
+}
+.privacy-notice strong {
+	color: var(--good);
+	font-size: 1.05rem;
+}
+.privacy-notice p {
+	margin: 0.25rem 0 0;
+}
+.learn-more {
+	margin: 0 0 2rem;
+	border: 1px solid var(--line);
+}
+.learn-more summary {
+	padding: 0.9rem 1rem;
+	color: var(--accent);
+	font-weight: 750;
+	cursor: pointer;
+	user-select: none;
+}
+.learn-more summary:hover {
+	background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.learn-more[open] summary {
+	border-bottom: 1px solid var(--line);
+}
+.learn-more > div {
+	padding: 0.2rem 1rem 0.35rem;
+	color: var(--muted);
+}
+.learn-more p {
+	margin: 0.75rem 0;
 }
 .steps {
 	margin: 2.5rem 0 0;
