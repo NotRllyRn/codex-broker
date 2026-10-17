@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/NotRllyRn/codex-broker/internal/config"
+	"github.com/flosch/pongo2/v6"
 )
 
 func TestEnrollmentHandleRoundTripAndValidation(t *testing.T) {
@@ -44,6 +45,40 @@ func TestClientIPUsesOnlyTrustedForwarding(t *testing.T) {
 	if got := server.clientIP(request); got != "10.17.60.10" {
 		t.Fatalf("invalid forwarded client IP = %q", got)
 	}
+}
+
+func TestEnrollmentThrottleUsesBrowserAndEnrollmentIdentity(t *testing.T) {
+	server := &Server{}
+	first := httptest.NewRequest(http.MethodPost, "/start", nil)
+	first.RemoteAddr = "192.0.2.1:1000"
+	second := httptest.NewRequest(http.MethodPost, "/start", nil)
+	second.RemoteAddr = "192.0.2.1:2000"
+	first.AddCookie(&http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString(make([]byte, 24))})
+	second.AddCookie(&http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString([]byte("abcdefghijklmnopqrstuvwx"))})
+	if server.throttleKey(first) == server.throttleKey(second) {
+		t.Fatal("browsers behind one address share a throttle key")
+	}
+	handleValue := strings.Repeat("a", 32)
+	first.AddCookie(&http.Cookie{Name: cookieName, Value: (Handle{handleValue, handleValue, handleValue, handleValue}).Encode()})
+	if got := server.throttleKey(first); got != "enrollment:"+handleValue {
+		t.Fatalf("status throttle key = %q", got)
+	}
+}
+
+func TestEnrollmentPageSetsClientCookie(t *testing.T) {
+	server := &Server{template: pongo2.Must(pongo2.FromString("ok"))}
+	response := httptest.NewRecorder()
+	server.page(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Name != clientCookieName || clientCookie(httptestRequestWithCookie(cookies[0])) == "" {
+		t.Fatalf("client cookie = %#v", cookies)
+	}
+}
+
+func httptestRequestWithCookie(cookie *http.Cookie) *http.Request {
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.AddCookie(cookie)
+	return request
 }
 
 func TestEnrollmentPageExplainsPrivacyAndUsage(t *testing.T) {

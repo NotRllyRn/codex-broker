@@ -25,7 +25,10 @@ import (
 	"github.com/flosch/pongo2/v6"
 )
 
-const cookieName = "cb_public_enrollment"
+const (
+	cookieName       = "cb_public_enrollment"
+	clientCookieName = "cb_public_client"
+)
 
 type Handle struct {
 	EnrollmentID     string `json:"enrollment_id"`
@@ -178,9 +181,36 @@ func (s *Server) call(ctx context.Context, path string, body any, result any) er
 	}
 	return json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(result)
 }
-func (s *Server) page(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+	if clientCookie(r) == "" {
+		token := make([]byte, 24)
+		_, _ = rand.Read(token)
+		http.SetCookie(w, &http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString(token), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: 86400})
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.template.ExecuteWriter(pongo2.Context{"error": nil}, w)
+}
+
+func clientCookie(r *http.Request) string {
+	cookie, err := r.Cookie(clientCookieName)
+	if err != nil {
+		return ""
+	}
+	value, err := base64.RawURLEncoding.DecodeString(cookie.Value)
+	if err != nil || len(value) != 24 {
+		return ""
+	}
+	return cookie.Value
+}
+
+func (s *Server) throttleKey(r *http.Request) string {
+	if handle := existing(r); handle != nil {
+		return "enrollment:" + handle.EnrollmentID
+	}
+	if client := clientCookie(r); client != "" {
+		return "client:" + client
+	}
+	return "address:" + s.clientIP(r)
 }
 func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -215,7 +245,7 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"state": "STARTING"})
 		return
 	}
-	if !s.start.allow(s.clientIP(r)) {
+	if !s.start.allow(s.throttleKey(r)) {
 		writeJSON(w, 429, map[string]any{"state": "FAILED"})
 		return
 	}
@@ -240,7 +270,7 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"state": "STARTING"})
 }
 func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
-	if !s.status.allow(s.clientIP(r)) {
+	if !s.status.allow(s.throttleKey(r)) {
 		writeJSON(w, 429, map[string]any{"state": "UNAVAILABLE"})
 		return
 	}
