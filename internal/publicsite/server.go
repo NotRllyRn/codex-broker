@@ -13,8 +13,10 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -180,12 +182,26 @@ func (s *Server) page(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = s.template.ExecuteWriter(pongo2.Context{"error": nil}, w)
 }
-func clientIP(r *http.Request) string {
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
+	if err != nil {
+		host = r.RemoteAddr
 	}
-	return r.RemoteAddr
+	remote, err := netip.ParseAddr(host)
+	if err == nil {
+		for _, prefix := range s.config.TrustedProxies {
+			if !prefix.Contains(remote) {
+				continue
+			}
+			forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0])
+			if address, err := netip.ParseAddr(forwarded); err == nil {
+				return address.String()
+			}
+			break
+		}
+		return remote.String()
+	}
+	return host
 }
 func existing(r *http.Request) *Handle {
 	cookie, err := r.Cookie(cookieName)
@@ -199,7 +215,7 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"state": "STARTING"})
 		return
 	}
-	if !s.start.allow(clientIP(r)) {
+	if !s.start.allow(s.clientIP(r)) {
 		writeJSON(w, 429, map[string]any{"state": "FAILED"})
 		return
 	}
@@ -224,7 +240,7 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"state": "STARTING"})
 }
 func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
-	if !s.status.allow(clientIP(r)) {
+	if !s.status.allow(s.clientIP(r)) {
 		writeJSON(w, 429, map[string]any{"state": "UNAVAILABLE"})
 		return
 	}

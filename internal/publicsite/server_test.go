@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 
@@ -23,6 +24,25 @@ func TestEnrollmentHandleRoundTripAndValidation(t *testing.T) {
 	trailing := base64.RawURLEncoding.EncodeToString([]byte(`{"enrollment_id":"abcdefghijklmnopqrstuvwxyz123456","login_attempt_id":"abcdefghijklmnopqrstuvwxyz123456","session_token":"abcdefghijklmnopqrstuvwxyz123456","interaction_nonce":"abcdefghijklmnopqrstuvwxyz123456"}{}`))
 	if decodeHandle(trailing) != nil {
 		t.Fatal("handle with trailing JSON was accepted")
+	}
+}
+
+func TestClientIPUsesOnlyTrustedForwarding(t *testing.T) {
+	server := &Server{config: config.Config{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("10.17.60.10/32")}}}
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.RemoteAddr = "10.17.60.10:1234"
+	request.Header.Set("X-Forwarded-For", "203.0.113.4, 10.17.60.10")
+	if got := server.clientIP(request); got != "203.0.113.4" {
+		t.Fatalf("trusted client IP = %q", got)
+	}
+	request.RemoteAddr = "10.17.60.11:1234"
+	if got := server.clientIP(request); got != "10.17.60.11" {
+		t.Fatalf("untrusted client IP = %q", got)
+	}
+	request.RemoteAddr = "10.17.60.10:1234"
+	request.Header.Set("X-Forwarded-For", "invalid")
+	if got := server.clientIP(request); got != "10.17.60.10" {
+		t.Fatalf("invalid forwarded client IP = %q", got)
 	}
 }
 
