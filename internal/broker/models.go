@@ -22,7 +22,7 @@ type AccountSummary struct {
 	ActiveOperation                                                                                 *string
 	CycleState                                                                                      string
 	CyclePosition, CycleSize                                                                        int
-	CycleReleaseMS                                                                                  *int64
+	CycleGapMS                                                                                      *int64
 }
 
 type Window struct {

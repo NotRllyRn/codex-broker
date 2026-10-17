@@ -710,10 +710,10 @@ func TestManualPulseStartsRotation(t *testing.T) {
 		if state == "SUCCEEDED" {
 			var cycle string
 			var started, next, released int64
-			if err := s.App.Store.DB.QueryRow("SELECT cycle_state,weekly_started_at_ms,next_pulse_at_ms,last_release_at_ms FROM window_pulse_state CROSS JOIN weekly_cycle_state WHERE account_id='account0'").Scan(&cycle, &started, &next, &released); err != nil {
+			if err := s.App.Store.DB.QueryRow("SELECT cycle_state,weekly_started_at_ms,next_pulse_at_ms,cadence_anchor_at_ms FROM window_pulse_state CROSS JOIN weekly_cycle_state WHERE account_id='account0'").Scan(&cycle, &started, &next, &released); err != nil {
 				t.Fatal(err)
 			}
-			if cycle != "IN_CYCLE" || trigger != "USER" || started < now-1000 || next <= now || released < now {
+			if cycle != "IN_CYCLE" || trigger != "USER" || started < now-1000 || next <= now || released != started {
 				t.Fatalf("cycle=%s trigger=%s start=%d next=%d released=%d", cycle, trigger, started, next, released)
 			}
 			return

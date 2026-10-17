@@ -19,23 +19,36 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 )
 
-func TestCyclePlanSpacesClusteredAccounts(t *testing.T) {
-	day := int64(24 * 60 * 60 * 1000)
-	members := []cycleMember{
-		{id: "polina", createdAtMS: 1, state: "IN_CYCLE", weeklyResetS: sql.NullInt64{Int64: 19 * 60 * 60, Valid: true}},
-		{id: "alejandro", createdAtMS: 2, state: "IN_CYCLE", weeklyResetS: sql.NullInt64{Int64: 4 * day / 1000, Valid: true}},
-		{id: "arina", createdAtMS: 3, state: "IN_CYCLE", weeklyResetS: sql.NullInt64{Int64: 4 * day / 1000, Valid: true}},
-		{id: "mina", createdAtMS: 4, state: "IN_CYCLE", weeklyResetS: sql.NullInt64{Int64: 4 * day / 1000, Valid: true}},
-		{id: "timothy", createdAtMS: 5, state: "IN_CYCLE", weeklyResetS: sql.NullInt64{Int64: 6 * day / 1000, Valid: true}},
+func TestCycleSnapshotOrdersActiveAccountsAndMeasuresGaps(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	plan := buildCyclePlan(members, sql.NullInt64{Int64: -day, Valid: true}, 0)
-	want := []int64{19 * 60 * 60 * 1000, 4 * day, 4*day + weeklyCycleMS/5, 4*day + 2*weeklyCycleMS/5, 4*day + 3*weeklyCycleMS/5}
-	if len(plan) != len(want) {
-		t.Fatalf("plan length = %d", len(plan))
+	defer database.Close()
+	spacing := weeklyCycleMS / 3
+	for index, id := range []string{"a", "b", "c"} {
+		started := int64(index) * spacing
+		if _, err := database.DB.ExecContext(ctx, "INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES(?,?,?,1,'ACTIVE',?,1)", id, id, id, index+1); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.DB.ExecContext(ctx, "INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES(?,'VERIFIED','STOPPED','HEALTHY','FRESH',1,1)", id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.DB.ExecContext(ctx, "INSERT INTO usage_current(account_id) VALUES(?)", id); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.DB.ExecContext(ctx, "INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,weekly_started_at_ms) VALUES(?,0,'IN_CYCLE',?)", id, started); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for index := range want {
-		if plan[index].releaseAtMS != want[index] || plan[index].position != index+1 || plan[index].size != 5 {
-			t.Fatalf("plan[%d] = %#v, want release %d", index, plan[index], want[index])
+	items, status, err := cycleSnapshot(ctx, database.DB)
+	if err != nil || status.MemberCount != 3 || status.ActiveCount != 3 || status.SpacingMS != spacing {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+	for index, item := range items {
+		if item.position != index+1 || item.size != 3 || item.gapMS == nil || *item.gapMS != spacing {
+			t.Fatalf("item[%d]=%+v", index, item)
 		}
 	}
 }
@@ -166,6 +179,61 @@ func TestCycleReconciliationDoesNotReactivateHeldAccountFromPassiveUsage(t *test
 	}
 }
 
+func TestCycleReconciliationConfirmsIdleAndDetectsExternalActivation(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	now := time.Now().Unix() * 1000
+	_, err = database.DB.ExecContext(ctx, `
+		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('account','public','Account',1,'ACTIVE',1,1);
+		INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES('account','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);`)
+	if err == nil {
+		_, err = database.DB.ExecContext(ctx, "INSERT INTO usage_current(account_id,short_used_percent_raw,weekly_used_percent_raw,weekly_duration_minutes,weekly_resets_at_s,complete_read_at_ms) VALUES('account',0,0,10080,?,?)", (now+weeklyCycleMS)/1000, now)
+	}
+	if err == nil {
+		_, err = database.DB.ExecContext(ctx, "INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,weekly_started_at_ms) VALUES('account',0,'IN_CYCLE',?)", now-time.Hour.Milliseconds())
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Store: database, Config: config.Config{WindowPulseEnabled: true}}
+	if err := service.reconcileCycle(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.reconcileCycle(ctx, now+1000); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	var observations int
+	if err := database.DB.QueryRowContext(ctx, "SELECT cycle_state,idle_observation_count FROM window_pulse_state WHERE account_id='account'").Scan(&state, &observations); err != nil || state != "IN_CYCLE" || observations != 1 {
+		t.Fatalf("same observation: state=%s observations=%d err=%v", state, observations, err)
+	}
+	second := now + 5*time.Minute.Milliseconds()
+	if _, err := database.DB.ExecContext(ctx, "UPDATE usage_current SET weekly_resets_at_s=?,complete_read_at_ms=? WHERE account_id='account'", (second+weeklyCycleMS)/1000, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.reconcileCycle(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.DB.QueryRowContext(ctx, "SELECT cycle_state,idle_observation_count FROM window_pulse_state WHERE account_id='account'").Scan(&state, &observations); err != nil || state != "HELD" || observations != 2 {
+		t.Fatalf("confirmed idle: state=%s observations=%d err=%v", state, observations, err)
+	}
+	externalStart := second - 2*time.Minute.Milliseconds()
+	if _, err := database.DB.ExecContext(ctx, "UPDATE usage_current SET short_used_percent_raw=1,weekly_resets_at_s=?,complete_read_at_ms=? WHERE account_id='account'", (externalStart+weeklyCycleMS)/1000, second+1000); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.reconcileCycle(ctx, second+1000); err != nil {
+		t.Fatal(err)
+	}
+	var started, anchor int64
+	if err := database.DB.QueryRowContext(ctx, "SELECT p.cycle_state,p.weekly_started_at_ms,c.cadence_anchor_at_ms FROM window_pulse_state p CROSS JOIN weekly_cycle_state c WHERE p.account_id='account'").Scan(&state, &started, &anchor); err != nil || state != "IN_CYCLE" || started != externalStart || anchor != externalStart {
+		t.Fatalf("external activation: state=%s start=%d anchor=%d err=%v", state, started, anchor, err)
+	}
+}
+
 func TestCycleReconciliationHoldsExpiredCycleDespiteRolledUsageWindow(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
@@ -248,15 +316,15 @@ func TestUsageCommitPreservesHoldAndCompletesCycleRelease(t *testing.T) {
 	if err := service.commitUsage(ctx, account, "pulse", raw, time.Second, "Usage windows kept active", &nextPulse, true); err != nil {
 		t.Fatal(err)
 	}
-	var lastRelease sql.NullInt64
+	var cadenceAnchor sql.NullInt64
 	if err := database.DB.QueryRowContext(ctx, "SELECT cycle_state,weekly_started_at_ms,next_pulse_at_ms FROM window_pulse_state WHERE account_id='account'").Scan(&state, &started, &next); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.DB.QueryRowContext(ctx, "SELECT last_release_at_ms FROM weekly_cycle_state WHERE singleton_id=1").Scan(&lastRelease); err != nil {
+	if err := database.DB.QueryRowContext(ctx, "SELECT cadence_anchor_at_ms FROM weekly_cycle_state WHERE singleton_id=1").Scan(&cadenceAnchor); err != nil {
 		t.Fatal(err)
 	}
-	if state != "IN_CYCLE" || !started.Valid || next.Int64 != nextPulse || !lastRelease.Valid || lastRelease.Int64 < started.Int64 || started.Int64 != reset*1000-weeklyCycleMS {
-		t.Fatalf("release state=%s started=%#v next=%#v last=%#v", state, started, next, lastRelease)
+	if state != "IN_CYCLE" || !started.Valid || next.Int64 != nextPulse || !cadenceAnchor.Valid || cadenceAnchor.Int64 != started.Int64 || started.Int64 != reset*1000-weeklyCycleMS {
+		t.Fatalf("release state=%s started=%#v next=%#v anchor=%#v", state, started, next, cadenceAnchor)
 	}
 }
 
@@ -276,6 +344,7 @@ func TestCyclePulsesStaySpacedAcrossWeeks(t *testing.T) {
 					"INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES(?,?,?,1,'ACTIVE',1,1)",
 					"INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES(?,'VERIFIED','STOPPED','HEALTHY','FRESH',1,1)",
 					"INSERT INTO usage_current(account_id,last_attempt_at_ms) VALUES(?,0)",
+					"INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,idle_observation_count) VALUES(?,0,'HELD',2)",
 				} {
 					args := []any{id}
 					if strings.HasPrefix(query, "INSERT INTO accounts(") {
@@ -288,15 +357,16 @@ func TestCyclePulsesStaySpacedAcrossWeeks(t *testing.T) {
 			}
 			interval := weeklyCycleMS / int64(count)
 			now := weeklyCycleMS * 10
-			for turn := 0; turn < count*3; turn++ {
+			seen := map[string]bool{}
+			for turn := 0; turn < count; turn++ {
 				if err := service.reconcileCycle(ctx, now); err != nil {
 					t.Fatal(err)
 				}
 				public, operation, err := service.claimCyclePulse(ctx, now)
-				want := fmt.Sprintf("account%d", turn%count)
-				if err != nil || public != want || operation == "" {
+				if err != nil || public == "" || operation == "" || seen[public] {
 					t.Fatalf("turn %d: public=%s operation=%s err=%v", turn, public, operation, err)
 				}
+				seen[public] = true
 				// Even after a long runtime, no second account may start concurrently.
 				if _, next, err := service.claimCyclePulse(ctx, now+interval); err != nil || next != "" {
 					t.Fatalf("concurrent pulse=%s err=%v", next, err)
@@ -304,7 +374,7 @@ func TestCyclePulsesStaySpacedAcrossWeeks(t *testing.T) {
 				for _, statement := range []string{
 					"UPDATE operations SET state='SUCCEEDED' WHERE account_id=?",
 					"UPDATE window_pulse_state SET cycle_state='IN_CYCLE',weekly_started_at_ms=?,last_success_at_ms=?,next_pulse_at_ms=? WHERE account_id=?",
-					"UPDATE weekly_cycle_state SET last_release_at_ms=? WHERE singleton_id=1",
+					"UPDATE weekly_cycle_state SET cadence_anchor_at_ms=? WHERE singleton_id=1",
 				} {
 					args := []any{public}
 					if strings.HasPrefix(statement, "UPDATE window_pulse_state") {
@@ -327,19 +397,6 @@ func TestCyclePulsesStaySpacedAcrossWeeks(t *testing.T) {
 	}
 }
 
-func TestCyclePlanPreservesOverdueOrder(t *testing.T) {
-	members := []cycleMember{
-		{id: "older", state: "HELD", createdAtMS: 1, weeklyStartedAtMS: sql.NullInt64{Int64: 2000, Valid: true}},
-		{id: "newer", state: "HELD", createdAtMS: 2, weeklyStartedAtMS: sql.NullInt64{Int64: 1000, Valid: true}},
-	}
-	for _, now := range []int64{weeklyCycleMS + 3000, weeklyCycleMS * 2} {
-		plan := buildCyclePlan(members, sql.NullInt64{}, now)
-		if plan[0].accountID != "newer" || plan[1].releaseAtMS-plan[0].releaseAtMS != weeklyCycleMS/2 {
-			t.Fatalf("plan=%+v", plan)
-		}
-	}
-}
-
 func TestCycleClaimsAreAtomic(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
@@ -357,6 +414,9 @@ func TestCycleClaimsAreAtomic(t *testing.T) {
 	service := &Service{Store: database, Config: config.Config{WindowPulseEnabled: true, WindowPulseRetrySeconds: 900}}
 	now := weeklyCycleMS * 10
 	if err := service.reconcileCycle(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB.ExecContext(ctx, "UPDATE window_pulse_state SET idle_observation_count=2"); err != nil {
 		t.Fatal(err)
 	}
 	var group sync.WaitGroup
@@ -394,7 +454,7 @@ func TestCycleReconciliationUsesUpstreamExpiry(t *testing.T) {
 		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','a','a',1,'ACTIVE',1,1);
 		INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES('a','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
 		INSERT INTO usage_current(account_id,weekly_resets_at_s) VALUES('a',604801);
-		INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,weekly_started_at_ms) VALUES('a',0,'IN_CYCLE',2000);`)
+		INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,weekly_started_at_ms) VALUES('a',0,'IN_CYCLE',1000);`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,14 +469,19 @@ func TestCycleReconciliationUsesUpstreamExpiry(t *testing.T) {
 	}
 }
 
-func TestCyclePlanWaitsForRolledZeroPercentWindow(t *testing.T) {
+func TestUsageCycleEvidenceDistinguishesRollingAndFixedWindows(t *testing.T) {
 	now := weeklyCycleMS * 10
-	members := []cycleMember{
-		{id: "rolled", state: "HELD", weeklyUsed: sql.NullInt64{Int64: 0, Valid: true}, weeklyStartedAtMS: sql.NullInt64{Int64: now - weeklyCycleMS, Valid: true}, weeklyResetS: sql.NullInt64{Int64: (now + weeklyCycleMS) / 1000, Valid: true}},
-		{id: "idle", state: "HELD", weeklyUsed: sql.NullInt64{Int64: 0, Valid: true}, weeklyResetS: sql.NullInt64{Int64: (now + weeklyCycleMS) / 1000, Valid: true}},
+	rolling := cycleMember{shortUsed: sql.NullInt64{Int64: 0, Valid: true}, weeklyUsed: sql.NullInt64{Int64: 0, Valid: true}, weeklyResetS: sql.NullInt64{Int64: (now + weeklyCycleMS) / 1000, Valid: true}, weeklyDurationMinutes: sql.NullInt64{Int64: weekMinutes, Valid: true}, usageReadAtMS: sql.NullInt64{Int64: now, Valid: true}}
+	if _, active, idle := usageCycleEvidence(rolling, now); active || !idle {
+		t.Fatalf("rolling evidence: active=%v rolling=%v", active, idle)
 	}
-	plan := buildCyclePlan(members, sql.NullInt64{}, now)
-	if plan[0].accountID != "idle" || plan[0].releaseAtMS != now || plan[1].releaseAtMS != now+weeklyCycleMS {
-		t.Fatalf("plan=%+v", plan)
+	fixed := rolling
+	fixed.weeklyResetS.Int64 -= 3600
+	if started, active, idle := usageCycleEvidence(fixed, now); !active || idle || started != now-3600*1000 {
+		t.Fatalf("fixed evidence: start=%d active=%v rolling=%v", started, active, idle)
+	}
+	rolling.shortUsed.Int64 = 1
+	if _, active, idle := usageCycleEvidence(rolling, now); !active || idle {
+		t.Fatalf("used evidence: active=%v rolling=%v", active, idle)
 	}
 }

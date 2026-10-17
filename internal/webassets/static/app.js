@@ -27,6 +27,20 @@ for (const node of document.querySelectorAll("time[datetime]")) {
 	if (!Number.isNaN(date.getTime())) node.textContent = date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 }
 
+const countdowns = document.querySelectorAll("[data-countdown]");
+function updateCountdowns() {
+	for (const node of countdowns) {
+		let seconds = Math.max(0, Math.ceil((Number(node.dataset.countdown) - Date.now()) / 1000));
+		if (!seconds) { node.textContent = "Due now"; continue; }
+		const days = Math.floor(seconds / 86400); seconds %= 86400;
+		const hours = Math.floor(seconds / 3600); seconds %= 3600;
+		const minutes = Math.floor(seconds / 60); seconds %= 60;
+		node.textContent = [days && `${days}d`, (days || hours) && `${hours}h`, `${minutes}m`, `${seconds}s`].filter(Boolean).join(" ");
+	}
+}
+updateCountdowns();
+if (countdowns.length) setInterval(updateCountdowns, 1000);
+
 const timestampPattern =
 	/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})|\b(?:\d{13}|\d{10})\b/g;
 const timestampNodes = [];

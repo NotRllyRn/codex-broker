@@ -737,20 +737,63 @@ textarea {
 	color: var(--muted);
 	margin: 0.35rem 0;
 }
-.cycle-schedule {
-	margin: auto 0;
-	padding: 1rem 0;
-}
-.cycle-schedule > div {
+.paired-usage {
 	display: grid;
-	gap: 0.5rem;
+	grid-template-columns: 1fr 1fr;
+	gap: 1.5rem;
+	margin: auto 0;
 }
-.cycle-schedule strong {
-	font: 500 1rem / 1.5 BrokerMono, monospace;
+.paired-usage > div {
+	display: grid;
+	gap: 0.25rem;
 }
-.cycle-schedule span {
+.paired-usage strong {
+	font: 500 clamp(2rem, 4vw, 3.5rem) / 1 BrokerMono, monospace;
+	letter-spacing: -0.07em;
+}
+.paired-usage span {
+	font-size: 0.72rem;
+	font-weight: 700;
+}
+.paired-usage small {
+	color: var(--muted);
+	font-size: 0.67rem;
+}
+.cycle-position {
+	display: flex;
+	justify-content: space-between;
+	gap: 1rem;
+	padding: 1rem 0;
+	font-size: 0.72rem;
+}
+.cycle-position strong {
+	font-family: BrokerMono, monospace;
+}
+.cycle-position span {
+	color: var(--muted);
+	text-align: right;
+}
+.cadence-strip {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	border: 1px solid var(--line);
+	margin-bottom: 2rem;
+}
+.cadence-strip > div {
+	display: grid;
+	gap: 0.35rem;
+	padding: 1rem 1.25rem;
+}
+.cadence-strip > div + div {
+	border-left: 1px solid var(--line);
+}
+.cadence-strip span,
+.cadence-strip time {
 	color: var(--muted);
 	font-size: 0.72rem;
+}
+.cadence-strip strong {
+	font: 600 1.1rem / 1.3 BrokerMono, monospace;
 }
 .orbit-account footer {
 	display: flex;
@@ -1293,6 +1336,13 @@ textarea {
 	}
 	.filter-bar label:first-child {
 		grid-column: 1 / 3;
+	}
+	.cadence-strip {
+		grid-template-columns: 1fr;
+	}
+	.cadence-strip > div + div {
+		border-left: 0;
+		border-top: 1px solid var(--line);
 	}
 	.orbit-accounts {
 		grid-template-columns: 1fr;

@@ -109,6 +109,19 @@
   <button class="quiet-button" type="submit">Apply filters</button>
 </form>
 
+{% if cycle_enabled %}
+<section class="cadence-strip" aria-label="Weekly release cadence">
+  <div><span>Intended spacing</span><strong>{{ cycle_spacing }}</strong></div>
+  <div>
+    <span>Next random pulse</span>
+    {% if cycle_next_at %}
+    <strong data-countdown="{{ cycle_next_ms }}">Calculating…</strong>
+    <time datetime="{{ cycle_next_at }}" title="{{ cycle_next_at }}">{{ cycle_next_at }}</time>
+    {% else %}<strong>Not scheduled</strong>{% endif %}
+  </div>
+</section>
+{% endif %}
+
 {% if not accounts %}
 <section class="empty-state">
   <p class="kicker">No matching accounts</p>
@@ -151,18 +164,33 @@
           >{{ account.cycle_label|default:account.overall_state|humanize|title }}</span
         >
       </header>
-      <div class="cycle-schedule">
+      <div class="paired-usage">
         <div>
-          <span>Next cycle pulse</span>
-          <strong>{% if account.cycle_state == "RELEASING" %}Pulsing now{% elif account.cycle_release %}<time datetime="{{ account.cycle_release }}" title="{{ account.cycle_release }}">{{ account.cycle_release }}</time>{% else %}Not scheduled{% endif %}</strong>
+          <strong>{{ account.short_percent|default_if_none:"?" }}%</strong>
+          <span>5h used</span>
+          <small>{% if account.short_reset %}<time datetime="{{ account.short_reset }}" title="{{ account.short_reset }}">{{ account.short_reset }}</time>{% else %}Reset unknown{% endif %}</small>
+        </div>
+        <div>
+          <strong>{{ account.weekly_percent|default_if_none:"?" }}%</strong>
+          <span>7d used</span>
+          <small>{% if account.weekly_reset %}<time datetime="{{ account.weekly_reset }}" title="{{ account.weekly_reset }}">{{ account.weekly_reset }}</time>{% else %}Reset unknown{% endif %}</small>
         </div>
       </div>
+      {% if cycle_enabled %}
+      <div class="cycle-position">
+        {% if account.cycle_state == "IN_CYCLE" %}
+        <strong>Rotation #{{ account.cycle_position }}</strong>
+        <span>{{ account.cycle_gap|default:"Unknown" }} from previous activation</span>
+        {% elif account.cycle_state == "RELEASING" %}
+        <strong>Pulsing now</strong><span>Waiting for confirmation</span>
+        {% else %}
+        <strong>Held</strong><span>Randomly eligible at the next release</span>
+        {% endif %}
+      </div>
+      {% endif %}
       <footer>
         <a href="/accounts/{{ account.public_token }}">Inspect account</a>
-        <form method="post" action="/accounts/{{ account.public_token }}/pulse">
-          <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-          <button class="quiet-button" type="submit" title="Send a small request to start this account’s rotation now">Pulse</button>
-        </form>
+        <span>{{ account.auth_state|humanize|title }}</span>
       </footer>
     </article>
     {% endfor %}

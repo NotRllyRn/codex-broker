@@ -276,12 +276,12 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	plan, err := s.cyclePlan(ctx, core.NowMS())
+	cycle, _, err := cycleSnapshot(ctx, s.Store.DB)
 	if err != nil {
 		return nil, err
 	}
-	byAccount := make(map[string]cyclePlanItem, len(plan))
-	for _, item := range plan {
+	byAccount := make(map[string]cycleViewItem, len(cycle))
+	for _, item := range cycle {
 		byAccount[item.accountID] = item
 	}
 	for index := range result {
@@ -289,9 +289,19 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 			result[index].CycleState = item.state
 			result[index].CyclePosition = item.position
 			result[index].CycleSize = item.size
-			result[index].CycleReleaseMS = &item.releaseAtMS
+			result[index].CycleGapMS = item.gapMS
 		}
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if (left.CycleState == "IN_CYCLE") != (right.CycleState == "IN_CYCLE") {
+			return left.CycleState == "IN_CYCLE"
+		}
+		if left.CyclePosition != right.CyclePosition {
+			return left.CyclePosition < right.CyclePosition
+		}
+		return strings.ToLower(left.DisplayName) < strings.ToLower(right.DisplayName)
+	})
 	return result, nil
 }
 

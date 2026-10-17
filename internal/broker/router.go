@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"math"
+	"math/rand/v2"
 	"sort"
 
 	"github.com/NotRllyRn/codex-broker/internal/core"
@@ -76,7 +77,7 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		usable = append(usable, account)
 	}
 	if len(usable) == 0 && len(held) > 0 {
-		usable = held
+		usable = []Account{held[rand.N(len(held))]}
 	}
 	if len(usable) > 0 {
 		sort.Slice(usable, func(i, j int) bool { return rankLess(usable[i], usable[j], request.PreferredAccountID, now) })
@@ -106,16 +107,13 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 func (r Router) markRouted(ctx context.Context, account Account, now int64) error {
 	return r.Store.Write(ctx, func(db store.Executor) error {
 		if r.Service.Config.WindowPulseEnabled {
-			started, active := weeklyStart(cycleMember{weeklyResetS: account.WeeklyReset}, now)
-			if !active {
-				started = now
-			}
-			result, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='IN_CYCLE',weekly_started_at_ms=?,next_pulse_at_ms=?,last_error_code=NULL WHERE account_id=? AND cycle_state='HELD'", started, started+weeklyCycleMS, account.ID)
+			started := now
+			result, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='IN_CYCLE',weekly_started_at_ms=?,next_pulse_at_ms=?,last_error_code=NULL,idle_observation_count=0,last_usage_observed_at_ms=(SELECT complete_read_at_ms FROM usage_current WHERE account_id=?) WHERE account_id=? AND cycle_state='HELD'", started, started+weeklyCycleMS, account.ID, account.ID)
 			if err != nil {
 				return err
 			}
 			if changed, _ := result.RowsAffected(); changed > 0 {
-				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET last_release_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", now); err != nil {
+				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET cadence_anchor_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", started); err != nil {
 					return err
 				}
 			}
