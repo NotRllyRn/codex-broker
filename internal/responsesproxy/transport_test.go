@@ -63,6 +63,21 @@ func TestCompressionIsOpaque(t *testing.T) {
 	}
 }
 
+func TestForwardPreservesMethod(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method=%s", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	response, err := Forward(NewClient(), httptest.NewRequest(http.MethodGet, "/v1/models", nil), upstream.URL, nil, "token", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+}
+
 func TestCopyResponseFlushesOpaqueSSE(t *testing.T) {
 	body := "data: {\"type\":\"response.output_text.delta\",\"delta\":\"unchanged\"}\n\n"
 	w := httptest.NewRecorder()

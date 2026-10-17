@@ -26,7 +26,7 @@ One hardened Docker-first Go process runs on a trusted Linux host. Same-network 
 - Device-code and managed browser login; manual token import is retired.
 - Authoritative short/weekly usage polling and stable preferred-account routing.
 - Exact pool-reset wait responses; no weighted routing, prediction, or reservation.
-- Opaque HTTP Responses and compaction proxy with bounded pre-output failover, cancellation, and memory-only request counters; no inference history, billing, or additional API surfaces.
+- Allowlisted Codex gateway for Responses, compaction, models, images, transcription, and thread goals, with bounded pre-output failover, compact account/quota notices, cancellation, and memory-only request counters; no inference history or billing.
 - Machine leases contain access token, upstream account ID, public broker account ID, and expiry—never refresh tokens.
 - SQLite with one owning process; AES-256-GCM vault envelopes; temporary plaintext runtime directories.
 - One Orbit dashboard, persistent administrator sessions, CSRF, incidents, webhooks, and sanitized logs.

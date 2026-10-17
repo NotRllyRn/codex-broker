@@ -12,8 +12,9 @@ import (
 	"time"
 )
 
-const UpstreamURL = "https://chatgpt.com/backend-api/codex"
-const MaxRequest = 32 << 20
+const BackendURL = "https://chatgpt.com/backend-api"
+const UpstreamURL = BackendURL + "/codex"
+const MaxRequest = 64 << 20
 
 func NewClient() *http.Client {
 	return &http.Client{
@@ -31,7 +32,7 @@ func NewClient() *http.Client {
 }
 
 func Forward(client *http.Client, source *http.Request, target string, body []byte, token, accountID string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(source.Context(), http.MethodPost, target, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(source.Context(), source.Method, target, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}

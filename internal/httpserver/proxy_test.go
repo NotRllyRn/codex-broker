@@ -150,6 +150,124 @@ func proxyRequest(server *Server, key, path, body string) *httptest.ResponseReco
 	return w
 }
 
+func proxyMethodRequest(server *Server, key, method, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+key)
+	w := httptest.NewRecorder()
+	server.middleware(server.mux).ServeHTTP(w, r)
+	return w
+}
+
+func TestProxyCodexRoutes(t *testing.T) {
+	tests := []struct {
+		method, path, upstream string
+	}{
+		{http.MethodGet, "/v1/models?client_version=1.2.3", responsesproxy.UpstreamURL + "/models?client_version=1.2.3"},
+		{http.MethodGet, "/models", responsesproxy.UpstreamURL + "/models"},
+		{http.MethodPost, "/v1/images/generations", responsesproxy.UpstreamURL + "/images/generations"},
+		{http.MethodPost, "/images/edits", responsesproxy.UpstreamURL + "/images/edits"},
+		{http.MethodPost, "/transcribe", responsesproxy.BackendURL + "/transcribe"},
+		{http.MethodGet, "/thread/goal/get?thread_id=test", responsesproxy.UpstreamURL + "/thread/goal/get?thread_id=test"},
+		{http.MethodPost, "/codex/thread/goal/set", responsesproxy.UpstreamURL + "/thread/goal/set"},
+	}
+	for _, test := range tests {
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			s, key := proxyFixture(t, 1)
+			s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+				body, _ := io.ReadAll(r.Body)
+				if r.Method != test.method || r.URL.String() != test.upstream || string(body) != map[bool]string{true: "payload"}[test.method == http.MethodPost] {
+					t.Errorf("request=%s %s body=%q", r.Method, r.URL, body)
+				}
+				if test.path == "/transcribe" && (r.Header.Get("Content-Type") != "multipart/form-data; boundary=fixture" || r.Header.Get("Content-Encoding") != "gzip") {
+					t.Errorf("transcription headers=%v", r.Header)
+				}
+				if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer header.") || r.Header.Get("ChatGPT-Account-ID") != "account0" {
+					t.Error("managed credentials missing")
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("opaque"))}, nil
+			})
+			body := ""
+			if test.method == http.MethodPost {
+				body = "payload"
+			}
+			r := httptest.NewRequest(test.method, test.path, strings.NewReader(body))
+			r.Header.Set("Authorization", "Bearer "+key.Token)
+			if test.path == "/transcribe" {
+				r.Header.Set("Content-Type", "multipart/form-data; boundary=fixture")
+				r.Header.Set("Content-Encoding", "gzip")
+			}
+			got := httptest.NewRecorder()
+			s.middleware(s.mux).ServeHTTP(got, r)
+			if got.Code != 200 || got.Body.String() != "opaque" {
+				t.Fatalf("response=%d %q", got.Code, got.Body.String())
+			}
+		})
+	}
+}
+
+func TestProxyResponsesStatusNotice(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	now := time.Now()
+	_, err := s.App.Store.DB.Exec(`UPDATE accounts SET display_name='Arina' WHERE account_id='account0'; UPDATE usage_current SET short_used_percent_raw=30,short_resets_at_s=?,weekly_used_percent_raw=5,weekly_resets_at_s=? WHERE account_id='account0'`, now.Add(4*time.Hour+36*time.Minute).Unix(), now.Add(89*time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "🔨 Previous") {
+			t.Error("replayed broker notice reached upstream")
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/plain"}}, Body: io.NopCloser(strings.NewReader(proxyStatusStream))}, nil
+	})
+	request := `{"model":"test","input":[{"role":"assistant","content":"🔨 Previous · 5h 1% 1m · 7d 2% 2m\n\nOld answer"},{"role":"user","content":"next"}]}`
+	got := proxyRequest(s, key.Token, "/v1/responses", request)
+	if got.Code != 200 || !strings.Contains(got.Body.String(), "🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h") || !strings.Contains(got.Body.String(), "Hello") {
+		t.Fatalf("response=%d %s", got.Code, got.Body.String())
+	}
+	if got.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("content-type=%s", got.Header().Get("Content-Type"))
+	}
+}
+
+const proxyStatusStream = "data: {\"type\":\"response.created\",\"response\":{\"output\":[]}}\n\n" +
+	"data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_answer\",\"type\":\"message\",\"role\":\"assistant\",\"phase\":\"final_answer\",\"content\":[]}}\n\n" +
+	"data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_answer\",\"content_index\":0,\"delta\":\"Hello\"}\n\n" +
+	"data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_answer\",\"type\":\"message\",\"role\":\"assistant\",\"phase\":\"final_answer\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}}\n\n" +
+	"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n"
+
+func TestProxyResponsesStatusShowsRetryAndFailover(t *testing.T) {
+	for _, test := range []struct {
+		status, accounts int
+		want             string
+	}{{http.StatusUnauthorized, 1, "↻ retry"}, {http.StatusTooManyRequests, 2, "↻ failover"}} {
+		t.Run(test.want, func(t *testing.T) {
+			s, key := proxyFixture(t, test.accounts)
+			calls := 0
+			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					return &http.Response{StatusCode: test.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("failure"))}, nil
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyStatusStream))}, nil
+			})
+			got := proxyRequest(s, key.Token, "/v1/responses", `{"model":"test","input":[]}`)
+			if got.Code != 200 || calls != 2 || !strings.Contains(got.Body.String(), " · "+test.want+"\\n\\n") {
+				t.Fatalf("response=%d calls=%d body=%s", got.Code, calls, got.Body.String())
+			}
+		})
+	}
+}
+
+func TestProxyResponsesWebSocketFallbackRequiresAuth(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	if got := proxyMethodRequest(s, "", http.MethodGet, "/v1/responses", ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated status=%d", got.Code)
+	}
+	if got := proxyMethodRequest(s, key.Token, http.MethodGet, "/v1/responses", ""); got.Code != http.StatusUpgradeRequired {
+		t.Fatalf("fallback status=%d", got.Code)
+	}
+}
+
 func TestProxyOpaqueBodiesAndCredentials(t *testing.T) {
 	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
 		t.Run(path, func(t *testing.T) {
@@ -354,13 +472,10 @@ func TestProxyAbortsBrokenStreamWithoutReplay(t *testing.T) {
 		calls++
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: &brokenProxyBody{}}, nil
 	})
-	defer func() {
-		if recover() != http.ErrAbortHandler || calls != 1 || s.proxyStats.snapshot().Active != 0 {
-			t.Fatal("broken stream not aborted cleanly")
-		}
-	}()
-	proxyRequest(s, key.Token, "/v1/responses", "{}")
-	t.Fatal("expected aborted stream")
+	got := proxyRequest(s, key.Token, "/v1/responses", "{}")
+	if got.Code != http.StatusBadGateway || calls != 1 || s.proxyStats.snapshot().Active != 0 {
+		t.Fatalf("response=%d calls=%d active=%d", got.Code, calls, s.proxyStats.snapshot().Active)
+	}
 }
 
 func TestProxyTelemetryIdentityAndAdminSession(t *testing.T) {

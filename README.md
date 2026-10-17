@@ -79,11 +79,13 @@ API key:  cbk_… (create a separate named key for each app in Settings)
 ```
 
 Include the configured root path before `/v1`, if any. Trust the broker's CA on
-that client. The same broker listener supports `POST /v1/responses` and
-`POST /v1/responses/compact`, forwarding bodies and upstream errors unchanged.
-Production checks on 2026-10-08 confirmed that ChatGPT Codex requires
-`stream:true` and currently returns `404` for standalone compaction. These
-endpoints do not provide the full OpenAI API feature set.
+that client. The same listener supports Codex Responses and compaction, model
+discovery, image generation and edits, dictation transcription, and thread-goal
+reads and writes. Requests use broker-selected managed accounts; multipart
+transcription bodies and query strings are preserved. Production checks on
+2026-10-08 confirmed that ChatGPT Codex requires `stream:true` and currently
+returns `404` for standalone compaction. This is a narrow Codex gateway, not
+the full OpenAI API surface.
 
 For example, using a key held in `BROKER_CLIENT_KEY`:
 
@@ -94,11 +96,20 @@ curl --cacert deployment/certs/ca.crt https://192.168.1.20:8787/v1/responses \
   -d '{"model":"YOUR_CODEX_MODEL","input":"Hello","store":false,"stream":true}'
 ```
 
-The broker forwards request and response bodies unchanged. Your app must send
-requests supported by ChatGPT Codex; this endpoint does not translate Chat
-Completions or emulate unsupported Responses features. It exposes no models,
-embeddings, or WebSocket API. Keep the existing macOS adapter for ChatGPT's
-native integration and response notices; direct macOS routing is not yet verified.
+The broker preserves Codex Responses events and prefixes each streamed final
+answer with the selected account and cached remaining quota:
+
+```text
+🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h
+```
+
+Transparent account retries and failovers add `· ↻ retry` or `· ↻ failover`.
+The injected line is removed from replayed input before the next upstream turn.
+Compaction, models, images, transcription, thread goals, and non-streaming
+Responses pass through without a notice. Your app must send requests supported
+by ChatGPT Codex; the gateway does not translate Chat Completions or emulate
+unsupported features. WebSocket Responses handshakes receive `426` so Codex
+immediately falls back to HTTP streaming.
 
 Routing prefers accounts already in rotation. When none has usable capacity,
 it activates an eligible held account immediately, bypassing the staggered
