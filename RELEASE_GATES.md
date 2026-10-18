@@ -11,7 +11,7 @@ go test -race ./...
 go build ./cmd/codex-broker ./cmd/codex-broker-adapter
 GOOS=darwin GOARCH=amd64 go build -o /tmp/codex-broker-adapter-amd64 ./cmd/codex-broker-adapter
 GOOS=darwin GOARCH=arm64 go build -o /tmp/codex-broker-adapter-arm64 ./cmd/codex-broker-adapter
-sh -n scripts/bootstrap.sh scripts/install-hermes-integration.sh scripts/install-macos-adapter.sh
+sh -n scripts/bootstrap.sh scripts/bootstrap-relay.sh scripts/relay-entrypoint.sh scripts/install-hermes-integration.sh scripts/install-macos-adapter.sh
 node --check internal/webassets/static/app.js
 npm --prefix packages/pi-extension test
 npm --prefix packages/pi-extension run check
@@ -30,6 +30,11 @@ Required coverage includes:
 - non-loopback TLS startup guard and trusted/untrusted CA behavior;
 - Pi one-lease-per-user-turn behavior, bounded pre-output failover, wait/resume, and no secret persistence;
 - server Codex gateway: valid/revoked client keys; Responses status injection and replay stripping; Responses, compaction, models, images, transcription, and thread-goal path mapping; multipart preservation; leased credentials; non-streaming and SSE flush; auth refresh/failover; quota failover; immediate exhaustion with exact retry time; bounded retries; cancellation; redirects; header stripping; request limits; no secret/inference logging; and admin-only per-key memory counters;
+- relay gateway parity for every central route and transformation; encrypted
+  cache restart; concurrent routing; snapshot staleness and token expiry;
+  client-key revocation bounds; emergency-reserve exclusivity; idempotent
+  activation/failure/telemetry reconciliation; broker and relay restart; and
+  primary-host loss without prompt or response persistence;
 - macOS adapter loopback-only binding, broker TLS, bounded bodies, streamed Responses forwarding, pre-output failover, cycle bounds, cancellation, and no secret persistence;
 - absence of legacy activation endpoints/tables and correct coalesced minimal window pulses with retry and credential checkpointing.
 

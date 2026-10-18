@@ -8,6 +8,11 @@ Retain only sanitized operation IDs, timestamps, and error codes. Never attach `
 
 - Codex Broker is the sole owner of mutable refresh-token lineages.
 - Lease clients receive short-lived access tokens and ChatGPT account IDs only. Responses proxy clients receive inference output; their `cbk_` keys are replaced with leased credentials upstream.
+- Relay Edges receive active client-key hashes, short-lived access tokens,
+  account IDs, quota metadata, and one expiring reserve permit over verified
+  TLS. Their local snapshot and metadata-only event outbox are encrypted. They
+  never receive refresh tokens, the broker vault key, database, admin password,
+  enrollment key, prompt bodies, response bodies, or attachments.
 - Proxy inference traverses broker memory and is never logged or persisted. Responses bodies below 56 MiB pass through unchanged; larger authenticated bodies are bounded to 80 MiB, scrubbed to 50 MiB before routing, and never forwarded above 64 MiB. Other proxy request bodies remain bounded to 64 MiB. Upstream redirects, cookies, credential headers, and hop-by-hop headers are rejected or stripped. Request cancellation reaches upstream, and responses are never replayed after delivery begins.
 - Browser mutations require an authenticated administrator session and CSRF token.
 - Client keys are random, stored only as hashes, and accepted only by machine endpoints.
@@ -18,5 +23,7 @@ Retain only sanitized operation IDs, timestamps, and error codes. Never attach `
 - Downloadable exports are immutable external snapshots. Treat them as passwords and never give one rotating credential to multiple writers.
 
 Revoking a broker client key blocks new leases and proxy requests. It does not terminate an already authenticated proxy stream or claw back an access token already issued by OpenAI; that token can remain usable until expiry.
+During a primary outage, relay revocation visibility is bounded by the configured
+snapshot staleness deadline and cached access-token expiry.
 
 A compromised host, root user, malicious Codex binary, or trusted client that exfiltrates a lease is outside the boundary.

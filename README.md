@@ -43,6 +43,35 @@ and the client-key secret private. Never expose broker port `8787` to the
 Internet. See [Operations](OPERATIONS.md) for backups, upgrades, recovery, and
 hardening.
 
+## Optional high availability relay
+
+Run one Relay Edge on a different host to keep new Codex requests working
+during primary restarts and short outages. On the primary checkout:
+
+```bash
+scripts/bootstrap-relay.sh 192.168.1.21 https://192.168.1.20:8787
+docker compose up -d --build broker
+```
+
+The broker URL must be the primary's direct address, not the HA frontend.
+
+Copy only `deployment/relay/` to a checkout on the relay host. Do **not** copy
+the primary `.env`, database, vault key, administrator password, enrollment
+key, or CA private key. On the relay host:
+
+```bash
+docker compose -f compose.relay.yaml up --build -d
+curl --cacert deployment/relay/ca.crt https://192.168.1.21:8787/health/ready
+```
+
+Point an external load balancer at the primary as preferred and the relay as
+backup. The relay periodically receives all in-rotation short-lived leases,
+active client-key hashes, quota metadata, and one expiring emergency-reserve
+permit. Its disk cache and telemetry outbox are authenticated and encrypted
+with the dedicated relay key. Terminal token/timing telemetry collected during
+an outage is reconciled into the primary database after recovery; inference
+content is never cached. See [Relay Edge deployment](docs/relay-edge.md).
+
 ## NixOS
 
 Import `codex-broker.nixosModules.default` from this repository's flake, then
@@ -221,6 +250,7 @@ npm run check --prefix packages/pi-extension
 - [Operations](OPERATIONS.md) — health, backups, upgrades, and incident response
 - [ChatGPT macOS adapter](docs/integrations/chatgpt-macos.md) — local installation and Codex provider configuration
 - [Public enrollment](docs/public-enrollment.md) — isolated device-code enrollment
+- [Relay Edge deployment](docs/relay-edge.md) — active/passive high availability
 - [API contract](plan.md) — authenticated machine endpoints and routing responses
 - [Security policy](SECURITY.md) — vulnerability reporting and security boundary
 

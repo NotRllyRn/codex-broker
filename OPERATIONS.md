@@ -15,6 +15,11 @@ Loopback HTTP is permitted for development. A non-loopback bind without a TLS ce
 
 The optional Internet-facing enrollment site is a separate process and Compose service on port `8788`; never publish private broker port `8787` to the Internet. See [`docs/public-enrollment.md`](docs/public-enrollment.md).
 
+The optional active/passive Relay Edge uses `compose.relay.yaml` on a different
+host. Bootstrap it with `scripts/bootstrap-relay.sh`; transfer only the
+generated relay bundle, not primary secrets or data. See
+[`docs/relay-edge.md`](docs/relay-edge.md).
+
 ## Health
 
 - `/health/live`: process liveness.
@@ -85,7 +90,9 @@ The dashboard polls admin-session-protected `GET /api/internal/v1/proxy` every
 five seconds. Active counts open requests, recent clients are distinct keys used
 within five minutes (or still active), and failovers count account changes rather
 than same-account refreshes. Counters reset on restart. Names and key prefixes
-identify clients; prompts, responses, models, and token usage are not recorded.
+identify clients. Prompts and response content are not recorded; terminal
+response status, model, timing, and token-usage counters are retained for
+aggregate analysis.
 Keep the macOS adapter for its ChatGPT-specific behavior until direct routing and
 native Voice routes have been verified on a Mac.
 
@@ -116,5 +123,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migration 013 adds weekly release-cycle metadata. These migrations do not change existing credentials. Rollback to software expecting the old activation tables requires restoring the pre-v9 backup; rollback across migrations 012 or 013 requires restoring the corresponding automatic pre-migration backup.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change.
 6. Do not require account relogin for a normal upgrade.
