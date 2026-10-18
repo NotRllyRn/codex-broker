@@ -92,7 +92,12 @@ within five minutes (or still active), and failovers count account changes rathe
 than same-account refreshes. Counters reset on restart. Names and key prefixes
 identify clients. Prompts and response content are not recorded; terminal
 response status, model, timing, and token-usage counters are retained for
-aggregate analysis.
+aggregate analysis. Per-model token and active-time totals are updated when a
+response terminates. Response detail and quota snapshots roll off after seven
+days while lifetime totals remain. Quota-per-active-hour statistics only accept
+positive, same-window observations whose account measurement interval was not
+shared by another proxy response; zero-point and reset-spanning observations are
+excluded.
 Keep the macOS adapter for its ChatGPT-specific behavior until direct routing and
 native Voice routes have been verified on a Mac.
 
@@ -123,5 +128,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state; migration 018 adds per-model rolling and lifetime proxy usage. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change.
 6. Do not require account relogin for a normal upgrade.

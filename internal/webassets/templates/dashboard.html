@@ -39,6 +39,38 @@
     </div>
   </header>
   <p class="proxy-totals" data-proxy-totals>Loading request counters…</p>
+  <section class="proxy-usage" aria-labelledby="proxy-usage-title">
+    <header>
+      <div><h3 id="proxy-usage-title">Proxy usage</h3><small>Exact response tokens and active upstream time</small></div>
+      <label><span>Model</span><select data-proxy-model><option value="all">All models</option></select></label>
+    </header>
+    <div class="proxy-usage-grid">
+      <article data-proxy-period="rolling_7d">
+        <h3>Rolling seven days</h3>
+        <dl>
+          <div><dt>Active time</dt><dd data-usage="active_ms">—</dd></div>
+          <div><dt>Total tokens</dt><dd data-usage="total_tokens">—</dd></div>
+          <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
+          <div><dt>Tokens/hour</dt><dd data-usage="tokens_per_hour">—</dd></div>
+          <div><dt>5h usage/hour</dt><dd data-usage="short_usage_per_active_hour">—</dd></div>
+          <div><dt>Weekly usage/hour</dt><dd data-usage="weekly_usage_per_active_hour">—</dd></div>
+        </dl>
+        <small data-usage-samples>No isolated quota samples yet.</small>
+      </article>
+      <article data-proxy-period="lifetime">
+        <h3>Lifetime</h3>
+        <dl>
+          <div><dt>Active time</dt><dd data-usage="active_ms">—</dd></div>
+          <div><dt>Total tokens</dt><dd data-usage="total_tokens">—</dd></div>
+          <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
+          <div><dt>Tokens/hour</dt><dd data-usage="tokens_per_hour">—</dd></div>
+          <div><dt>5h usage/hour</dt><dd data-usage="short_usage_per_active_hour">—</dd></div>
+          <div><dt>Weekly usage/hour</dt><dd data-usage="weekly_usage_per_active_hour">—</dd></div>
+        </dl>
+        <small data-usage-samples>No isolated quota samples yet.</small>
+      </article>
+    </div>
+  </section>
   <div class="proxy-relays">
     <h3>Redundant relay edges</h3>
     <ul data-proxy-relays aria-label="Relay edge status"></ul>

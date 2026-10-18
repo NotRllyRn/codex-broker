@@ -437,6 +437,34 @@ if (proxyCard) {
 	const status = proxyCard.querySelector("[data-proxy-status]");
 	const relaySummary = proxyCard.querySelector("[data-relay-summary]");
 	const relayList = proxyCard.querySelector("[data-proxy-relays]");
+	const modelSelect = proxyCard.querySelector("[data-proxy-model]");
+	const usageNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+	const usageRate = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+	let usage = [];
+	const activeDuration = (milliseconds) => {
+		const seconds = Math.round((milliseconds || 0) / 1000);
+		if (seconds < 60) return `${seconds}s`;
+		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+	};
+	function renderUsage() {
+		const selected = usage.find((item) => item.model === modelSelect.value) || usage[0];
+		if (!selected) return;
+		for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
+			const values = selected[panel.dataset.proxyPeriod] || {};
+			const formatted = {
+				active_ms: activeDuration(values.active_ms),
+				total_tokens: usageNumber.format(values.total_tokens || 0),
+				tokens_per_minute: usageRate.format(values.tokens_per_minute || 0),
+				tokens_per_hour: usageNumber.format(values.tokens_per_hour || 0),
+				short_usage_per_active_hour: values.short_usage_per_active_hour == null ? "—" : `${usageRate.format(values.short_usage_per_active_hour)}%`,
+				weekly_usage_per_active_hour: values.weekly_usage_per_active_hour == null ? "—" : `${usageRate.format(values.weekly_usage_per_active_hour)}%`,
+			};
+			for (const node of panel.querySelectorAll("[data-usage]")) node.textContent = formatted[node.dataset.usage];
+			panel.querySelector("[data-usage-samples]").textContent = `${values.short_usage_samples || 0} isolated 5h · ${values.weekly_usage_samples || 0} isolated weekly samples`;
+		}
+	}
+	modelSelect.addEventListener("change", renderUsage);
 	const relayState = { ready: ["Ready ●", "ready"], connected: ["Connected ◐", "connected"], offline: ["Offline ○", "offline"] };
 	const relayTime = (value) => Date.now() - Date.parse(value) < 60_000 ? "just now" : relativeTime(value);
 	function relayRows(relays) {
@@ -463,6 +491,16 @@ if (proxyCard) {
 			const response = await fetch(appPath("/api/internal/v1/proxy"), { cache: "no-store" });
 			if (!response.ok) throw new Error("Proxy counters unavailable");
 			const data = await response.json();
+			usage = Array.isArray(data.usage) ? data.usage : [];
+			const selectedModel = modelSelect.value;
+			modelSelect.replaceChildren(...usage.map((item) => {
+				const option = document.createElement("option");
+				option.value = item.model;
+				option.textContent = item.model === "all" ? "All models" : item.model;
+				return option;
+			}));
+			if (usage.some((item) => item.model === selectedModel)) modelSelect.value = selectedModel;
+			renderUsage();
 			const relays = Array.isArray(data.relays) ? data.relays : [];
 			const readyRelays = relays.filter((relay) => relay.ready).length;
 			const connectedRelays = relays.filter((relay) => relay.connected).length;

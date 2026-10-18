@@ -158,8 +158,10 @@ schedule. Use **Pulse** on a dashboard account card or account page to send a
 small request and start that account's rotation manually. Pulse history records
 the result; depleted, disabled, or busy accounts cannot start a new pulse.
 
-The dashboard shows active requests, recent client keys, request totals, and
-account failovers since restart. When the pool has a known retry time, requests
+The dashboard shows active requests, recent client keys, request totals,
+account failovers, and per-model rolling-seven-day and lifetime proxy usage.
+Detailed response telemetry is retained for seven days; compact lifetime
+counters remain. When the pool has a known retry time, requests
 return `429` with `Retry-After` immediately. No prompt or response content is
 retained.
 The lease API remains available for Pi, Hermes, and T3 Code.
