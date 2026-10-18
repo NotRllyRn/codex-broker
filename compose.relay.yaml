@@ -1,0 +1,46 @@
+services:
+  relay:
+    build:
+      context: .
+      target: relay-runtime
+    command: ["relay-serve"]
+    init: true
+    restart: unless-stopped
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    env_file:
+      - ./deployment/relay/.env
+    environment:
+      WINDOWKEEPER_RELAY_HOST: 0.0.0.0
+      WINDOWKEEPER_RELAY_PORT: "8787"
+      WINDOWKEEPER_RELAY_CACHE_FILE: /data/cache.enc
+      WINDOWKEEPER_RELAY_CA_CERT: /certs/broker-ca.crt
+      WINDOWKEEPER_RELAY_TLS_CERT_FILE: /certs/relay.crt
+      WINDOWKEEPER_RELAY_TLS_KEY_FILE: /certs/relay.key
+    ports:
+      - "${CODEX_BROKER_RELAY_BIND_ADDRESS:-0.0.0.0}:${CODEX_BROKER_RELAY_PORT:-8787}:8787"
+    volumes:
+      - relay-data:/data
+      - ./deployment/relay/ca.crt:/certs/broker-ca.crt:ro
+      - ./deployment/relay/relay.crt:/certs/relay.crt:ro
+      - ./deployment/relay/relay.key:/certs/relay.key:ro
+    tmpfs:
+      - /run/windowkeeper:uid=10001,gid=10001,mode=0700,size=8m
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "codex-broker", "-c", "127.0.0.1:8787"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+          cpus: "1.0"
+
+volumes:
+  relay-data:

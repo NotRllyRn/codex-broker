@@ -292,6 +292,23 @@ func TestProxyStoresResponseUsageAndCorrelation(t *testing.T) {
 	}
 }
 
+func TestProxyTelemetryMapsPublicAccountID(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	if _, err := s.App.Store.DB.Exec("UPDATE accounts SET public_token='public-account' WHERE account_id='account0'"); err != nil {
+		t.Fatal(err)
+	}
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyUsageStream("mapped", "completed", 1)))}, nil
+	})
+	if got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`); got.Code != 200 {
+		t.Fatalf("response=%d %s", got.Code, got.Body.String())
+	}
+	var accountID string
+	if err := s.App.Store.DB.QueryRow("SELECT account_id FROM proxy_responses WHERE proxy_request_id IS NOT NULL").Scan(&accountID); err != nil || accountID != "account0" {
+		t.Fatalf("account=%q err=%v", accountID, err)
+	}
+}
+
 func TestProxyGroupsResponsesByThreadAndTurn(t *testing.T) {
 	s, key := proxyFixture(t, 1)
 	calls := 0
@@ -335,6 +352,29 @@ func TestProxyUsageHandlesMissingCorrelationUsageAndFailover(t *testing.T) {
 	}
 	if accountID != "account1" || threadID.Valid || turnID.Valid || status != "failed" || attempts != 2 || usage.Valid {
 		t.Fatalf("account=%q thread=%#v turn=%#v status=%q attempts=%d usage=%#v", accountID, threadID, turnID, status, attempts, usage)
+	}
+}
+
+func TestProxyRecognizesQuotaInSuccessfulFailedStream(t *testing.T) {
+	for _, test := range []struct {
+		name, code string
+		want       int
+	}{{"quota", "usage_limit_reached", 1}, {"server", "server_error", 0}} {
+		t.Run(test.name, func(t *testing.T) {
+			s, key := proxyFixture(t, 1)
+			terminal := fmt.Sprintf(`data: {"type":"response.failed","response":{"error":{"code":%q},"output":[]}}`+"\n\n", test.code)
+			stream := strings.Replace(proxyStatusStream, `data: {"type":"response.completed","response":{"output":[]}}`+"\n\n", terminal, 1)
+			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(stream))}, nil
+			})
+			if got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`); got.Code != 200 {
+				t.Fatalf("response=%d %s", got.Code, got.Body.String())
+			}
+			var exclusions int
+			if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM account_exclusions WHERE key_id=?", key.ID).Scan(&exclusions); err != nil || exclusions != test.want {
+				t.Fatalf("exclusions=%d want=%d err=%v", exclusions, test.want, err)
+			}
+		})
 	}
 }
 

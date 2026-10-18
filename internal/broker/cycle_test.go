@@ -443,6 +443,36 @@ func TestCycleClaimsAreAtomic(t *testing.T) {
 	}
 }
 
+func TestCycleDoesNotClaimRelayReserve(t *testing.T) {
+	ctx := context.Background()
+	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	for _, id := range []string{"reserved", "available"} {
+		if _, err := database.DB.ExecContext(ctx, `
+			INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES(?,?,?,1,'ACTIVE',1,1);
+			INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES(?,'VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
+			INSERT INTO usage_current(account_id) VALUES(?);
+			INSERT INTO window_pulse_state(account_id,last_attempt_at_ms,cycle_state,idle_observation_count) VALUES(?,0,'HELD',2);`, id, id, id, id, id, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := weeklyCycleMS * 10
+	if _, err := database.DB.ExecContext(ctx, "INSERT INTO relay_reservations VALUES('relay','reserved','permit',?,?)", now+time.Hour.Milliseconds(), now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB.ExecContext(ctx, "UPDATE weekly_cycle_state SET cadence_anchor_at_ms=?", now-cycleInterval(2)); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Store: database, Config: config.Config{WindowPulseEnabled: true, WindowPulseRetrySeconds: 900}}
+	public, operation, err := service.claimCyclePulse(ctx, now)
+	if err != nil || public != "available" || operation == "" {
+		t.Fatalf("public=%q operation=%q err=%v", public, operation, err)
+	}
+}
+
 func TestCycleReconciliationUsesUpstreamExpiry(t *testing.T) {
 	ctx := context.Background()
 	database, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))

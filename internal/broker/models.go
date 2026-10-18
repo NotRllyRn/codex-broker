@@ -12,6 +12,7 @@ type Account struct {
 	Email, Plan, LastMethod                                                       sql.NullString
 	LastVerified, ShortUsed, ShortReset, WeeklyUsed, WeeklyReset, ExcludedUntil   sql.NullInt64
 	CycleStarted                                                                  sql.NullInt64
+	RelayReservedUntil                                                            sql.NullInt64
 }
 
 type AccountSummary struct {

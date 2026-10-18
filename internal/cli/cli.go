@@ -27,6 +27,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/httpserver"
 	"github.com/NotRllyRn/codex-broker/internal/platform"
 	"github.com/NotRllyRn/codex-broker/internal/publicsite"
+	"github.com/NotRllyRn/codex-broker/internal/relay"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 	"golang.org/x/term"
@@ -59,6 +60,8 @@ func Run(ctx context.Context, args []string) error {
 		return serve(ctx, settings, args[1:])
 	case "public-serve":
 		return publicServe(ctx, settings, args[1:])
+	case "relay-serve":
+		return relayServe(ctx, settings, args[1:])
 	case "init":
 		return initialize(ctx, settings, args[1:])
 	case "password-set":
@@ -84,6 +87,16 @@ func Run(ctx context.Context, args []string) error {
 func composeHealthProbe(args []string) error {
 	port := "8787"
 	certificatePath := os.Getenv("WINDOWKEEPER_TLS_CERT_FILE")
+	relay := os.Getenv("WINDOWKEEPER_RELAY_TLS_CERT_FILE") != ""
+	if relay {
+		certificatePath = os.Getenv("WINDOWKEEPER_RELAY_TLS_CERT_FILE")
+		if _, err := os.Stat("/run/windowkeeper/certs/relay.crt"); err == nil {
+			certificatePath = "/run/windowkeeper/certs/relay.crt"
+		}
+		if value := os.Getenv("WINDOWKEEPER_RELAY_PORT"); value != "" {
+			port = value
+		}
+	}
 	if len(args) > 1 && strings.Contains(args[1], "8788") {
 		port = "8788"
 		certificatePath = os.Getenv("WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE")
@@ -114,7 +127,24 @@ func composeHealthProbe(args []string) error {
 		if err != nil {
 			return err
 		}
-		return connection.Close()
+		defer connection.Close()
+		if !relay {
+			return nil
+		}
+		request, _ := http.NewRequest(http.MethodGet, "https://"+serverName+":"+port+"/health/ready", nil)
+		request.Host = serverName
+		if err := request.Write(connection); err != nil {
+			return err
+		}
+		response, err := http.ReadResponse(bufio.NewReader(connection), request)
+		if err != nil {
+			return err
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			return fmt.Errorf("relay readiness returned HTTP %d", response.StatusCode)
+		}
+		return nil
 	}
 	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
@@ -123,7 +153,7 @@ func composeHealthProbe(args []string) error {
 	return connection.Close()
 }
 func usage() error {
-	fmt.Println("Codex Broker\n\nCommands: serve, public-serve, init, password-set, version, health, status, client-key, doctor, backup, restore, vault")
+	fmt.Println("Codex Broker\n\nCommands: serve, public-serve, relay-serve, init, password-set, version, health, status, client-key, doctor, backup, restore, vault")
 	return nil
 }
 func flags(name string) *flag.FlagSet {
@@ -174,6 +204,24 @@ func publicServe(ctx context.Context, settings config.Config, args []string) err
 		return err
 	}
 	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.PublicEnrollmentTLSCertFile, settings.PublicEnrollmentTLSKeyFile)
+}
+
+func relayServe(ctx context.Context, settings config.Config, args []string) error {
+	set := flags("relay-serve")
+	host := set.String("host", settings.RelayHost, "bind host")
+	port := set.Int("port", settings.RelayPort, "bind port")
+	if err := set.Parse(args); err != nil {
+		return err
+	}
+	if !config.IsLoopback(*host) && (settings.RelayTLSCertFile == "" || settings.RelayTLSKeyFile == "") {
+		return errors.New("non-loopback relay binds require TLS certificate and key files")
+	}
+	service, err := relay.Open(settings)
+	if err != nil {
+		return err
+	}
+	service.Start(ctx)
+	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: relay.NewServer(service), ReadHeaderTimeout: 10 * time.Second}, settings.RelayTLSCertFile, settings.RelayTLSKeyFile)
 }
 func runServer(ctx context.Context, server *http.Server, cert, key string) error {
 	result := make(chan error, 1)

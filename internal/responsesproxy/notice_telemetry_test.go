@@ -39,3 +39,21 @@ func TestTerminalResponseIgnoresInvalidUsageCounts(t *testing.T) {
 		t.Fatalf("observation=%+v", observed)
 	}
 }
+
+func TestTerminalResponseClassifiesOnlyAccountFailures(t *testing.T) {
+	for _, test := range []struct {
+		error any
+		want  string
+	}{
+		{map[string]any{"code": "usage_limit_reached"}, "quota"},
+		{map[string]any{"message": "Rate limit exceeded"}, "quota"},
+		{map[string]any{"message": "Access token expired"}, ""},
+		{map[string]any{"code": "server_error"}, ""},
+		{nil, ""},
+	} {
+		observed := terminalResponse(map[string]any{"type": "response.failed", "response": map[string]any{"error": test.error}}, 1, 2)
+		if observed.FailureKind != test.want {
+			t.Fatalf("error=%v kind=%q want=%q", test.error, observed.FailureKind, test.want)
+		}
+	}
+}

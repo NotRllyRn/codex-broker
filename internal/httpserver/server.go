@@ -19,6 +19,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/gateway"
 	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 	"github.com/NotRllyRn/codex-broker/internal/webassets"
 	"github.com/flosch/pongo2/v6"
@@ -32,8 +33,9 @@ type Server struct {
 	proxyClient                               *http.Client
 	proxyStats                                proxyStats
 	proxyScrubPolicy                          responsesproxy.ScrubPolicy
-	proxyLargeOnce                            sync.Once
-	proxyLargeGate                            chan struct{}
+	gatewayEngine                             *gateway.Engine
+	gatewayOnce                               sync.Once
+	relayEventsMu                             sync.Mutex
 	renderer                                  *renderer
 	mux                                       *http.ServeMux
 	loginThrottle, clientAuth, enrollmentAuth *throttle
@@ -119,6 +121,10 @@ func (s *Server) routes() {
 	route("GET /health/ready", s.ready)
 	route("GET /api/v1/health", s.apiHealth)
 	route("POST /api/v1/route", s.route)
+	route("GET /api/private/v1/relay/snapshot", s.relaySnapshot)
+	route("POST /api/private/v1/relay/route", s.relayRoute)
+	route("POST /api/private/v1/relay/events", s.relayEvents)
+	route("POST /api/private/v1/relay/heartbeat", s.relayHeartbeat)
 	route("GET /v1/responses", s.responsesUpgrade)
 	route("POST /v1/responses", s.responses)
 	route("POST /v1/responses/compact", s.responses)

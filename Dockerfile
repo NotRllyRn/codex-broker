@@ -7,6 +7,21 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/codex-broker ./cmd/codex-broker
 
+FROM debian:bookworm-slim AS relay-runtime
+RUN apt-get update \
+ && apt-get install --yes --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --uid 10001 --create-home --home-dir /home/windowkeeper windowkeeper \
+ && install -d -o windowkeeper -g windowkeeper -m 0700 /data /run/windowkeeper
+COPY --from=build /out/codex-broker /usr/local/bin/codex-broker
+COPY scripts/relay-entrypoint.sh /usr/local/bin/relay-entrypoint
+USER 0:0
+WORKDIR /home/windowkeeper
+ENV WINDOWKEEPER_DATA_DIR=/data \
+    WINDOWKEEPER_RUNTIME_DIR=/run/windowkeeper
+ENTRYPOINT ["relay-entrypoint"]
+CMD ["relay-serve"]
+
 FROM node:22-bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends ca-certificates \

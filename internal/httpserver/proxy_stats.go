@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/auth"
+	"github.com/NotRllyRn/codex-broker/internal/gateway"
 )
 
 type proxyClientStats struct {
@@ -63,7 +64,12 @@ func (s *proxyStats) begin(key auth.ClientKey) func() {
 	}
 }
 
+func (s *proxyStats) Begin(key gateway.Client) func() {
+	return s.begin(auth.ClientKey{ID: key.ID, Name: key.Name, Prefix: key.Prefix})
+}
+
 func (s *proxyStats) failover() { s.Lock(); s.failovers++; s.Unlock() }
+func (s *proxyStats) Failover() { s.failover() }
 
 func (s *proxyStats) scrub(before, after int) {
 	s.Lock()
@@ -73,8 +79,10 @@ func (s *proxyStats) scrub(before, after int) {
 	s.scrubRemoved += uint64(max(0, before-after))
 	s.Unlock()
 }
+func (s *proxyStats) Scrub(before, after int) { s.scrub(before, after) }
 
 func (s *proxyStats) rejectScrub() { s.Lock(); s.scrubRejected++; s.Unlock() }
+func (s *proxyStats) RejectScrub() { s.rejectScrub() }
 
 func (s *proxyStats) snapshot() proxySnapshot {
 	s.Lock()

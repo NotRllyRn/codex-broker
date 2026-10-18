@@ -34,6 +34,17 @@ type Config struct {
 	PublicEnrollmentTLSKeyFile      string
 	PublicEnrollmentMaxActive       int
 	PublicEnrollmentAttemptsPerHour int
+	RelayKey                        string
+	RelayID                         string
+	RelayBrokerURL                  string
+	RelayCACert                     string
+	RelayCacheFile                  string
+	RelayHost                       string
+	RelayPort                       int
+	RelayTLSCertFile                string
+	RelayTLSKeyFile                 string
+	RelaySyncSeconds                int
+	RelayMaxStaleSeconds            int
 	VaultKeyFile                    string
 	VaultKey                        string
 	AdminPasswordFile               string
@@ -75,6 +86,14 @@ func Load() (Config, error) {
 		PublicEnrollmentHost:        env("PUBLIC_ENROLLMENT_HOST", "127.0.0.1"),
 		PublicEnrollmentTLSCertFile: env("PUBLIC_ENROLLMENT_TLS_CERT_FILE", ""),
 		PublicEnrollmentTLSKeyFile:  env("PUBLIC_ENROLLMENT_TLS_KEY_FILE", ""),
+		RelayKey:                    env("RELAY_KEY", ""),
+		RelayID:                     env("RELAY_ID", "relay-1"),
+		RelayBrokerURL:              env("RELAY_BROKER_URL", ""),
+		RelayCACert:                 env("RELAY_CA_CERT", ""),
+		RelayCacheFile:              env("RELAY_CACHE_FILE", ".windowkeeper/relay/cache.enc"),
+		RelayHost:                   env("RELAY_HOST", "127.0.0.1"),
+		RelayTLSCertFile:            env("RELAY_TLS_CERT_FILE", ""),
+		RelayTLSKeyFile:             env("RELAY_TLS_KEY_FILE", ""),
 		VaultKeyFile:                env("VAULT_KEY_FILE", ""),
 		VaultKey:                    env("VAULT_KEY", ""),
 		AdminPasswordFile:           env("ADMIN_PASSWORD_FILE", ""),
@@ -99,6 +118,9 @@ func Load() (Config, error) {
 		&c.PublicEnrollmentPort:            {"PUBLIC_ENROLLMENT_PORT", 8788, 1, 65535},
 		&c.PublicEnrollmentMaxActive:       {"PUBLIC_ENROLLMENT_MAX_ACTIVE", 4, 1, 32},
 		&c.PublicEnrollmentAttemptsPerHour: {"PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR", 3, 1, 20},
+		&c.RelayPort:                       {"RELAY_PORT", 8787, 1, 65535},
+		&c.RelaySyncSeconds:                {"RELAY_SYNC_SECONDS", 15, 5, 300},
+		&c.RelayMaxStaleSeconds:            {"RELAY_MAX_STALE_SECONDS", 3600, 30, 86400},
 		&c.SessionIdleMinutes:              {"SESSION_IDLE_MINUTES", 44640, 1, 0},
 		&c.SessionAbsoluteHours:            {"SESSION_ABSOLUTE_HOURS", 2160, 1, 0},
 		&c.UsagePollSeconds:                {"USAGE_POLL_SECONDS", 300, 60, 0},
@@ -180,6 +202,27 @@ func (c *Config) validate() error {
 	}
 	if c.PublicEnrollmentKey != "" && len(c.PublicEnrollmentKey) < 32 {
 		return errors.New("public enrollment key must contain at least 32 characters")
+	}
+	if c.RelayKey != "" && (!strings.HasPrefix(c.RelayKey, "cbr_") || len(c.RelayKey) < 36) {
+		return errors.New("relay key must use the cbr_ prefix and contain at least 32 secret characters")
+	}
+	if c.RelayID == "" || len(c.RelayID) > 80 || strings.IndexFunc(c.RelayID, func(value rune) bool {
+		return value != '.' && value != '_' && value != '-' && (value < '0' || value > '9') && (value < 'A' || value > 'Z') && (value < 'a' || value > 'z')
+	}) >= 0 {
+		return errors.New("relay ID may contain only letters, numbers, dot, underscore, and hyphen")
+	}
+	if c.RelayMaxStaleSeconds < 2*c.RelaySyncSeconds {
+		return errors.New("relay maximum staleness must be at least two sync intervals")
+	}
+	if c.RelayBrokerURL != "" {
+		parsed, err := url.Parse(c.RelayBrokerURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return errors.New("relay broker URL must be an HTTPS origin")
+		}
+		c.RelayBrokerURL = strings.TrimSuffix(c.RelayBrokerURL, "/")
+		if c.RelayCacheFile == "" {
+			return errors.New("relay cache file is required")
+		}
 	}
 	parsed, err := url.Parse(c.PublicEnrollmentBrokerURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {

@@ -14,10 +14,12 @@ certs=deployment/certs
 admin_password=$(openssl rand -base64 24 | tr '+/' '-_' | tr -d '=\n')
 vault_key="wk1_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 enrollment_key=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')
+relay_key="cbr_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
 cat >.env <<EOF
 WINDOWKEEPER_ADMIN_PASSWORD=$admin_password
 WINDOWKEEPER_VAULT_KEY=$vault_key
 WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY=$enrollment_key
+WINDOWKEEPER_RELAY_KEY=$relay_key
 CODEX_BROKER_BIND_ADDRESS=0.0.0.0
 WINDOWKEEPER_BROWSER_OAUTH_MODE=manual
 EOF

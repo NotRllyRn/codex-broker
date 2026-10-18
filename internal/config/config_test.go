@@ -63,3 +63,28 @@ func TestPublicEnrollmentKeyFile(t *testing.T) {
 		t.Fatal("missing enrollment key was accepted")
 	}
 }
+
+func TestRelayConfigurationValidation(t *testing.T) {
+	t.Setenv("WINDOWKEEPER_RELAY_KEY", "cbr_"+strings.Repeat("k", 32))
+	t.Setenv("WINDOWKEEPER_RELAY_ID", "edge-1")
+	t.Setenv("WINDOWKEEPER_RELAY_BROKER_URL", "https://broker.example:8787/")
+	settings, err := Load()
+	if err != nil || settings.RelayBrokerURL != "https://broker.example:8787" {
+		t.Fatalf("settings=%+v err=%v", settings, err)
+	}
+	t.Setenv("WINDOWKEEPER_RELAY_ID", "../edge")
+	if _, err := Load(); err == nil {
+		t.Fatal("unsafe relay ID was accepted")
+	}
+	t.Setenv("WINDOWKEEPER_RELAY_ID", "edge-1")
+	t.Setenv("WINDOWKEEPER_RELAY_BROKER_URL", "http://broker.example")
+	if _, err := Load(); err == nil {
+		t.Fatal("HTTP relay origin was accepted")
+	}
+	t.Setenv("WINDOWKEEPER_RELAY_BROKER_URL", "https://broker.example")
+	t.Setenv("WINDOWKEEPER_RELAY_SYNC_SECONDS", "30")
+	t.Setenv("WINDOWKEEPER_RELAY_MAX_STALE_SECONDS", "30")
+	if _, err := Load(); err == nil {
+		t.Fatal("unsafe relay staleness was accepted")
+	}
+}

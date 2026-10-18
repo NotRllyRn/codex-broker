@@ -30,7 +30,7 @@ const (
 )
 
 type TerminalResponse struct {
-	ID, Model, ServiceTier, Status               string
+	ID, Model, ServiceTier, Status, FailureKind  string
 	FirstEventAtMS, TerminalEventAtMS            int64
 	InputTokens, CachedInputTokens, OutputTokens *int64
 	ReasoningOutputTokens, TotalTokens           *int64
@@ -362,6 +362,9 @@ func terminalResponse(event map[string]any, firstEventAtMS, terminalEventAtMS in
 	result.ID, _ = response["id"].(string)
 	result.Model, _ = response["model"].(string)
 	result.ServiceTier, _ = response["service_tier"].(string)
+	if result.Status == "failed" {
+		result.FailureKind = terminalFailureKind(response["error"])
+	}
 	usage, _ := response["usage"].(map[string]any)
 	if usage == nil {
 		return result
@@ -377,6 +380,17 @@ func terminalResponse(event map[string]any, firstEventAtMS, terminalEventAtMS in
 		result.ReasoningOutputTokens = tokenCount(details["reasoning_tokens"])
 	}
 	return result
+}
+
+func terminalFailureKind(value any) string {
+	encoded, _ := json.Marshal(value)
+	message := strings.ToLower(string(encoded))
+	for _, marker := range []string{"usage_limit", "usage limit", "quota", "rate_limit", "rate limit", "too many requests"} {
+		if strings.Contains(message, marker) {
+			return "quota"
+		}
+	}
+	return ""
 }
 
 func tokenCount(value any) *int64 {
