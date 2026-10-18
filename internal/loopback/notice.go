@@ -37,7 +37,7 @@ func (a *Adapter) copyNoticeResponse(w http.ResponseWriter, response *http.Respo
 		default:
 			a.logf("request notice result=skipped reason=not_sse")
 		}
-	})
+	}, nil)
 	if err != nil {
 		a.logf("request notice result=failed stage=stream_validation")
 		http.Error(w, "upstream stream validation failed", http.StatusBadGateway)

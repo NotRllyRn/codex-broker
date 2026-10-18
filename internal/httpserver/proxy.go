@@ -1,11 +1,15 @@
 package httpserver
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
@@ -13,6 +17,7 @@ import (
 )
 
 func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
+	requestStartedAt := time.Now().UnixMilli()
 	key, err := s.client(r)
 	if err != nil {
 		status, code, message := http.StatusInternalServerError, "broker_unavailable", "Broker authentication unavailable."
@@ -24,6 +29,10 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer s.proxyStats.begin(*key)()
 	isResponse := r.URL.Path == "/v1/responses"
+	threadID, turnID := strings.TrimSpace(r.Header.Get(responsesproxy.ThreadIDHeader)), strings.TrimSpace(r.Header.Get(responsesproxy.TurnIDHeader))
+	if utf8.RuneCountInString(threadID) > 200 || utf8.RuneCountInString(turnID) > 200 {
+		return proxyError(w, http.StatusBadRequest, "invalid_correlation_id", "Thread and turn identifiers must not exceed 200 characters.")
+	}
 	policy := s.proxyScrubPolicy
 	if policy.TriggerBytes == 0 {
 		policy = responsesproxy.DefaultScrubPolicy
@@ -81,10 +90,21 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
 		releaseLarge()
 		releaseLarge = nil
 	}
+	var requestMetadata struct {
+		Model              string `json:"model"`
+		ServiceTier        string `json:"service_tier"`
+		PreviousResponseID string `json:"previous_response_id"`
+		Reasoning          struct {
+			Effort string `json:"effort"`
+		} `json:"reasoning"`
+	}
+	if isResponse {
+		_ = json.Unmarshal(body, &requestMetadata)
+	}
 	input := broker.RouteRequest{SessionID: "proxy-" + core.NewID(), TurnID: core.NewID()}
 	attempts := map[string]int{}
 	previous := ""
-	retries, failovers := 0, 0
+	retries, failovers, attemptCount := 0, 0, 0
 	for {
 		selected, wait, err := s.App.Router.Route(r.Context(), key.ID, input)
 		if err != nil {
@@ -109,10 +129,13 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
+		attemptCount++
+		upstreamStartedAt := time.Now().UnixMilli()
 		response, err := responsesproxy.Forward(s.proxyClient, r, target, body, selected.AccessToken, selected.ChatGPTAccountID)
 		if err != nil {
 			return proxyError(w, 502, "upstream_unavailable", "Upstream request failed.")
 		}
+		responseHeadersAt := time.Now().UnixMilli()
 		if response.StatusCode >= 300 && response.StatusCode < 400 {
 			response.Body.Close()
 			return proxyError(w, 502, "upstream_redirect", "Upstream redirect rejected.")
@@ -126,7 +149,32 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
 				} else if retries > 0 {
 					notice.Status = "↻ retry"
 				}
-				if _, err := responsesproxy.CopyNoticeResponse(w, response, notice, nil); err != nil {
+				observe := func(terminal responsesproxy.TerminalResponse) {
+					ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+					defer cancel()
+					var usageJSON any
+					if len(terminal.UsageJSON) != 0 {
+						usageJSON = string(terminal.UsageJSON)
+					}
+					_, persistErr := s.App.Store.DB.ExecContext(ctx, `INSERT INTO proxy_responses(
+						proxy_request_id,account_id,client_key_id,thread_id,turn_id,endpoint,request_model,reasoning_effort,
+						request_service_tier,previous_response_id,response_id,response_model,response_service_tier,
+						terminal_status,upstream_attempts,upstream_http_status,request_started_at_ms,upstream_started_at_ms,
+						response_headers_at_ms,first_response_event_at_ms,terminal_event_at_ms,input_tokens,cached_input_tokens,
+						output_tokens,reasoning_output_tokens,total_tokens,usage_json
+					) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+						core.NewID(), selected.AccountID, key.ID, emptyStringNil(threadID), emptyStringNil(turnID), r.URL.Path,
+						emptyStringNil(requestMetadata.Model), emptyStringNil(requestMetadata.Reasoning.Effort),
+						emptyStringNil(requestMetadata.ServiceTier), emptyStringNil(requestMetadata.PreviousResponseID),
+						emptyStringNil(terminal.ID), emptyStringNil(terminal.Model), emptyStringNil(terminal.ServiceTier),
+						terminal.Status, attemptCount, response.StatusCode, requestStartedAt, upstreamStartedAt, responseHeadersAt,
+						terminal.FirstEventAtMS, terminal.TerminalEventAtMS, terminal.InputTokens, terminal.CachedInputTokens,
+						terminal.OutputTokens, terminal.ReasoningOutputTokens, terminal.TotalTokens, usageJSON)
+					if persistErr != nil && s.App.Logs != nil {
+						s.App.Logs.Log("ERROR", "proxy.usage.persist", "Proxy response usage could not be stored.")
+					}
+				}
+				if _, err := responsesproxy.CopyNoticeResponse(w, response, notice, nil, observe); err != nil {
 					return proxyError(w, http.StatusBadGateway, "invalid_upstream_stream", "Upstream stream validation failed.")
 				}
 				return nil
@@ -137,6 +185,13 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
 		response.Body.Close()
 		input.PreferredAccountID, input.FailedAccountID, input.FailureKind = selected.AccountID, selected.AccountID, kind
 	}
+}
+
+func emptyStringNil(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func compactDuration(seconds int) string {

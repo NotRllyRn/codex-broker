@@ -29,6 +29,14 @@ const (
 	NoticeNoFinalAnswer NoticeResult = "no_final_answer"
 )
 
+type TerminalResponse struct {
+	ID, Model, ServiceTier, Status               string
+	FirstEventAtMS, TerminalEventAtMS            int64
+	InputTokens, CachedInputTokens, OutputTokens *int64
+	ReasoningOutputTokens, TotalTokens           *int64
+	UsageJSON                                    []byte
+}
+
 func PrepareNotice(body []byte) []byte {
 	var request map[string]json.RawMessage
 	if json.Unmarshal(body, &request) != nil {
@@ -120,7 +128,7 @@ func AccountNoticeAt(selected Notice, now time.Time) string {
 
 // CopyNoticeResponse validates an SSE response before changing its headers and
 // prefixes only a final assistant answer. Non-SSE responses pass through.
-func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice Notice, report func(NoticeResult)) (NoticeResult, error) {
+func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice Notice, report func(NoticeResult), observe func(TerminalResponse)) (NoticeResult, error) {
 	notify := func(result NoticeResult) NoticeResult {
 		if report != nil {
 			report(result)
@@ -129,6 +137,7 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 	}
 	reader := bufio.NewReader(response.Body)
 	var prefix []byte
+	var firstEventAtMS int64
 	for {
 		frame, err := readNoticeFrame(reader)
 		prefix = append(prefix, frame...)
@@ -142,6 +151,7 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 		event := noticeEvent(frame)
 		kind, _ := event["type"].(string)
 		if strings.HasPrefix(kind, "response.") {
+			firstEventAtMS = time.Now().UnixMilli()
 			break
 		}
 		if err == io.EOF || len(bytes.TrimSpace(frame)) != 0 && !bytes.HasPrefix(bytes.TrimSpace(frame), []byte(":")) {
@@ -158,7 +168,7 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 	w.WriteHeader(response.StatusCode)
 	controller := http.NewResponseController(w)
 	_ = controller.Flush()
-	inserted, err := StreamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), AccountNotice(notice))
+	inserted, err := streamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), AccountNotice(notice), firstEventAtMS, observe)
 	if err != nil {
 		panic(http.ErrAbortHandler)
 	}
@@ -203,6 +213,10 @@ func noticeEvent(frame []byte) map[string]any {
 // StreamNotice preserves real message IDs and output indices. If phase is not
 // available yet, it holds that assistant message until completion identifies it.
 func StreamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
+	return streamNotice(w, r, prefix, 0, nil)
+}
+
+func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64, observe func(TerminalResponse)) (bool, error) {
 	reader := bufio.NewReader(r)
 	final, started := map[string]bool{}, map[string]bool{}
 	inserted := false
@@ -284,6 +298,10 @@ func StreamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 		event := noticeEvent(frame)
 		item, _ := event["item"].(map[string]any)
 		terminal := event["type"] == "response.completed" || event["type"] == "response.incomplete" || event["type"] == "response.failed"
+		var observation TerminalResponse
+		if terminal && observe != nil {
+			observation = terminalResponse(event, firstEventAtMS, time.Now().UnixMilli())
+		}
 		id, _ := item["id"].(string)
 		if pendingID == "" && event["type"] == "response.output_item.added" && item["type"] == "message" && item["role"] == "assistant" {
 			if item["phase"] == "final_answer" {
@@ -304,6 +322,9 @@ func StreamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 						return false, err
 					}
 				}
+				if observe != nil {
+					observe(observation)
+				}
 				return inserted, nil
 			}
 			if event["type"] != "response.output_item.done" || id != pendingID {
@@ -322,6 +343,9 @@ func StreamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 			return false, err
 		}
 		if terminal {
+			if observe != nil {
+				observe(observation)
+			}
 			return inserted, nil
 		}
 	}
@@ -329,4 +353,37 @@ func StreamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
 		return false, errors.New("stream ended before assistant message completed")
 	}
 	return inserted, nil
+}
+
+func terminalResponse(event map[string]any, firstEventAtMS, terminalEventAtMS int64) TerminalResponse {
+	status, _ := event["type"].(string)
+	response, _ := event["response"].(map[string]any)
+	result := TerminalResponse{Status: strings.TrimPrefix(status, "response."), FirstEventAtMS: firstEventAtMS, TerminalEventAtMS: terminalEventAtMS}
+	result.ID, _ = response["id"].(string)
+	result.Model, _ = response["model"].(string)
+	result.ServiceTier, _ = response["service_tier"].(string)
+	usage, _ := response["usage"].(map[string]any)
+	if usage == nil {
+		return result
+	}
+	result.UsageJSON, _ = json.Marshal(usage)
+	result.InputTokens = tokenCount(usage["input_tokens"])
+	result.OutputTokens = tokenCount(usage["output_tokens"])
+	result.TotalTokens = tokenCount(usage["total_tokens"])
+	if details, ok := usage["input_tokens_details"].(map[string]any); ok {
+		result.CachedInputTokens = tokenCount(details["cached_tokens"])
+	}
+	if details, ok := usage["output_tokens_details"].(map[string]any); ok {
+		result.ReasoningOutputTokens = tokenCount(details["reasoning_tokens"])
+	}
+	return result
+}
+
+func tokenCount(value any) *int64 {
+	number, ok := value.(float64)
+	if !ok || number < 0 || number != float64(int64(number)) {
+		return nil
+	}
+	result := int64(number)
+	return &result
 }

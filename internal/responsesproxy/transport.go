@@ -15,6 +15,8 @@ import (
 const BackendURL = "https://chatgpt.com/backend-api"
 const UpstreamURL = BackendURL + "/codex"
 const MaxRequest = 64 << 20
+const ThreadIDHeader = "X-Codex-Broker-Thread-ID"
+const TurnIDHeader = "X-Codex-Broker-Turn-ID"
 
 func NewClient() *http.Client {
 	return &http.Client{
@@ -61,7 +63,7 @@ func CopyHeaders(destination, source http.Header) {
 			continue
 		}
 		switch lower {
-		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "authorization", "chatgpt-account-id", "cookie", "set-cookie", "x-api-key", "api-key", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto":
+		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "authorization", "chatgpt-account-id", "cookie", "set-cookie", "x-api-key", "api-key", "forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto", strings.ToLower(ThreadIDHeader), strings.ToLower(TurnIDHeader):
 			continue
 		}
 		destination[http.CanonicalHeaderKey(name)] = append([]string(nil), values...)
