@@ -1447,8 +1447,14 @@ textarea {
 	gap: 0.5rem 1rem;
 }
 .proxy-card h2 { margin: 0 0 0.4rem; font-size: 1rem; }
+.proxy-card h3 { margin: 1rem 0 0.4rem; color: var(--muted); font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; }
 .proxy-card code, .proxy-card small, .proxy-card li span:last-child { color: var(--muted); font-size: 0.75rem; }
 .proxy-card [data-ready="true"] { color: var(--good); }
+.proxy-statuses { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 0.4rem 1rem; font-size: 0.8rem; }
+.proxy-card [data-relay-state="ready"] { color: var(--good); }
+.proxy-card [data-relay-state="connected"] { color: var(--warn); }
+.proxy-card [data-relay-state="offline"] { color: var(--bad); }
 .proxy-totals { font-family: BrokerMono, monospace; font-size: 0.85rem; }
 .proxy-card ul { list-style: none; padding: 0; }
 .proxy-card li { padding: 0.5rem 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }
+.proxy-card li.proxy-empty { display: block; color: var(--muted); font-size: 0.75rem; }

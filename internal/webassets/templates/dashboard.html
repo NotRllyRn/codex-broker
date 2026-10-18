@@ -33,9 +33,17 @@
 <section class="proxy-card" data-proxy-card aria-labelledby="proxy-title">
   <header>
     <div><h2 id="proxy-title">OpenAI proxy</h2><code>{{ root_path }}/v1/responses</code></div>
-    <span data-proxy-status>Loading…</span>
+    <div class="proxy-statuses" aria-live="polite">
+      <span data-proxy-status>Loading…</span>
+      <span data-relay-summary>Checking relay edges…</span>
+    </div>
   </header>
   <p class="proxy-totals" data-proxy-totals>Loading request counters…</p>
+  <div class="proxy-relays">
+    <h3>Redundant relay edges</h3>
+    <ul data-proxy-relays aria-label="Relay edge status"></ul>
+  </div>
+  <h3 class="proxy-list-label">Recent proxy clients</h3>
   <ul data-proxy-clients aria-label="Recent proxy clients"></ul>
   <small>Since broker restart · Recent clients: last five minutes</small>
 </section>

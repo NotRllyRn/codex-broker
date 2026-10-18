@@ -23,6 +23,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/config"
 	"github.com/NotRllyRn/codex-broker/internal/events"
 	"github.com/NotRllyRn/codex-broker/internal/logbook"
+	"github.com/NotRllyRn/codex-broker/internal/relayprotocol"
 	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
@@ -664,6 +665,43 @@ func TestProxyTelemetryIdentityAndAdminSession(t *testing.T) {
 	s.mux.ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), key.Prefix) || strings.Contains(w.Body.String(), key.Token) {
 		t.Fatalf("snapshot response %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProxyStatusIncludesLiveRelayHealth(t *testing.T) {
+	s, _ := proxyFixture(t, 0)
+	now := time.Now()
+	for _, relay := range []struct {
+		id       string
+		ready    int
+		lastSeen time.Time
+	}{{"ready-edge", 1, now}, {"connected-edge", 0, now}, {"offline-edge", 1, now.Add(-time.Hour)}} {
+		if _, err := s.App.Store.DB.Exec("INSERT INTO relay_heartbeats VALUES(?,?,?,?,?,?)", relay.id, relayprotocol.Version, "snapshot", now.UnixMilli(), relay.ready, relay.lastSeen.UnixMilli()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	token := "relay-status-session"
+	_, err := s.App.Store.DB.Exec("INSERT INTO admin_sessions VALUES(?,?,?,?,?,?,?,?,?)", auth.Digest(token), auth.Digest("csrf"), now.UnixMilli(), now.UnixMilli(), now.Add(time.Hour).UnixMilli(), now.Add(time.Hour).UnixMilli(), nil, nil, auth.Digest("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/api/internal/v1/proxy", nil)
+	request.AddCookie(&http.Cookie{Name: sessionCookie, Value: token})
+	response := httptest.NewRecorder()
+	s.mux.ServeHTTP(response, request)
+	var snapshot proxySnapshot
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]relayStatus{}
+	for _, relay := range snapshot.Relays {
+		states[relay.ID] = relay
+	}
+	if len(states) != 3 || states["ready-edge"].State != "ready" || !states["ready-edge"].Ready || states["connected-edge"].State != "connected" || !states["connected-edge"].Connected || states["offline-edge"].State != "offline" || states["offline-edge"].Connected || states["offline-edge"].Ready {
+		t.Fatalf("relays=%+v", snapshot.Relays)
 	}
 }
 

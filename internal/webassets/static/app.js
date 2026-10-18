@@ -435,13 +435,42 @@ if (loginProgress) {
 const proxyCard = document.querySelector("[data-proxy-card]");
 if (proxyCard) {
 	const status = proxyCard.querySelector("[data-proxy-status]");
+	const relaySummary = proxyCard.querySelector("[data-relay-summary]");
+	const relayList = proxyCard.querySelector("[data-proxy-relays]");
+	const relayState = { ready: ["Ready ●", "ready"], connected: ["Connected ◐", "connected"], offline: ["Offline ○", "offline"] };
+	const relayTime = (value) => Date.now() - Date.parse(value) < 60_000 ? "just now" : relativeTime(value);
+	function relayRows(relays) {
+		if (!relays.length) {
+			const empty = document.createElement("li");
+			empty.className = "proxy-empty";
+			empty.textContent = "No relay heartbeat has been received.";
+			return [empty];
+		}
+		return relays.map((relay) => {
+			const row = document.createElement("li");
+			const name = document.createElement("span");
+			name.textContent = relay.id;
+			const details = document.createElement("span");
+			const [label, state] = relayState[relay.state] || relayState.offline;
+			details.dataset.relayState = state;
+			details.textContent = `${label} · ${relay.connected ? "communicating" : "not communicating"} · heartbeat ${relayTime(relay.last_seen)} · ${relay.cache_generated_at ? `cache ${relayTime(relay.cache_generated_at)}` : "cache unavailable"} · protocol v${relay.protocol_version}`;
+			row.append(name, details);
+			return row;
+		});
+	}
 	async function updateProxy() {
 		try {
 			const response = await fetch(appPath("/api/internal/v1/proxy"), { cache: "no-store" });
 			if (!response.ok) throw new Error("Proxy counters unavailable");
 			const data = await response.json();
+			const relays = Array.isArray(data.relays) ? data.relays : [];
+			const readyRelays = relays.filter((relay) => relay.ready).length;
+			const connectedRelays = relays.filter((relay) => relay.connected).length;
 			status.textContent = data.ready ? "Ready ●" : "Unavailable ○";
 			status.dataset.ready = String(data.ready);
+			relaySummary.textContent = relays.length ? `${readyRelays}/${relays.length} relay${relays.length === 1 ? "" : "s"} ready` : "No relay edges";
+			relaySummary.dataset.relayState = relays.length && readyRelays === relays.length ? "ready" : connectedRelays ? "connected" : "offline";
+			relayList.replaceChildren(...relayRows(relays));
 			proxyCard.querySelector("[data-proxy-totals]").textContent = `${data.active} active · ${data.recent_clients.length} recent clients · ${data.requests} requests · ${data.failovers} failovers`;
 			proxyCard.querySelector("[data-proxy-clients]").replaceChildren(...data.recent_clients.map((client) => {
 				const row = document.createElement("li");
@@ -455,6 +484,9 @@ if (proxyCard) {
 		} catch {
 			status.textContent = "Counters unavailable ○";
 			delete status.dataset.ready;
+			relaySummary.textContent = "Relay status unavailable ○";
+			relaySummary.dataset.relayState = "offline";
+			relayList.replaceChildren(...relayRows([]));
 		} finally {
 			setTimeout(updateProxy, 5_000);
 		}

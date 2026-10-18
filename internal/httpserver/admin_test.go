@@ -32,7 +32,7 @@ func TestDashboardShowsCycleStatusAndNextPulse(t *testing.T) {
 			t.Errorf("dashboard does not contain %q", expected)
 		}
 	}
-	for _, expected := range []string{"Account activity", "Lifetime tokens", "Tokens by account", `value="all"`, "data-activity-tooltip", "data-proxy-card", "OpenAI proxy", "Since broker restart"} {
+	for _, expected := range []string{"Account activity", "Lifetime tokens", "Tokens by account", `value="all"`, "data-activity-tooltip", "data-proxy-card", "OpenAI proxy", "Redundant relay edges", "data-relay-summary", "data-proxy-relays", "Since broker restart"} {
 		if !strings.Contains(body, expected) {
 			t.Errorf("profile dashboard does not contain %q", expected)
 		}

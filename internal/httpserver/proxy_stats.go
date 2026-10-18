@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"context"
+	"database/sql"
 	"net/http"
 	"sort"
 	"sync"
@@ -29,6 +31,17 @@ type proxySnapshot struct {
 	ScrubbedRemovedBytes  uint64             `json:"scrubbed_removed_bytes"`
 	ScrubRejectedRequests uint64             `json:"scrub_rejected_requests"`
 	RecentClients         []proxyClientStats `json:"recent_clients"`
+	Relays                []relayStatus      `json:"relays"`
+}
+
+type relayStatus struct {
+	ID               string     `json:"id"`
+	State            string     `json:"state"`
+	Connected        bool       `json:"connected"`
+	Ready            bool       `json:"ready"`
+	ProtocolVersion  int        `json:"protocol_version"`
+	CacheGeneratedAt *time.Time `json:"cache_generated_at"`
+	LastSeen         time.Time  `json:"last_seen"`
 }
 
 type proxyStats struct {
@@ -107,5 +120,44 @@ func (s *Server) internalProxy(w http.ResponseWriter, r *http.Request) error {
 	}
 	snapshot := s.proxyStats.snapshot()
 	snapshot.Ready = s.App.Ready
+	var err error
+	snapshot.Relays, err = s.relayStatuses(r.Context(), time.Now())
+	if err != nil {
+		return err
+	}
 	return writeJSON(w, 200, snapshot)
+}
+
+func (s *Server) relayStatuses(ctx context.Context, now time.Time) ([]relayStatus, error) {
+	rows, err := s.App.Store.DB.QueryContext(ctx, `SELECT relay_id,protocol_version,cache_generated_at_ms,ready,last_seen_at_ms FROM relay_heartbeats ORDER BY last_seen_at_ms DESC,relay_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	statuses := []relayStatus{}
+	cutoff := now.Add(-3 * time.Duration(max(5, s.App.Config.RelaySyncSeconds)) * time.Second).UnixMilli()
+	for rows.Next() {
+		var status relayStatus
+		var cache sql.NullInt64
+		var ready, lastSeen int64
+		if err := rows.Scan(&status.ID, &status.ProtocolVersion, &cache, &ready, &lastSeen); err != nil {
+			return nil, err
+		}
+		status.LastSeen = time.UnixMilli(lastSeen).UTC()
+		status.Connected = lastSeen >= cutoff
+		status.Ready = status.Connected && ready == 1
+		status.State = "offline"
+		if status.Connected {
+			status.State = "connected"
+		}
+		if status.Ready {
+			status.State = "ready"
+		}
+		if cache.Valid {
+			generated := time.UnixMilli(cache.Int64).UTC()
+			status.CacheGeneratedAt = &generated
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses, rows.Err()
 }
