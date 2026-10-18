@@ -31,6 +31,9 @@ type Server struct {
 	App                                       *broker.Application
 	proxyClient                               *http.Client
 	proxyStats                                proxyStats
+	proxyScrubPolicy                          responsesproxy.ScrubPolicy
+	proxyLargeOnce                            sync.Once
+	proxyLargeGate                            chan struct{}
 	renderer                                  *renderer
 	mux                                       *http.ServeMux
 	loginThrottle, clientAuth, enrollmentAuth *throttle

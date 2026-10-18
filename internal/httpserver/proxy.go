@@ -23,16 +23,63 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) error {
 		return proxyError(w, status, code, message)
 	}
 	defer s.proxyStats.begin(*key)()
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, responsesproxy.MaxRequest))
+	isResponse := r.URL.Path == "/v1/responses"
+	policy := s.proxyScrubPolicy
+	if policy.TriggerBytes == 0 {
+		policy = responsesproxy.DefaultScrubPolicy
+	}
+	if isResponse && r.ContentLength > responsesproxy.MaxInboundRequest {
+		return proxyError(w, 413, "request_too_large", "Request body exceeds the broker limit.")
+	}
+	var releaseLarge func()
+	if isResponse && (r.ContentLength < 0 || r.ContentLength >= int64(policy.TriggerBytes)) {
+		s.proxyLargeOnce.Do(func() { s.proxyLargeGate = make(chan struct{}, 1) })
+		select {
+		case s.proxyLargeGate <- struct{}{}:
+			releaseLarge = func() { <-s.proxyLargeGate }
+			defer func() {
+				if releaseLarge != nil {
+					releaseLarge()
+				}
+			}()
+		case <-r.Context().Done():
+			return nil
+		}
+	}
+	limit := int64(responsesproxy.MaxRequest)
+	if isResponse {
+		limit = responsesproxy.MaxInboundRequest
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
-			return proxyError(w, 413, "request_too_large", "Request body exceeds 64 MiB.")
+			return proxyError(w, 413, "request_too_large", "Request body exceeds the broker limit.")
 		}
 		return proxyError(w, 400, "invalid_request", "Request body could not be read.")
 	}
-	if r.URL.Path == "/v1/responses" {
+	if isResponse {
 		body = responsesproxy.PrepareNotice(body)
+		result, scrubErr := responsesproxy.Scrub(body, policy)
+		if scrubErr != nil {
+			s.proxyStats.rejectScrub()
+			if errors.Is(scrubErr, responsesproxy.ErrInvalidScrubRequest) && len(body) <= responsesproxy.MaxRequest {
+				return proxyError(w, 400, "invalid_request", "Large Responses request is not valid JSON.")
+			}
+			return proxyError(w, 413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
+		}
+		body = result.Body
+		if result.Changed {
+			s.proxyStats.scrub(result.BeforeBytes, result.AfterBytes)
+		}
+		if len(body) > responsesproxy.MaxRequest {
+			s.proxyStats.rejectScrub()
+			return proxyError(w, 413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
+		}
+	}
+	if releaseLarge != nil {
+		releaseLarge()
+		releaseLarge = nil
 	}
 	input := broker.RouteRequest{SessionID: "proxy-" + core.NewID(), TurnID: core.NewID()}
 	attempts := map[string]int{}

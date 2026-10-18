@@ -18,18 +18,25 @@ type proxyClientStats struct {
 }
 
 type proxySnapshot struct {
-	Ready         bool               `json:"ready"`
-	Active        int                `json:"active"`
-	Requests      uint64             `json:"requests"`
-	Failovers     uint64             `json:"failovers"`
-	RecentClients []proxyClientStats `json:"recent_clients"`
+	Ready                 bool               `json:"ready"`
+	Active                int                `json:"active"`
+	Requests              uint64             `json:"requests"`
+	Failovers             uint64             `json:"failovers"`
+	ScrubbedRequests      uint64             `json:"scrubbed_requests"`
+	ScrubbedInputBytes    uint64             `json:"scrubbed_input_bytes"`
+	ScrubbedOutputBytes   uint64             `json:"scrubbed_output_bytes"`
+	ScrubbedRemovedBytes  uint64             `json:"scrubbed_removed_bytes"`
+	ScrubRejectedRequests uint64             `json:"scrub_rejected_requests"`
+	RecentClients         []proxyClientStats `json:"recent_clients"`
 }
 
 type proxyStats struct {
 	sync.Mutex
-	active              int
-	requests, failovers uint64
-	clients             map[string]*proxyClientStats
+	active                                          int
+	requests, failovers                             uint64
+	scrubbed, scrubInput, scrubOutput, scrubRemoved uint64
+	scrubRejected                                   uint64
+	clients                                         map[string]*proxyClientStats
 }
 
 func (s *proxyStats) begin(key auth.ClientKey) func() {
@@ -58,10 +65,25 @@ func (s *proxyStats) begin(key auth.ClientKey) func() {
 
 func (s *proxyStats) failover() { s.Lock(); s.failovers++; s.Unlock() }
 
+func (s *proxyStats) scrub(before, after int) {
+	s.Lock()
+	s.scrubbed++
+	s.scrubInput += uint64(before)
+	s.scrubOutput += uint64(after)
+	s.scrubRemoved += uint64(max(0, before-after))
+	s.Unlock()
+}
+
+func (s *proxyStats) rejectScrub() { s.Lock(); s.scrubRejected++; s.Unlock() }
+
 func (s *proxyStats) snapshot() proxySnapshot {
 	s.Lock()
 	defer s.Unlock()
-	result := proxySnapshot{Active: s.active, Requests: s.requests, Failovers: s.failovers, RecentClients: []proxyClientStats{}}
+	result := proxySnapshot{
+		Active: s.active, Requests: s.requests, Failovers: s.failovers,
+		ScrubbedRequests: s.scrubbed, ScrubbedInputBytes: s.scrubInput, ScrubbedOutputBytes: s.scrubOutput,
+		ScrubbedRemovedBytes: s.scrubRemoved, ScrubRejectedRequests: s.scrubRejected, RecentClients: []proxyClientStats{},
+	}
 	for _, client := range s.clients {
 		if client.Active > 0 || time.Since(client.LastSeen) < 5*time.Minute {
 			result.RecentClients = append(result.RecentClients, *client)
