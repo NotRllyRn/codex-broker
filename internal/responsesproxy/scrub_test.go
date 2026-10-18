@@ -16,6 +16,24 @@ func TestScrubFastPathIsOpaque(t *testing.T) {
 	}
 }
 
+func TestIsCompactionRequest(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		body string
+		want bool
+	}{
+		{"/v1/responses/compact", `{}`, true},
+		{"/v1/responses", `{"input":[{"type":"compaction_trigger"}]}`, true},
+		{"/v1/responses", `{"input":[{"type":"message","content":"compaction_trigger"}]}`, false},
+		{"/v1/responses", `not-json`, false},
+		{"/v1/chat/completions", `{"input":[{"type":"compaction_trigger"}]}`, false},
+	} {
+		if got := IsCompactionRequest(test.path, []byte(test.body)); got != test.want {
+			t.Fatalf("path=%q body=%q got=%t want=%t", test.path, test.body, got, test.want)
+		}
+	}
+}
+
 func TestScrubHistoricalMediaProtectsCurrentTurn(t *testing.T) {
 	oldImage := "data:image/png;base64," + strings.Repeat("a", 1200)
 	currentImage := "data:image/png;base64," + strings.Repeat("b", 100)

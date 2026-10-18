@@ -31,6 +31,7 @@ type proxySnapshot struct {
 	ScrubbedOutputBytes   uint64             `json:"scrubbed_output_bytes"`
 	ScrubbedRemovedBytes  uint64             `json:"scrubbed_removed_bytes"`
 	ScrubRejectedRequests uint64             `json:"scrub_rejected_requests"`
+	NativeCompactionArmed uint64             `json:"native_compaction_armed"`
 	RecentClients         []proxyClientStats `json:"recent_clients"`
 	Relays                []relayStatus      `json:"relays"`
 	Usage                 []proxyModelUsage  `json:"usage"`
@@ -65,7 +66,7 @@ type proxyStats struct {
 	active                                          int
 	requests, failovers                             uint64
 	scrubbed, scrubInput, scrubOutput, scrubRemoved uint64
-	scrubRejected                                   uint64
+	scrubRejected, nativeCompactionArmed            uint64
 	clients                                         map[string]*proxyClientStats
 }
 
@@ -113,6 +114,12 @@ func (s *proxyStats) Scrub(before, after int) { s.scrub(before, after) }
 func (s *proxyStats) rejectScrub() { s.Lock(); s.scrubRejected++; s.Unlock() }
 func (s *proxyStats) RejectScrub() { s.rejectScrub() }
 
+func (s *proxyStats) NativeCompactionArmed() {
+	s.Lock()
+	s.nativeCompactionArmed++
+	s.Unlock()
+}
+
 func (s *proxyStats) snapshot() proxySnapshot {
 	s.Lock()
 	defer s.Unlock()
@@ -120,6 +127,7 @@ func (s *proxyStats) snapshot() proxySnapshot {
 		Active: s.active, Requests: s.requests, Failovers: s.failovers,
 		ScrubbedRequests: s.scrubbed, ScrubbedInputBytes: s.scrubInput, ScrubbedOutputBytes: s.scrubOutput,
 		ScrubbedRemovedBytes: s.scrubRemoved, ScrubRejectedRequests: s.scrubRejected, RecentClients: []proxyClientStats{},
+		NativeCompactionArmed: s.nativeCompactionArmed,
 	}
 	for _, client := range s.clients {
 		if client.Active > 0 || time.Since(client.LastSeen) < 5*time.Minute {

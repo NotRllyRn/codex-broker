@@ -9,12 +9,33 @@ import (
 )
 
 const (
-	MaxInboundRequest = 80 << 20
-	ScrubThreshold    = 56 << 20
-	ScrubTarget       = 50 << 20
+	MaxInboundRequest = 128 << 20
+	ScrubThreshold    = 50 << 20
+	ScrubTarget       = 40 << 20
 	toolOutputLimit   = 256 << 10
 	toolOutputKeep    = 8 << 10
 )
+
+func IsCompactionRequest(path string, body []byte) bool {
+	if path == "/v1/responses/compact" {
+		return true
+	}
+	if path != "/v1/responses" {
+		return false
+	}
+	var request struct {
+		Input []itemHeader `json:"input"`
+	}
+	if json.Unmarshal(body, &request) != nil {
+		return false
+	}
+	for _, item := range request.Input {
+		if item.Type == "compaction_trigger" {
+			return true
+		}
+	}
+	return false
+}
 
 var (
 	ErrInvalidScrubRequest = errors.New("invalid responses request")

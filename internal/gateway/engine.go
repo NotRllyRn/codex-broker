@@ -72,6 +72,7 @@ type Metrics interface {
 	Failover()
 	Scrub(int, int)
 	RejectScrub()
+	NativeCompactionArmed()
 }
 
 type Engine struct {
@@ -136,6 +137,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 		return Error(w, 400, "invalid_request", "Request body could not be read.")
 	}
+	armNativeCompaction := false
 	if isScrubbable {
 		body = responsesproxy.PrepareNotice(body)
 		result, scrubErr := responsesproxy.Scrub(body, policy)
@@ -148,6 +150,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			}
 			return Error(w, 413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
 		}
+		armNativeCompaction = isResponse && result.Changed && !responsesproxy.IsCompactionRequest(r.URL.Path, body)
 		body = result.Body
 		if result.Changed && e.Metrics != nil {
 			e.Metrics.Scrub(result.BeforeBytes, result.AfterBytes)
@@ -257,7 +260,11 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 						_ = e.Authority.ReportFailure(ctx, key.ID, selected.AccountID, terminal.FailureKind)
 					}
 				}
-				if _, copyErr := responsesproxy.CopyNoticeResponse(w, response, notice, nil, observe); copyErr != nil {
+				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction}
+				if e.Metrics != nil {
+					options.OnNativeCompactionArmed = e.Metrics.NativeCompactionArmed
+				}
+				if _, copyErr := responsesproxy.CopyNoticeResponse(w, response, notice, nil, observe, options); copyErr != nil {
 					return Error(w, http.StatusBadGateway, "invalid_upstream_stream", "Upstream stream validation failed.")
 				}
 				return nil

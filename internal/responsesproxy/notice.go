@@ -14,6 +14,13 @@ import (
 
 const NoticePrefix = "msg_codex_broker_"
 
+const NativeCompactionInputTokens int64 = 1_000_000
+
+type StreamOptions struct {
+	ArmNativeCompaction     bool
+	OnNativeCompactionArmed func()
+}
+
 type Notice struct {
 	AccountID, AccountLabel                       string
 	ShortRemainingPercent, WeeklyRemainingPercent *int64
@@ -128,7 +135,7 @@ func AccountNoticeAt(selected Notice, now time.Time) string {
 
 // CopyNoticeResponse validates an SSE response before changing its headers and
 // prefixes only a final assistant answer. Non-SSE responses pass through.
-func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice Notice, report func(NoticeResult), observe func(TerminalResponse)) (NoticeResult, error) {
+func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice Notice, report func(NoticeResult), observe func(TerminalResponse), options StreamOptions) (NoticeResult, error) {
 	notify := func(result NoticeResult) NoticeResult {
 		if report != nil {
 			report(result)
@@ -168,7 +175,7 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 	w.WriteHeader(response.StatusCode)
 	controller := http.NewResponseController(w)
 	_ = controller.Flush()
-	inserted, err := streamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), AccountNotice(notice), firstEventAtMS, observe)
+	inserted, err := streamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), AccountNotice(notice), firstEventAtMS, observe, options)
 	if err != nil {
 		panic(http.ErrAbortHandler)
 	}
@@ -213,10 +220,10 @@ func noticeEvent(frame []byte) map[string]any {
 // StreamNotice preserves real message IDs and output indices. If phase is not
 // available yet, it holds that assistant message until completion identifies it.
 func StreamNotice(w io.Writer, r io.Reader, prefix string) (bool, error) {
-	return streamNotice(w, r, prefix, 0, nil)
+	return streamNotice(w, r, prefix, 0, nil, StreamOptions{})
 }
 
-func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64, observe func(TerminalResponse)) (bool, error) {
+func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64, observe func(TerminalResponse), options StreamOptions) (bool, error) {
 	reader := bufio.NewReader(r)
 	final, started := map[string]bool{}, map[string]bool{}
 	inserted := false
@@ -277,6 +284,23 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 							prefixItem(item)
 						}
 					}
+				}
+			}
+			if event["type"] == "response.completed" && options.ArmNativeCompaction {
+				usage, _ := response["usage"].(map[string]any)
+				if usage == nil {
+					usage = map[string]any{}
+					response["usage"] = usage
+				}
+				outputTokens := int64(0)
+				if value := tokenCount(usage["output_tokens"]); value != nil {
+					outputTokens = *value
+				}
+				usage["input_tokens"] = NativeCompactionInputTokens
+				usage["output_tokens"] = outputTokens
+				usage["total_tokens"] = NativeCompactionInputTokens + outputTokens
+				if options.OnNativeCompactionArmed != nil {
+					options.OnNativeCompactionArmed()
 				}
 			}
 		}
