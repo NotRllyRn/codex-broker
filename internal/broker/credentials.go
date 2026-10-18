@@ -14,6 +14,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/codex"
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/logbook"
+	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 )
@@ -287,14 +288,14 @@ func (s *Service) Refresh(ctx context.Context, public, trigger string) (string, 
 		return "", err
 	}
 	if created {
-		if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, operation) }) {
+		if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, operation, trigger != "PROXY_RESPONSE") }) {
 			_ = s.FailOperation(context.Background(), operation, "SERVICE_STOPPING", "Service is stopping")
 		}
 	}
 	return operation, nil
 }
 
-func (s *Service) runRefresh(ctx context.Context, account Account, operation string) {
+func (s *Service) runRefresh(ctx context.Context, account Account, operation string, refreshProfile bool) {
 	start := time.Now()
 	_ = s.OperationState(ctx, operation, "RUNNING", "READING_USAGE", "Reading complete rate limits")
 	select {
@@ -308,13 +309,17 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 	})
 	if err != nil {
 		_ = s.recordUsageFailure(ctx, account, operation, start, err)
-		s.refreshProfile(ctx, account)
+		if refreshProfile {
+			s.refreshProfile(ctx, account)
+		}
 		return
 	}
 	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil, false); err != nil {
 		return
 	}
-	s.refreshProfile(ctx, account)
+	if refreshProfile {
+		s.refreshProfile(ctx, account)
+	}
 }
 
 func (s *Service) refreshProfile(ctx context.Context, account Account) {
@@ -411,6 +416,12 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		if _, err := db.ExecContext(ctx, `UPDATE usage_current SET snapshot_id=?,selected_limit_id=?,short_raw_slot=?,short_used_percent_raw=?,short_duration_minutes=?,short_resets_at_s=?,short_anomaly=?,weekly_raw_slot=?,weekly_used_percent_raw=?,weekly_duration_minutes=?,weekly_resets_at_s=?,weekly_anomaly=?,complete_read_at_ms=?,last_attempt_at_ms=?,stale=0,last_error_code=NULL,last_error_summary=NULL,source='APP_SERVER',state_version=state_version+1 WHERE account_id=?`, snapshot, nullString(usage.SelectedLimitID), ss, su, sd, sr, sa, ws, wu, wd, wr, wa, now, now, account.ID); err != nil {
 			return err
 		}
+		if err := proxytelemetry.CompleteUsage(ctx, db, account.ID, proxytelemetry.UsageSnapshot{
+			ID: snapshot, AtMS: now, ShortUsed: windowUsed(usage.Short), ShortResetsAtMS: windowResetMS(usage.Short),
+			WeeklyUsed: windowUsed(usage.Weekly), WeeklyResetsAtMS: windowResetMS(usage.Weekly),
+		}); err != nil {
+			return err
+		}
 		if _, err := db.ExecContext(ctx, "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, account.ID); err != nil {
 			return err
 		}
@@ -442,6 +453,21 @@ func windowDuration(window *Window) any {
 		return nil
 	}
 	return pointerAny(window.DurationMinutes)
+}
+
+func windowUsed(window *Window) *int64 {
+	if window == nil {
+		return nil
+	}
+	return window.UsedPercent
+}
+
+func windowResetMS(window *Window) *int64 {
+	if window == nil || window.ResetsAtS == nil {
+		return nil
+	}
+	value := *window.ResetsAtS * 1000
+	return &value
 }
 func windowReset(window *Window) any {
 	if window == nil {

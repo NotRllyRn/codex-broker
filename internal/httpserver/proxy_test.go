@@ -291,6 +291,17 @@ func TestProxyStoresResponseUsageAndCorrelation(t *testing.T) {
 	if requestStarted > upstreamStarted || upstreamStarted > headersAt || headersAt > firstEventAt || firstEventAt > terminalAt {
 		t.Fatalf("timestamps out of order: %d %d %d %d %d", requestStarted, upstreamStarted, headersAt, firstEventAt, terminalAt)
 	}
+	var aggregateRows, attemptRows int
+	if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM proxy_usage_totals WHERE model='gpt-test-result' AND response_count=1 AND total_tokens=150").Scan(&aggregateRows); err != nil || aggregateRows != 2 {
+		t.Fatalf("aggregate rows=%d err=%v", aggregateRows, err)
+	}
+	if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM proxy_response_attempts WHERE proxy_request_id IN (SELECT proxy_request_id FROM proxy_responses) AND model='gpt-test-result'").Scan(&attemptRows); err != nil || attemptRows != 1 {
+		t.Fatalf("attempt rows=%d err=%v", attemptRows, err)
+	}
+	usage, err := s.proxyUsage(context.Background())
+	if err != nil || len(usage) != 2 || usage[0].Model != "all" || usage[1].Model != "gpt-test-result" || usage[1].Lifetime.TotalTokens != 150 {
+		t.Fatalf("usage=%+v err=%v", usage, err)
+	}
 }
 
 func TestProxyTelemetryMapsPublicAccountID(t *testing.T) {

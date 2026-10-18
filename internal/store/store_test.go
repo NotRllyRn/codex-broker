@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -24,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 17 {
+		if version != 18 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -37,6 +38,71 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestMigrationEighteenSeedsLifetimeBeforePruning(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "windowkeeper.db")
+	database, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, entry := range entries {
+		version, parseErr := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if parseErr != nil || version > 17 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := database.ExecContext(ctx, string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := database.ExecContext(ctx, "INSERT INTO schema_migrations VALUES(?,?,?,0)", version, strings.TrimSuffix(entry.Name(), ".sql"), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','p','Account',1,'ACTIVE',1,1)"); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UnixMilli()
+	insert := func(id, responseModel string, terminal int64, tokens int) {
+		t.Helper()
+		_, err := database.ExecContext(ctx, `INSERT INTO proxy_responses(
+			proxy_request_id,account_id,endpoint,request_model,response_model,terminal_status,upstream_attempts,
+			upstream_http_status,request_started_at_ms,upstream_started_at_ms,response_headers_at_ms,
+			first_response_event_at_ms,terminal_event_at_ms,total_tokens
+		) VALUES(?, 'a','/v1/responses','requested',?,'completed',1,200,?,?,?,?,?,?)`,
+			id, responseModel, terminal-1000, terminal-800, terminal-700, terminal-600, terminal, tokens)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("old", "gpt-a", now-8*24*time.Hour.Milliseconds(), 10)
+	insert("recent", "gpt-a", now-24*time.Hour.Milliseconds(), 20)
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var lifetimeCount, lifetimeTokens, rollingCount, rollingTokens, retained int64
+	if err := migrated.DB.QueryRowContext(ctx, "SELECT response_count,total_tokens FROM proxy_usage_totals WHERE period='LIFETIME' AND model='gpt-a'").Scan(&lifetimeCount, &lifetimeTokens); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.DB.QueryRowContext(ctx, "SELECT response_count,total_tokens FROM proxy_usage_totals WHERE period='ROLLING_7D' AND model='gpt-a'").Scan(&rollingCount, &rollingTokens); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.DB.QueryRowContext(ctx, "SELECT count(*) FROM proxy_responses").Scan(&retained); err != nil {
+		t.Fatal(err)
+	}
+	if lifetimeCount != 2 || lifetimeTokens != 30 || rollingCount != 1 || rollingTokens != 20 || retained != 1 {
+		t.Fatalf("lifetime=%d/%d rolling=%d/%d retained=%d", lifetimeCount, lifetimeTokens, rollingCount, rollingTokens, retained)
 	}
 }
 

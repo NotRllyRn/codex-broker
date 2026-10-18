@@ -10,6 +10,7 @@ import (
 
 	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 )
 
 type proxyClientStats struct {
@@ -32,6 +33,21 @@ type proxySnapshot struct {
 	ScrubRejectedRequests uint64             `json:"scrub_rejected_requests"`
 	RecentClients         []proxyClientStats `json:"recent_clients"`
 	Relays                []relayStatus      `json:"relays"`
+	Usage                 []proxyModelUsage  `json:"usage"`
+}
+
+type proxyModelUsage struct {
+	Model    string           `json:"model"`
+	Rolling  proxyUsagePeriod `json:"rolling_7d"`
+	Lifetime proxyUsagePeriod `json:"lifetime"`
+}
+
+type proxyUsagePeriod struct {
+	proxytelemetry.Totals
+	TokensPerMinute    float64  `json:"tokens_per_minute"`
+	TokensPerHour      float64  `json:"tokens_per_hour"`
+	ShortUsagePerHour  *float64 `json:"short_usage_per_active_hour"`
+	WeeklyUsagePerHour *float64 `json:"weekly_usage_per_active_hour"`
 }
 
 type relayStatus struct {
@@ -125,7 +141,80 @@ func (s *Server) internalProxy(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	snapshot.Usage, err = s.proxyUsage(r.Context())
+	if err != nil {
+		return err
+	}
 	return writeJSON(w, 200, snapshot)
+}
+
+func (s *Server) proxyUsage(ctx context.Context) ([]proxyModelUsage, error) {
+	rows, err := proxytelemetry.ReadTotals(ctx, s.App.Store.DB)
+	if err != nil {
+		return nil, err
+	}
+	byModel := map[string]*proxyModelUsage{}
+	all := &proxyModelUsage{Model: "all"}
+	for _, row := range rows {
+		item := byModel[row.Model]
+		if item == nil {
+			item = &proxyModelUsage{Model: row.Model}
+			byModel[row.Model] = item
+		}
+		target, combined := &item.Rolling.Totals, &all.Rolling.Totals
+		if row.Period == proxytelemetry.LifetimePeriod {
+			target, combined = &item.Lifetime.Totals, &all.Lifetime.Totals
+		}
+		*target = row
+		addTotals(combined, row)
+	}
+	result := []proxyModelUsage{*all}
+	models := make([]string, 0, len(byModel))
+	for model := range byModel {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	for _, model := range models {
+		result = append(result, *byModel[model])
+	}
+	for index := range result {
+		result[index].Rolling = withRates(result[index].Rolling.Totals)
+		result[index].Lifetime = withRates(result[index].Lifetime.Totals)
+	}
+	return result, nil
+}
+
+func addTotals(target *proxytelemetry.Totals, value proxytelemetry.Totals) {
+	target.Responses += value.Responses
+	target.ActiveMS += value.ActiveMS
+	target.InputTokens += value.InputTokens
+	target.CachedInputTokens += value.CachedInputTokens
+	target.OutputTokens += value.OutputTokens
+	target.ReasoningOutputTokens += value.ReasoningOutputTokens
+	target.TotalTokens += value.TotalTokens
+	target.ShortSamples += value.ShortSamples
+	target.ShortActiveMS += value.ShortActiveMS
+	target.ShortUsagePercent += value.ShortUsagePercent
+	target.WeeklySamples += value.WeeklySamples
+	target.WeeklyActiveMS += value.WeeklyActiveMS
+	target.WeeklyUsagePercent += value.WeeklyUsagePercent
+}
+
+func withRates(value proxytelemetry.Totals) proxyUsagePeriod {
+	result := proxyUsagePeriod{Totals: value}
+	if value.ActiveMS > 0 {
+		result.TokensPerMinute = float64(value.TotalTokens) * float64(time.Minute/time.Millisecond) / float64(value.ActiveMS)
+		result.TokensPerHour = float64(value.TotalTokens) * float64(time.Hour/time.Millisecond) / float64(value.ActiveMS)
+	}
+	if value.ShortSamples > 0 && value.ShortActiveMS > 0 {
+		rate := float64(value.ShortUsagePercent) * float64(time.Hour/time.Millisecond) / float64(value.ShortActiveMS)
+		result.ShortUsagePerHour = &rate
+	}
+	if value.WeeklySamples > 0 && value.WeeklyActiveMS > 0 {
+		rate := float64(value.WeeklyUsagePercent) * float64(time.Hour/time.Millisecond) / float64(value.WeeklyActiveMS)
+		result.WeeklyUsagePerHour = &rate
+	}
+	return result
 }
 
 func (s *Server) relayStatuses(ctx context.Context, now time.Time) ([]relayStatus, error) {

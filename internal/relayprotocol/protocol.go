@@ -2,7 +2,7 @@ package relayprotocol
 
 import "github.com/NotRllyRn/codex-broker/internal/gateway"
 
-const Version = 1
+const Version = 2
 
 type Client struct {
 	ID, Name, Prefix string

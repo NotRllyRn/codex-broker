@@ -15,6 +15,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/config"
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/events"
+	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 	"github.com/NotRllyRn/codex-broker/internal/webhook"
@@ -542,14 +543,14 @@ func (s *Service) SetPublicEnrollmentOpen(ctx context.Context, enabled bool) err
 func (s *Service) maintenanceLoop(ctx context.Context) {
 	for {
 		now, delay := core.NowMS(), time.Hour
-		cutoff, incidentCutoff := now-30*24*60*60*1000, now-90*24*60*60*1000
+		cutoff, proxyCutoff, incidentCutoff := now-30*24*60*60*1000, now-7*24*60*60*1000, now-90*24*60*60*1000
 		err := s.Store.Write(ctx, func(db store.Executor) error {
 			queries := []struct {
 				query string
 				value int64
 			}{
 				{"DELETE FROM admin_sessions WHERE rowid IN (SELECT rowid FROM admin_sessions WHERE absolute_expires_at_ms<? ORDER BY absolute_expires_at_ms LIMIT 250)", now},
-				{"DELETE FROM usage_snapshots WHERE snapshot_id IN (SELECT snapshot_id FROM usage_snapshots WHERE attempted_at_ms<? ORDER BY attempted_at_ms LIMIT 250)", cutoff},
+				{"DELETE FROM usage_snapshots WHERE snapshot_id IN (SELECT snapshot_id FROM usage_snapshots WHERE attempted_at_ms<? ORDER BY attempted_at_ms LIMIT 1000)", proxyCutoff},
 				{"DELETE FROM webhook_events WHERE event_id IN (SELECT event_id FROM webhook_events WHERE created_at_ms<? ORDER BY created_at_ms LIMIT 250)", cutoff},
 				{"DELETE FROM operations WHERE operation_id IN (SELECT operation_id FROM operations WHERE completed_at_ms<? ORDER BY completed_at_ms LIMIT 250)", cutoff},
 				{"DELETE FROM credential_bundles WHERE bundle_id IN (SELECT bundle_id FROM credential_bundles WHERE state='RETIRED' AND COALESCE(retired_at_ms,created_at_ms)<? ORDER BY COALESCE(retired_at_ms,created_at_ms) LIMIT 250)", cutoff},
@@ -560,9 +561,12 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 					return err
 				}
 			}
-			_, err := db.ExecContext(ctx, "PRAGMA incremental_vacuum(64)")
+			_, err := db.ExecContext(ctx, "PRAGMA incremental_vacuum(1024)")
 			return err
 		})
+		if err == nil {
+			err = proxytelemetry.Prune(ctx, s.Store, proxyCutoff, 1000)
+		}
 		if err != nil {
 			delay = 5 * time.Minute
 		}

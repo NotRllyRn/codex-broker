@@ -131,7 +131,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 		_, err := db.ExecContext(ctx, "DELETE FROM account_exclusions WHERE expires_at_ms<=?", now)
 		return err
 	})
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms,rr.expires_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? LEFT JOIN relay_reservations rr ON rr.account_id=a.account_id AND rr.expires_at_ms>? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID, now)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.snapshot_id,u.complete_read_at_ms,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms,rr.expires_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? LEFT JOIN relay_reservations rr ON rr.account_id=a.account_id AND rr.expires_at_ms>? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +140,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 	for rows.Next() {
 		var account Account
 		var enabled int
-		if err := rows.Scan(&account.ID, &account.PublicID, &account.DisplayName, &account.Workspace, &enabled, &account.CreatedAtMS, &account.AuthState, &account.WorkerState, &account.Email, &account.Plan, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset, &account.ExcludedUntil, &account.CycleState, &account.CycleStarted, &account.RelayReservedUntil); err != nil {
+		if err := rows.Scan(&account.ID, &account.PublicID, &account.DisplayName, &account.Workspace, &enabled, &account.CreatedAtMS, &account.AuthState, &account.WorkerState, &account.Email, &account.Plan, &account.UsageSnapshotID, &account.UsageReadAt, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset, &account.ExcludedUntil, &account.CycleState, &account.CycleStarted, &account.RelayReservedUntil); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled == 1
@@ -197,7 +197,22 @@ func remainingPointer(value sql.NullInt64) *int64 {
 	return &result
 }
 func routeLease(account Account, lease Lease, now int64) RouteLease {
-	return RouteLease{account.PublicID, account.DisplayName, lease.AccessToken, lease.ChatGPTAccountID, lease.ExpiresAtMS, remainingPointer(account.ShortUsed), remainingPointer(account.WeeklyUsed), resetPointer(account.ShortReset, now), resetPointer(account.WeeklyReset, now)}
+	return RouteLease{
+		AccountID: account.PublicID, AccountLabel: account.DisplayName, AccessToken: lease.AccessToken,
+		ChatGPTAccountID: lease.ChatGPTAccountID, UsageSnapshotID: account.UsageSnapshotID.String,
+		ExpiresAtMS: lease.ExpiresAtMS, UsageSnapshotAtMS: account.UsageReadAt.Int64,
+		ShortUsedPercent: nullablePointer(account.ShortUsed), WeeklyUsedPercent: nullablePointer(account.WeeklyUsed),
+		ShortRemainingPercent: remainingPointer(account.ShortUsed), WeeklyRemainingPercent: remainingPointer(account.WeeklyUsed),
+		ShortResetsAtMS: resetPointer(account.ShortReset, now), WeeklyResetsAtMS: resetPointer(account.WeeklyReset, now),
+	}
+}
+
+func nullablePointer(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	result := value.Int64
+	return &result
 }
 func accountReset(account Account, now int64) int64 {
 	var values []int64

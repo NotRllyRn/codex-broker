@@ -7,10 +7,12 @@ import "github.com/NotRllyRn/codex-broker/internal/codex"
 type Account struct {
 	ID, PublicID, DisplayName, Workspace, PreferredMethod, AuthState, WorkerState string
 	CycleState                                                                    string
+	UsageSnapshotID                                                               sql.NullString
 	Enabled, Deleted                                                              bool
 	CreatedAtMS                                                                   int64
 	Email, Plan, LastMethod                                                       sql.NullString
-	LastVerified, ShortUsed, ShortReset, WeeklyUsed, WeeklyReset, ExcludedUntil   sql.NullInt64
+	LastVerified, ShortUsed, ShortReset, WeeklyUsed, WeeklyReset, UsageReadAt     sql.NullInt64
+	ExcludedUntil                                                                 sql.NullInt64
 	CycleStarted                                                                  sql.NullInt64
 	RelayReservedUntil                                                            sql.NullInt64
 }
@@ -46,7 +48,10 @@ type RouteRequest struct {
 
 type RouteLease struct {
 	AccountID, AccountLabel, AccessToken, ChatGPTAccountID string
+	UsageSnapshotID                                        string
 	ExpiresAtMS                                            int64
+	UsageSnapshotAtMS                                      int64
+	ShortUsedPercent, WeeklyUsedPercent                    *int64
 	ShortRemainingPercent, WeeklyRemainingPercent          *int64
 	ShortResetsAtMS, WeeklyResetsAtMS                      *int64
 }

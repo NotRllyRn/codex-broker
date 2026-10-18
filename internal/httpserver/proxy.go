@@ -2,12 +2,11 @@ package httpserver
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"net/http"
 
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 )
 
 type brokerGatewayAuthority struct{ server *Server }
@@ -36,51 +35,21 @@ func (a brokerGatewayAuthority) Route(ctx context.Context, keyID string, input g
 	}
 	return &gateway.Lease{
 		AccountID: selected.AccountID, AccountLabel: selected.AccountLabel, AccessToken: selected.AccessToken,
-		ChatGPTAccountID: selected.ChatGPTAccountID, ExpiresAtMS: selected.ExpiresAtMS,
+		ChatGPTAccountID: selected.ChatGPTAccountID, UsageSnapshotID: selected.UsageSnapshotID,
+		ExpiresAtMS: selected.ExpiresAtMS, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
+		ShortUsedPercent: selected.ShortUsedPercent, WeeklyUsedPercent: selected.WeeklyUsedPercent,
 		ShortRemainingPercent: selected.ShortRemainingPercent, WeeklyRemainingPercent: selected.WeeklyRemainingPercent,
 		ShortResetsAtMS: selected.ShortResetsAtMS, WeeklyResetsAtMS: selected.WeeklyResetsAtMS,
 	}, nil, nil
 }
 
 func (a brokerGatewayAuthority) Observe(ctx context.Context, value gateway.Observation) error {
-	var usageJSON any
-	if len(value.UsageJSON) != 0 {
-		usageJSON = string(value.UsageJSON)
-	}
-	var clientID any
-	if value.ClientID != "" {
-		var exists bool
-		if err := a.server.App.Store.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM client_api_keys WHERE key_id=?)", value.ClientID).Scan(&exists); err != nil {
-			return err
-		}
-		if exists {
-			clientID = value.ClientID
-			_, _ = a.server.App.Store.DB.ExecContext(ctx, "UPDATE client_api_keys SET last_used_at_ms=? WHERE key_id=?", value.TerminalEventAtMS, value.ClientID)
-		}
-	}
-	var accountID string
-	if err := a.server.App.Store.DB.QueryRowContext(ctx, "SELECT account_id FROM accounts WHERE public_token=?", value.AccountID).Scan(&accountID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	_, err := a.server.App.Store.DB.ExecContext(ctx, `INSERT OR IGNORE INTO proxy_responses(
-		proxy_request_id,account_id,client_key_id,thread_id,turn_id,endpoint,request_model,reasoning_effort,
-		request_service_tier,previous_response_id,response_id,response_model,response_service_tier,
-		terminal_status,upstream_attempts,upstream_http_status,request_started_at_ms,upstream_started_at_ms,
-		response_headers_at_ms,first_response_event_at_ms,terminal_event_at_ms,input_tokens,cached_input_tokens,
-		output_tokens,reasoning_output_tokens,total_tokens,usage_json
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		value.RequestID, accountID, clientID, emptyStringNil(value.ThreadID), emptyStringNil(value.TurnID), value.Endpoint,
-		emptyStringNil(value.RequestModel), emptyStringNil(value.ReasoningEffort), emptyStringNil(value.RequestServiceTier),
-		emptyStringNil(value.PreviousResponseID), emptyStringNil(value.ResponseID), emptyStringNil(value.ResponseModel),
-		emptyStringNil(value.ResponseServiceTier), value.TerminalStatus, value.UpstreamAttempts, value.UpstreamHTTPStatus,
-		value.RequestStartedAtMS, value.UpstreamStartedAtMS, value.ResponseHeadersAtMS, value.FirstResponseEventAtMS,
-		value.TerminalEventAtMS, value.InputTokens, value.CachedInputTokens, value.OutputTokens, value.ReasoningTokens,
-		value.TotalTokens, usageJSON)
+	result, err := proxytelemetry.Record(ctx, a.server.App.Store, value)
 	if err != nil && a.server.App.Logs != nil {
 		a.server.App.Logs.Log("ERROR", "proxy.usage.persist", "Proxy response usage could not be stored.")
+	}
+	if err == nil && result.RefreshAccount != "" {
+		_, _ = a.server.App.Service.Refresh(context.WithoutCancel(ctx), result.RefreshAccount, "PROXY_RESPONSE")
 	}
 	return err
 }

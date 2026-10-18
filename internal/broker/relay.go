@@ -54,7 +54,7 @@ func (a *Application) RelaySnapshot(ctx context.Context, relayID string) (relayp
 		}
 		item := routeLease(account, lease, now)
 		leasing = append(leasing, relayprotocol.Lease{
-			Lease:      gateway.Lease{AccountID: item.AccountID, AccountLabel: item.AccountLabel, AccessToken: item.AccessToken, ChatGPTAccountID: item.ChatGPTAccountID, ExpiresAtMS: item.ExpiresAtMS, ShortRemainingPercent: item.ShortRemainingPercent, WeeklyRemainingPercent: item.WeeklyRemainingPercent, ShortResetsAtMS: item.ShortResetsAtMS, WeeklyResetsAtMS: item.WeeklyResetsAtMS},
+			Lease:      gateway.Lease{AccountID: item.AccountID, AccountLabel: item.AccountLabel, AccessToken: item.AccessToken, ChatGPTAccountID: item.ChatGPTAccountID, UsageSnapshotID: item.UsageSnapshotID, ExpiresAtMS: item.ExpiresAtMS, UsageSnapshotAtMS: item.UsageSnapshotAtMS, ShortUsedPercent: item.ShortUsedPercent, WeeklyUsedPercent: item.WeeklyUsedPercent, ShortRemainingPercent: item.ShortRemainingPercent, WeeklyRemainingPercent: item.WeeklyRemainingPercent, ShortResetsAtMS: item.ShortResetsAtMS, WeeklyResetsAtMS: item.WeeklyResetsAtMS},
 			CycleState: account.CycleState, CreatedAtMS: account.CreatedAtMS, Reserve: reserve, PermitEpoch: permit, PermitExpiresAtMS: permitExpiry,
 		})
 	}
@@ -104,7 +104,7 @@ func (a *Application) RelayRoute(ctx context.Context, clientID string, request g
 		}
 		return nil, &gateway.PoolWait{NextRetryAtMS: wait.NextRetryAtMS, RetryAfterSeconds: wait.RetryAfterSeconds}, nil
 	}
-	return &gateway.Lease{AccountID: selected.AccountID, AccountLabel: selected.AccountLabel, AccessToken: selected.AccessToken, ChatGPTAccountID: selected.ChatGPTAccountID, ExpiresAtMS: selected.ExpiresAtMS, ShortRemainingPercent: selected.ShortRemainingPercent, WeeklyRemainingPercent: selected.WeeklyRemainingPercent, ShortResetsAtMS: selected.ShortResetsAtMS, WeeklyResetsAtMS: selected.WeeklyResetsAtMS}, nil, nil
+	return &gateway.Lease{AccountID: selected.AccountID, AccountLabel: selected.AccountLabel, AccessToken: selected.AccessToken, ChatGPTAccountID: selected.ChatGPTAccountID, UsageSnapshotID: selected.UsageSnapshotID, ExpiresAtMS: selected.ExpiresAtMS, UsageSnapshotAtMS: selected.UsageSnapshotAtMS, ShortUsedPercent: selected.ShortUsedPercent, WeeklyUsedPercent: selected.WeeklyUsedPercent, ShortRemainingPercent: selected.ShortRemainingPercent, WeeklyRemainingPercent: selected.WeeklyRemainingPercent, ShortResetsAtMS: selected.ShortResetsAtMS, WeeklyResetsAtMS: selected.WeeklyResetsAtMS}, nil, nil
 }
 
 func (r Router) ActivateRelayReserve(ctx context.Context, relayID, publicID, epoch string, occurredAt int64) error {

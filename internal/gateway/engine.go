@@ -24,12 +24,22 @@ type RouteRequest struct{ SessionID, TurnID, PreferredAccountID, FailedAccountID
 
 type Lease struct {
 	AccountID, AccountLabel, AccessToken, ChatGPTAccountID string
+	UsageSnapshotID                                        string
 	ExpiresAtMS                                            int64
+	UsageSnapshotAtMS                                      int64
+	ShortUsedPercent, WeeklyUsedPercent                    *int64
 	ShortRemainingPercent, WeeklyRemainingPercent          *int64
 	ShortResetsAtMS, WeeklyResetsAtMS                      *int64
 	Reserve                                                bool   `json:"-"`
 	PermitEpoch                                            string `json:"-"`
 	PermitExpiresAtMS                                      int64  `json:"-"`
+}
+
+type AttemptObservation struct {
+	AccountID, UsageSnapshotID, FailureKind                                string
+	Ordinal, UpstreamHTTPStatus                                            int
+	StartedAtMS, EndedAtMS, UsageSnapshotAtMS                              int64
+	ShortUsedPercent, ShortResetsAtMS, WeeklyUsedPercent, WeeklyResetsAtMS *int64
 }
 
 type PoolWait struct {
@@ -46,6 +56,7 @@ type Observation struct {
 	FirstResponseEventAtMS, TerminalEventAtMS                                  int64
 	InputTokens, CachedInputTokens, OutputTokens, ReasoningTokens, TotalTokens *int64
 	UsageJSON                                                                  []byte
+	Attempts                                                                   []AttemptObservation
 }
 
 type Authority interface {
@@ -163,8 +174,10 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	if isResponse {
 		_ = json.Unmarshal(body, &metadata)
 	}
-	input := RouteRequest{SessionID: "proxy-" + core.NewID(), TurnID: core.NewID()}
-	attempts, previous := map[string]int{}, ""
+	requestID := core.NewID()
+	input := RouteRequest{SessionID: "proxy-" + requestID, TurnID: core.NewID()}
+	attemptCounts, previous := map[string]int{}, ""
+	var attemptTrace []AttemptObservation
 	retries, failovers, attemptCount := 0, 0, 0
 	for {
 		selected, wait, routeErr := e.Authority.Route(r.Context(), key.ID, input)
@@ -178,7 +191,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		if selected == nil {
 			return Error(w, 503, "broker_unavailable", "Codex Broker unavailable.")
 		}
-		if attempts[selected.AccountID] > 0 && !(input.FailureKind == "auth" && input.FailedAccountID == selected.AccountID && attempts[selected.AccountID] == 1) {
+		if attemptCounts[selected.AccountID] > 0 && !(input.FailureKind == "auth" && input.FailedAccountID == selected.AccountID && attemptCounts[selected.AccountID] == 1) {
 			return Error(w, 502, "routing_failed", "Broker returned an unavailable account.")
 		}
 		if previous != "" && previous != selected.AccountID {
@@ -190,7 +203,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			retries++
 		}
 		previous = selected.AccountID
-		attempts[selected.AccountID]++
+		attemptCounts[selected.AccountID]++
 		target := Upstream(r.URL.Path)
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
@@ -213,7 +226,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		kind := responsesproxy.FailureKind(response.StatusCode)
-		if kind == "" || kind == "auth" && attempts[selected.AccountID] >= 2 {
+		if kind == "" || kind == "auth" && attemptCounts[selected.AccountID] >= 2 {
 			if isResponse && response.StatusCode == http.StatusOK {
 				notice := Notice(*selected)
 				if failovers > 0 {
@@ -224,13 +237,21 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 				observe := func(terminal responsesproxy.TerminalResponse) {
 					ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 					defer cancel()
+					traced := append(attemptTrace, AttemptObservation{
+						AccountID: selected.AccountID, Ordinal: attemptCount, StartedAtMS: upstreamStartedAt,
+						EndedAtMS: terminal.TerminalEventAtMS, UpstreamHTTPStatus: response.StatusCode,
+						UsageSnapshotID: selected.UsageSnapshotID, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
+						ShortUsedPercent: selected.ShortUsedPercent, ShortResetsAtMS: selected.ShortResetsAtMS,
+						WeeklyUsedPercent: selected.WeeklyUsedPercent, WeeklyResetsAtMS: selected.WeeklyResetsAtMS,
+					})
 					_ = e.Authority.Observe(ctx, Observation{
-						RequestID: core.NewID(), AccountID: selected.AccountID, ClientID: key.ID, ThreadID: threadID, TurnID: turnID, Endpoint: r.URL.Path,
+						RequestID: requestID, AccountID: selected.AccountID, ClientID: key.ID, ThreadID: threadID, TurnID: turnID, Endpoint: r.URL.Path,
 						RequestModel: metadata.Model, ReasoningEffort: metadata.Reasoning.Effort, RequestServiceTier: metadata.ServiceTier, PreviousResponseID: metadata.PreviousResponseID,
 						ResponseID: terminal.ID, ResponseModel: terminal.Model, ResponseServiceTier: terminal.ServiceTier, TerminalStatus: terminal.Status,
 						UpstreamAttempts: attemptCount, UpstreamHTTPStatus: response.StatusCode, RequestStartedAtMS: requestStartedAt, UpstreamStartedAtMS: upstreamStartedAt,
 						ResponseHeadersAtMS: responseHeadersAt, FirstResponseEventAtMS: terminal.FirstEventAtMS, TerminalEventAtMS: terminal.TerminalEventAtMS,
 						InputTokens: terminal.InputTokens, CachedInputTokens: terminal.CachedInputTokens, OutputTokens: terminal.OutputTokens, ReasoningTokens: terminal.ReasoningOutputTokens, TotalTokens: terminal.TotalTokens, UsageJSON: terminal.UsageJSON,
+						Attempts: traced,
 					})
 					if terminal.FailureKind != "" {
 						_ = e.Authority.ReportFailure(ctx, key.ID, selected.AccountID, terminal.FailureKind)
@@ -245,6 +266,13 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			return nil
 		}
 		response.Body.Close()
+		attemptTrace = append(attemptTrace, AttemptObservation{
+			AccountID: selected.AccountID, Ordinal: attemptCount, StartedAtMS: upstreamStartedAt,
+			EndedAtMS: responseHeadersAt, UpstreamHTTPStatus: response.StatusCode, FailureKind: kind,
+			UsageSnapshotID: selected.UsageSnapshotID, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
+			ShortUsedPercent: selected.ShortUsedPercent, ShortResetsAtMS: selected.ShortResetsAtMS,
+			WeeklyUsedPercent: selected.WeeklyUsedPercent, WeeklyResetsAtMS: selected.WeeklyResetsAtMS,
+		})
 		input.PreferredAccountID, input.FailedAccountID, input.FailureKind = selected.AccountID, selected.AccountID, kind
 	}
 }
