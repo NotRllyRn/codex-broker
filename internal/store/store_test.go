@@ -24,7 +24,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 15 {
+		if version != 16 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
