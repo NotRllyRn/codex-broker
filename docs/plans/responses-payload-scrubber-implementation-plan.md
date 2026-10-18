@@ -14,9 +14,9 @@ limit even when their model-token usage remains reasonable, especially when old
 screenshots, inline files, or verbose tool results are replayed on every turn.
 
 Add a deterministic, stateless payload scrubber at the existing proxy boundary.
-Requests smaller than 56 MiB keep the current byte-for-byte fast path. At 56 MiB
+Requests smaller than 50 MiB keep the current byte-for-byte fast path. At 50 MiB
 or more, the broker removes replaceable historical bulk until the serialized
-request is no larger than 50 MiB. The scrubber never changes the current turn,
+request is no larger than 40 MiB. The scrubber never changes the current turn,
 never edits opaque reasoning or compaction values, and never separates a tool
 call from its result. If it cannot reach the target safely, it rejects the
 request once with a descriptive `413` and does not contact or retry upstream.
@@ -46,9 +46,9 @@ preserving the protocol and semantic state required for the current turn.
 
 ### 2.3 Success criteria
 
-- A request smaller than 56 MiB follows the existing path without scrubber JSON
+- A request smaller than 50 MiB follows the existing path without scrubber JSON
   parsing, reserialization, or byte changes.
-- A request at or above 56 MiB is reduced to at most 50 MiB before routing.
+- A request at or above 50 MiB is reduced to at most 40 MiB before routing.
 - The newest user message and every item after it are left untouched.
 - System and developer messages are retained.
 - Matching tool calls and results are retained or removed together.
@@ -64,7 +64,8 @@ preserving the protocol and semantic state required for the current turn.
 
 ### 2.4 Non-goals
 
-- Initiating, emulating, or coordinating conversation compaction.
+- Persisting or performing compaction in the broker. Scrubbed normal Responses
+  requests now arm Codex to perform its own native compaction.
 - Persisting scrubbed history on behalf of a client.
 - Uploading inline data to an attachment or Files API.
 - Summarizing content with a model.
@@ -126,10 +127,10 @@ Use binary MiB and exact serialized UTF-8 byte counts.
 
 | Budget | Value | Purpose |
 | --- | ---: | --- |
-| Normal fast-path ceiling | `< 56 MiB` | Forward without scrubber work |
-| Scrub trigger | `56 MiB` | Begin historical cleanup |
-| Scrub target | `50 MiB` | Leave 14 MiB below the hard boundary |
-| Recoverable inbound ceiling | `80 MiB` | Permit bounded rescue of an already oversized thread |
+| Normal fast-path ceiling | `< 50 MiB` | Forward without scrubber work |
+| Scrub trigger | `50 MiB` | Begin historical cleanup |
+| Scrub target | `40 MiB` | Leave 24 MiB below the hard boundary |
+| Recoverable inbound ceiling | `128 MiB` | Permit bounded rescue of an already oversized thread |
 | Existing outbound hard ceiling | `64 MiB` | Never forward at or above this boundary |
 | Concurrent large scrubs | `1` | Bound transient JSON memory |
 
@@ -180,10 +181,10 @@ For exactly `POST /v1/responses`:
 
 1. Authenticate the broker client as today.
 2. Use `Content-Length` for admission:
-   - known length below 56 MiB: retain the normal concurrent path;
-   - known length at or above 56 MiB: acquire the single large-request gate;
+   - known length below 50 MiB: retain the normal concurrent path;
+   - known length at or above 50 MiB: acquire the single large-request gate;
    - unknown length: acquire the gate before reading.
-3. Read through `http.MaxBytesReader` with the 80 MiB inbound ceiling.
+3. Read through `http.MaxBytesReader` with the 128 MiB inbound ceiling.
 4. Run existing broker-notice removal.
 5. Call `Scrub` once.
 6. If cleanup fails or remains above the target, return `413` before calling
@@ -208,7 +209,7 @@ Use the standard library and avoid a new JSON dependency.
 6. Marshal only after a cleanup phase changed something.
 
 This intentionally favors a small, auditable implementation over a streaming
-JSON editor. The 80 MiB input cap and one-scrub gate provide the memory bound.
+JSON editor. The 128 MiB input cap and one-scrub gate provide the memory bound.
 
 ### 3.5 Protected region
 
@@ -244,7 +245,7 @@ not disturb pairing.
 ### 3.7 Cleanup phases
 
 Run phases in the following order. After each phase, serialize and measure. Stop
-as soon as the body is at most 50 MiB.
+as soon as the body is at most 40 MiB.
 
 #### Phase A: discard a superseded prefix
 
@@ -327,7 +328,7 @@ context.
 - Cleanup order is input order, never map iteration order.
 - The scrubber runs at most once per incoming request.
 - Account retry/failover uses the already-scrubbed body.
-- A result below 56 MiB takes the fast path if presented again, making cleanup
+- A result below 50 MiB takes the fast path if presented again, making cleanup
   naturally idempotent.
 - No upstream call begins until the final byte count is accepted.
 
@@ -367,7 +368,7 @@ omitted unless existing operations conventions require it.
 
 ### 3.12 Security properties
 
-- Authentication occurs before allocating the expanded 80 MiB allowance.
+- Authentication occurs before allocating the expanded 128 MiB allowance.
 - A single authenticated client cannot start concurrent scrub parses.
 - Request contents remain memory-only.
 - Placeholder construction never includes attacker-controlled filenames,
@@ -393,7 +394,7 @@ change. Prefer table-driven dispatch over a large recursive generic walker.
 ### Phase 2: proxy integration
 
 1. Add the large-request gate to `Server`.
-2. Give `/v1/responses` the 80 MiB authenticated inbound allowance.
+2. Give `/v1/responses` the 128 MiB authenticated inbound allowance.
 3. Run notice cleanup followed by `Scrub` before routing.
 4. Map typed errors to `400` or `413`.
 5. Assert the accepted body is below the outbound boundary.
@@ -418,7 +419,7 @@ go test ./...
 go test -race ./internal/responsesproxy ./internal/httpserver
 ```
 
-Add a focused benchmark for a synthetic 56–80 MiB request. The benchmark is an
+Add a focused benchmark for a synthetic 50–128 MiB request. The benchmark is an
 engineering guardrail, not a release-blocking absolute performance target.
 
 ## 5. Test specification
@@ -431,10 +432,10 @@ engineering guardrail, not a release-blocking absolute performance target.
 
 ### 5.2 Boundary behavior
 
-- Exactly 56 MiB enters cleanup.
-- Successful cleanup reaches 50 MiB or less.
-- Exactly 80 MiB is accepted for attempted rescue.
-- More than 80 MiB returns `413` without parsing or routing.
+- Exactly 50 MiB enters cleanup.
+- Successful cleanup reaches 40 MiB or less.
+- Exactly 128 MiB is accepted for attempted rescue.
+- More than 128 MiB returns `413` without parsing or routing.
 - No accepted body reaches upstream at or above 64 MiB.
 
 ### 5.3 Media replacements
@@ -513,8 +514,8 @@ engineering guardrail, not a release-blocking absolute performance target.
 | A future Responses variant is misclassified | Rewrite only explicit known shapes; treat everything else as opaque |
 | Tool history becomes invalid | Index `call_id`; delete only closed pairs inside complete turns |
 | Current reasoning continuity is damaged | Protect the latest user message and every following item |
-| JSON parsing causes excessive memory | 80 MiB cap, raw messages, and one concurrent scrub |
-| Cleanup changes every request unnecessarily | Zero-parse fast path below 56 MiB |
+| JSON parsing causes excessive memory | 128 MiB cap, raw messages, and one concurrent scrub |
+| Cleanup changes every request unnecessarily | Zero-parse fast path below 50 MiB |
 | A scrubbed request is replayed differently during failover | Scrub once before routing and reuse the same byte slice |
 | Placeholders leak sensitive metadata | Include only fixed text and numeric byte counts |
 | Cleanup is insufficient | Evict complete old turns, then fail once with a deterministic `413` |
