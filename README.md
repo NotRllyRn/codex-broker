@@ -93,8 +93,15 @@ For example, using a key held in `BROKER_CLIENT_KEY`:
 curl --cacert deployment/certs/ca.crt https://192.168.1.20:8787/v1/responses \
   -H "Authorization: Bearer $BROKER_CLIENT_KEY" \
   -H 'Content-Type: application/json' \
+  -H 'X-Codex-Broker-Thread-ID: thread-123' \
+  -H 'X-Codex-Broker-Turn-ID: turn-456' \
   -d '{"model":"YOUR_CODEX_MODEL","input":"Hello","store":false,"stream":true}'
 ```
+
+The optional broker-only thread and turn headers associate all model and tool
+iterations with their originating conversation and user turn. Keep each value
+stable for its scope. The broker records terminal token usage and timing but
+strips both headers before contacting OpenAI.
 
 The broker preserves Codex Responses events and prefixes each streamed final
 answer with the selected account and cached remaining quota:
@@ -124,7 +131,8 @@ the result; depleted, disabled, or busy accounts cannot start a new pulse.
 
 The dashboard shows active requests, recent client keys, request totals, and
 account failovers since restart. When the pool has a known retry time, requests
-return `429` with `Retry-After` immediately. No inference history is retained.
+return `429` with `Retry-After` immediately. No prompt or response content is
+retained.
 The lease API remains available for Pi, Hermes, and T3 Code.
 
 ### Pi

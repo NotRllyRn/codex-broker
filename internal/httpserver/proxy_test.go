@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -158,6 +159,16 @@ func proxyMethodRequest(server *Server, key, method, path, body string) *httptes
 	return w
 }
 
+func proxyCorrelatedRequest(server *Server, key, threadID, turnID, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+key)
+	r.Header.Set(responsesproxy.ThreadIDHeader, threadID)
+	r.Header.Set(responsesproxy.TurnIDHeader, turnID)
+	w := httptest.NewRecorder()
+	server.middleware(server.mux).ServeHTTP(w, r)
+	return w
+}
+
 func TestProxyCodexRoutes(t *testing.T) {
 	tests := []struct {
 		method, path, upstream string
@@ -234,6 +245,110 @@ const proxyStatusStream = "data: {\"type\":\"response.created\",\"response\":{\"
 	"data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"item_id\":\"msg_answer\",\"content_index\":0,\"delta\":\"Hello\"}\n\n" +
 	"data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"msg_answer\",\"type\":\"message\",\"role\":\"assistant\",\"phase\":\"final_answer\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}}\n\n" +
 	"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n"
+
+func proxyUsageStream(id, status string, total int) string {
+	terminal := fmt.Sprintf(`data: {"type":"response.%s","response":{"id":%q,"model":"gpt-test-result","service_tier":"priority","output":[],"usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":80},"output_tokens":30,"output_tokens_details":{"reasoning_tokens":12},"total_tokens":%d,"future_counter":7}}}`+"\n\n", status, id, total)
+	return strings.Replace(proxyStatusStream, `data: {"type":"response.completed","response":{"output":[]}}`+"\n\n", terminal, 1)
+}
+
+func TestProxyStoresResponseUsageAndCorrelation(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.Header.Get(responsesproxy.ThreadIDHeader) != "" || r.Header.Get(responsesproxy.TurnIDHeader) != "" {
+			t.Error("broker correlation headers reached upstream")
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyUsageStream("resp_123", "completed", 150)))}, nil
+	})
+	got := proxyCorrelatedRequest(s, key.Token, "thread-1", "turn-1", `{"model":"gpt-test-request","service_tier":"default","previous_response_id":"resp_122","reasoning":{"effort":"high"},"input":[]}`)
+	if got.Code != http.StatusOK {
+		t.Fatalf("response=%d %s", got.Code, got.Body.String())
+	}
+	var accountID, clientKeyID, threadID, turnID, endpoint, requestModel, effort, requestTier string
+	var previousID, responseID, responseModel, responseTier, status, usageJSON string
+	var attempts, httpStatus, inputTokens, cachedTokens, outputTokens, reasoningTokens, totalTokens int64
+	var requestStarted, upstreamStarted, headersAt, firstEventAt, terminalAt int64
+	err := s.App.Store.DB.QueryRow(`SELECT
+		account_id,client_key_id,thread_id,turn_id,endpoint,request_model,reasoning_effort,request_service_tier,
+		previous_response_id,response_id,response_model,response_service_tier,terminal_status,upstream_attempts,upstream_http_status,
+		request_started_at_ms,upstream_started_at_ms,response_headers_at_ms,first_response_event_at_ms,terminal_event_at_ms,
+		input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens,usage_json
+		FROM proxy_responses`).Scan(
+		&accountID, &clientKeyID, &threadID, &turnID, &endpoint, &requestModel, &effort, &requestTier,
+		&previousID, &responseID, &responseModel, &responseTier, &status, &attempts, &httpStatus,
+		&requestStarted, &upstreamStarted, &headersAt, &firstEventAt, &terminalAt,
+		&inputTokens, &cachedTokens, &outputTokens, &reasoningTokens, &totalTokens, &usageJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accountID != "account0" || clientKeyID != key.ID || threadID != "thread-1" || turnID != "turn-1" || endpoint != "/v1/responses" ||
+		requestModel != "gpt-test-request" || effort != "high" || requestTier != "default" || previousID != "resp_122" ||
+		responseID != "resp_123" || responseModel != "gpt-test-result" || responseTier != "priority" || status != "completed" ||
+		attempts != 1 || httpStatus != 200 || inputTokens != 120 || cachedTokens != 80 || outputTokens != 30 ||
+		reasoningTokens != 12 || totalTokens != 150 || !strings.Contains(usageJSON, `"future_counter":7`) {
+		t.Fatalf("stored response telemetry does not match the proxied response")
+	}
+	if requestStarted > upstreamStarted || upstreamStarted > headersAt || headersAt > firstEventAt || firstEventAt > terminalAt {
+		t.Fatalf("timestamps out of order: %d %d %d %d %d", requestStarted, upstreamStarted, headersAt, firstEventAt, terminalAt)
+	}
+}
+
+func TestProxyGroupsResponsesByThreadAndTurn(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	calls := 0
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(proxyUsageStream(fmt.Sprintf("resp_%d", calls), "completed", calls)))}, nil
+	})
+	for _, value := range []struct{ thread, turn string }{{"thread-a", "turn-1"}, {"thread-a", "turn-1"}, {"thread-a", "turn-2"}, {"thread-b", "turn-1"}} {
+		if got := proxyCorrelatedRequest(s, key.Token, value.thread, value.turn, `{"input":[]}`); got.Code != http.StatusOK {
+			t.Fatalf("response=%d %s", got.Code, got.Body.String())
+		}
+	}
+	var responses, turns, tokens int
+	if err := s.App.Store.DB.QueryRow("SELECT count(*),count(DISTINCT turn_id),sum(total_tokens) FROM proxy_responses WHERE thread_id='thread-a'").Scan(&responses, &turns, &tokens); err != nil {
+		t.Fatal(err)
+	}
+	if responses != 3 || turns != 2 || tokens != 6 {
+		t.Fatalf("thread-a responses=%d turns=%d tokens=%d", responses, turns, tokens)
+	}
+}
+
+func TestProxyUsageHandlesMissingCorrelationUsageAndFailover(t *testing.T) {
+	s, key := proxyFixture(t, 2)
+	calls := 0
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("quota"))}, nil
+		}
+		stream := strings.Replace(proxyStatusStream, "response.completed", "response.failed", 1)
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(stream))}, nil
+	})
+	if got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`); got.Code != http.StatusOK {
+		t.Fatalf("response=%d %s", got.Code, got.Body.String())
+	}
+	var accountID, status string
+	var threadID, turnID, usage sql.NullString
+	var attempts int
+	if err := s.App.Store.DB.QueryRow("SELECT account_id,thread_id,turn_id,terminal_status,upstream_attempts,usage_json FROM proxy_responses").Scan(&accountID, &threadID, &turnID, &status, &attempts, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if accountID != "account1" || threadID.Valid || turnID.Valid || status != "failed" || attempts != 2 || usage.Valid {
+		t.Fatalf("account=%q thread=%#v turn=%#v status=%q attempts=%d usage=%#v", accountID, threadID, turnID, status, attempts, usage)
+	}
+}
+
+func TestProxyRejectsLongCorrelationIdentifiers(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		t.Fatal("unexpected upstream request")
+		return nil, nil
+	})
+	got := proxyCorrelatedRequest(s, key.Token, strings.Repeat("x", 201), "turn", `{"input":[]}`)
+	if got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), "invalid_correlation_id") {
+		t.Fatalf("response=%d %s", got.Code, got.Body.String())
+	}
+}
 
 func TestProxyResponsesStatusShowsRetryAndFailover(t *testing.T) {
 	for _, test := range []struct {
