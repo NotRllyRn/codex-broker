@@ -86,6 +86,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		defer e.Metrics.Begin(*key)()
 	}
 	isResponse := r.URL.Path == "/v1/responses"
+	isScrubbable := isResponse || r.URL.Path == "/v1/responses/compact"
 	threadID, turnID := strings.TrimSpace(r.Header.Get(responsesproxy.ThreadIDHeader)), strings.TrimSpace(r.Header.Get(responsesproxy.TurnIDHeader))
 	if utf8.RuneCountInString(threadID) > 200 || utf8.RuneCountInString(turnID) > 200 {
 		return Error(w, http.StatusBadRequest, "invalid_correlation_id", "Thread and turn identifiers must not exceed 200 characters.")
@@ -94,11 +95,11 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	if policy.TriggerBytes == 0 {
 		policy = responsesproxy.DefaultScrubPolicy
 	}
-	if isResponse && r.ContentLength > responsesproxy.MaxInboundRequest {
+	if isScrubbable && r.ContentLength > responsesproxy.MaxInboundRequest {
 		return Error(w, 413, "request_too_large", "Request body exceeds the broker limit.")
 	}
 	var releaseLarge func()
-	if isResponse && (r.ContentLength < 0 || r.ContentLength >= int64(policy.TriggerBytes)) {
+	if isScrubbable && (r.ContentLength < 0 || r.ContentLength >= int64(policy.TriggerBytes)) {
 		e.largeOnce.Do(func() { e.largeGate = make(chan struct{}, 1) })
 		select {
 		case e.largeGate <- struct{}{}:
@@ -113,7 +114,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	limit := int64(responsesproxy.MaxRequest)
-	if isResponse {
+	if isScrubbable {
 		limit = responsesproxy.MaxInboundRequest
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
@@ -124,7 +125,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 		return Error(w, 400, "invalid_request", "Request body could not be read.")
 	}
-	if isResponse {
+	if isScrubbable {
 		body = responsesproxy.PrepareNotice(body)
 		result, scrubErr := responsesproxy.Scrub(body, policy)
 		if scrubErr != nil {

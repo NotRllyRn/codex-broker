@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,55 +14,87 @@ import (
 )
 
 func TestProxyScrubsOnceBeforeFailover(t *testing.T) {
-	s, key := proxyFixture(t, 2)
-	body := scrubRequestBody(t, true)
-	s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
-	var forwarded [][]byte
-	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
-		value, _ := io.ReadAll(r.Body)
-		forwarded = append(forwarded, value)
-		status := http.StatusOK
-		if len(forwarded) == 1 {
-			status = http.StatusTooManyRequests
-		}
-		return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
-	})
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			s, key := proxyFixture(t, 2)
+			body := scrubRequestBody(t, true)
+			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			var forwarded [][]byte
+			s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+				value, _ := io.ReadAll(r.Body)
+				forwarded = append(forwarded, value)
+				status := http.StatusOK
+				if len(forwarded) == 1 {
+					status = http.StatusTooManyRequests
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("ok"))}, nil
+			})
 
-	got := proxyRequest(s, key.Token, "/v1/responses", string(body))
-	snapshot := s.proxyStats.snapshot()
-	if got.Code != http.StatusOK || len(forwarded) != 2 || !bytes.Equal(forwarded[0], forwarded[1]) {
-		t.Fatalf("status=%d calls=%d", got.Code, len(forwarded))
-	}
-	if snapshot.ScrubbedRequests != 1 || snapshot.ScrubbedInputBytes != uint64(len(body)) || snapshot.ScrubbedOutputBytes >= snapshot.ScrubbedInputBytes || snapshot.ScrubbedRemovedBytes != snapshot.ScrubbedInputBytes-snapshot.ScrubbedOutputBytes {
-		t.Fatalf("snapshot=%+v", snapshot)
+			got := proxyRequest(s, key.Token, path, string(body))
+			snapshot := s.proxyStats.snapshot()
+			if got.Code != http.StatusOK || len(forwarded) != 2 || !bytes.Equal(forwarded[0], forwarded[1]) {
+				t.Fatalf("status=%d calls=%d", got.Code, len(forwarded))
+			}
+			if snapshot.ScrubbedRequests != 1 || snapshot.ScrubbedInputBytes != uint64(len(body)) || snapshot.ScrubbedOutputBytes >= snapshot.ScrubbedInputBytes || snapshot.ScrubbedRemovedBytes != snapshot.ScrubbedInputBytes-snapshot.ScrubbedOutputBytes {
+				t.Fatalf("snapshot=%+v", snapshot)
+			}
+		})
 	}
 }
 
 func TestProxyRejectsOversizedProtectedTurnWithoutRouting(t *testing.T) {
-	s, key := proxyFixture(t, 1)
-	body := scrubRequestBody(t, false)
-	s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
-	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
-		t.Fatal("unexpected upstream request")
-		return nil, nil
-	})
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			s, key := proxyFixture(t, 1)
+			body := scrubRequestBody(t, false)
+			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+				t.Fatal("unexpected upstream request")
+				return nil, nil
+			})
 
-	got := proxyRequest(s, key.Token, "/v1/responses", string(body))
-	if got.Code != http.StatusRequestEntityTooLarge || !strings.Contains(got.Body.String(), "request_too_large_after_scrub") || s.proxyStats.snapshot().ScrubRejectedRequests != 1 {
-		t.Fatalf("status=%d body=%s snapshot=%+v", got.Code, got.Body.String(), s.proxyStats.snapshot())
+			got := proxyRequest(s, key.Token, path, string(body))
+			if got.Code != http.StatusRequestEntityTooLarge || !strings.Contains(got.Body.String(), "request_too_large_after_scrub") || s.proxyStats.snapshot().ScrubRejectedRequests != 1 {
+				t.Fatalf("status=%d body=%s snapshot=%+v", got.Code, got.Body.String(), s.proxyStats.snapshot())
+			}
+		})
 	}
 }
 
 func TestProxyRejectsMalformedScrubCandidate(t *testing.T) {
-	s, key := proxyFixture(t, 1)
-	s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: 2, TargetBytes: 1}
-	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
-		t.Fatal("unexpected upstream request")
-		return nil, nil
-	})
-	got := proxyRequest(s, key.Token, "/v1/responses", "not-json")
-	if got.Code != http.StatusBadRequest || s.proxyStats.snapshot().ScrubRejectedRequests != 1 {
-		t.Fatalf("status=%d snapshot=%+v", got.Code, s.proxyStats.snapshot())
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			s, key := proxyFixture(t, 1)
+			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: 2, TargetBytes: 1}
+			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+				t.Fatal("unexpected upstream request")
+				return nil, nil
+			})
+			got := proxyRequest(s, key.Token, path, "not-json")
+			if got.Code != http.StatusBadRequest || s.proxyStats.snapshot().ScrubRejectedRequests != 1 {
+				t.Fatalf("status=%d snapshot=%+v", got.Code, s.proxyStats.snapshot())
+			}
+		})
+	}
+}
+
+func TestProxyScrubRoutesRejectAboveRescueLimit(t *testing.T) {
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			s, key := proxyFixture(t, 1)
+			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+				t.Fatal("unexpected upstream request")
+				return nil, nil
+			})
+			request := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+			request.Header.Set("Authorization", "Bearer "+key.Token)
+			request.ContentLength = responsesproxy.MaxInboundRequest + 1
+			response := httptest.NewRecorder()
+			s.mux.ServeHTTP(response, request)
+			if response.Code != http.StatusRequestEntityTooLarge || !strings.Contains(response.Body.String(), "request_too_large") {
+				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+			}
+		})
 	}
 }
 

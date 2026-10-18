@@ -141,11 +141,11 @@ answer with the selected account and cached remaining quota:
 
 Transparent account retries and failovers add `· ↻ retry` or `· ↻ failover`.
 The injected line is removed from replayed input before the next upstream turn.
-Responses requests at or above 56 MiB are reduced to at most 50 MiB before
-routing by replacing old inline media, truncating old tool output, and finally
-removing complete old turns. The newest user turn, opaque reasoning and
-compaction state, and tool-call/result pairing are protected; requests that
-cannot be reduced safely receive `413` without an upstream attempt.
+Responses and standalone compaction requests at or above 56 MiB are reduced to
+at most 50 MiB before routing by replacing old inline media, truncating old tool
+output, and finally removing complete old turns. The newest user turn, opaque
+reasoning and compaction state, and tool-call/result pairing are protected;
+requests that cannot be reduced safely receive `413` without an upstream attempt.
 Compaction, models, images, transcription, thread goals, and non-streaming
 Responses pass through without a notice. Your app must send requests supported
 by ChatGPT Codex; the gateway does not translate Chat Completions or emulate

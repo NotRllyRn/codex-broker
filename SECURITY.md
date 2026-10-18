@@ -13,7 +13,7 @@ Retain only sanitized operation IDs, timestamps, and error codes. Never attach `
   TLS. Their local snapshot and metadata-only event outbox are encrypted. They
   never receive refresh tokens, the broker vault key, database, admin password,
   enrollment key, prompt bodies, response bodies, or attachments.
-- Proxy inference traverses broker memory and is never logged or persisted. Responses bodies below 56 MiB pass through unchanged; larger authenticated bodies are bounded to 80 MiB, scrubbed to 50 MiB before routing, and never forwarded above 64 MiB. Other proxy request bodies remain bounded to 64 MiB. Upstream redirects, cookies, credential headers, and hop-by-hop headers are rejected or stripped. Request cancellation reaches upstream, and responses are never replayed after delivery begins.
+- Proxy inference traverses broker memory and is never logged or persisted. Responses and standalone compaction bodies below 56 MiB pass through unchanged; larger authenticated bodies are bounded to 80 MiB, scrubbed to 50 MiB before routing, and never forwarded above 64 MiB. Other proxy request bodies remain bounded to 64 MiB. Upstream redirects, cookies, credential headers, and hop-by-hop headers are rejected or stripped. Request cancellation reaches upstream, and responses are never replayed after delivery begins.
 - Browser mutations require an authenticated administrator session and CSRF token.
 - Client keys are random, stored only as hashes, and accepted only by machine endpoints.
 - The macOS adapter binds only to loopback, reads its broker client key from Keychain at startup, requires a bearer on Responses requests, discards the caller bearer, and keeps leased credentials and traffic in memory. A malicious same-user process is outside this boundary.
