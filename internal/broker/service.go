@@ -107,6 +107,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 
 func (s *Service) StartBackground(ctx context.Context) {
 	s.runAsync(func() { s.usageLoop(ctx) })
+	s.runAsync(func() { s.resetUsageLoop(ctx) })
 	if s.Config.WindowPulseEnabled {
 		s.runAsync(func() { s.pulseLoop(ctx) })
 	}

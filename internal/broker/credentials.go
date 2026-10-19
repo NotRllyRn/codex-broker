@@ -433,9 +433,15 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		}
 		// A read already in flight when quota was rejected must not undo that rejection.
 		if usage.Short != nil && usage.Short.UsedPercent != nil && usage.Weekly != nil && usage.Weekly.UsedPercent != nil {
+			if err := settleUsageResets(ctx, db, account.ID, now-duration.Milliseconds()); err != nil {
+				return err
+			}
 			if _, err := db.ExecContext(ctx, "DELETE FROM account_quota_blocks WHERE account_id=? AND blocked_at_ms<?", account.ID, now-duration.Milliseconds()); err != nil {
 				return err
 			}
+		}
+		if err := scheduleUsageResets(ctx, db, account.ID, now); err != nil {
+			return err
 		}
 		if _, err := db.ExecContext(ctx, "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, account.ID); err != nil {
 			return err

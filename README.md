@@ -161,7 +161,9 @@ the result; depleted, disabled, or busy accounts cannot start a new pulse.
 The dashboard shows active requests, recent client keys, request totals,
 account failovers, and per-model rolling-seven-day and lifetime proxy usage.
 Usage limits are polled hourly by default; profile statistics are refreshed at
-most once every six hours. Responses use the token counts returned in their
+most once every six hours. Known short and weekly resets also schedule a usage
+refresh after a two-minute grace period. Resets due together share one refresh.
+Responses use the token counts returned in their
 streams and do not trigger usage polls. Quota rejections temporarily exhaust
 an account for every client, regardless of its cached percentages, until the
 first known short/weekly reset or a successful fresh usage poll.
