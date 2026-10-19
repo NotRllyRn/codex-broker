@@ -24,22 +24,13 @@ type RouteRequest struct{ SessionID, TurnID, PreferredAccountID, FailedAccountID
 
 type Lease struct {
 	AccountID, AccountLabel, AccessToken, ChatGPTAccountID string
-	UsageSnapshotID                                        string
 	ExpiresAtMS                                            int64
 	UsageSnapshotAtMS                                      int64
-	ShortUsedPercent, WeeklyUsedPercent                    *int64
 	ShortRemainingPercent, WeeklyRemainingPercent          *int64
 	ShortResetsAtMS, WeeklyResetsAtMS                      *int64
 	Reserve                                                bool   `json:"-"`
 	PermitEpoch                                            string `json:"-"`
 	PermitExpiresAtMS                                      int64  `json:"-"`
-}
-
-type AttemptObservation struct {
-	AccountID, UsageSnapshotID, FailureKind                                string
-	Ordinal, UpstreamHTTPStatus                                            int
-	StartedAtMS, EndedAtMS, UsageSnapshotAtMS                              int64
-	ShortUsedPercent, ShortResetsAtMS, WeeklyUsedPercent, WeeklyResetsAtMS *int64
 }
 
 type PoolWait struct {
@@ -56,7 +47,6 @@ type Observation struct {
 	FirstResponseEventAtMS, TerminalEventAtMS                                  int64
 	InputTokens, CachedInputTokens, OutputTokens, ReasoningTokens, TotalTokens *int64
 	UsageJSON                                                                  []byte
-	Attempts                                                                   []AttemptObservation
 }
 
 type Authority interface {
@@ -180,7 +170,6 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	requestID := core.NewID()
 	input := RouteRequest{SessionID: "proxy-" + requestID, TurnID: core.NewID()}
 	attemptCounts, previous := map[string]int{}, ""
-	var attemptTrace []AttemptObservation
 	retries, failovers, attemptCount := 0, 0, 0
 	for {
 		selected, wait, routeErr := e.Authority.Route(r.Context(), key.ID, input)
@@ -228,7 +217,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 				return Error(w, 503, "relay_cache_unavailable", "Relay state could not be saved safely.")
 			}
 		}
-		kind := responsesproxy.FailureKind(response.StatusCode)
+		kind := responsesproxy.ResponseFailureKind(response)
 		if kind == "" || kind == "auth" && attemptCounts[selected.AccountID] >= 2 {
 			if isResponse && response.StatusCode == http.StatusOK {
 				notice := Notice(*selected)
@@ -240,13 +229,9 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 				observe := func(terminal responsesproxy.TerminalResponse) {
 					ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 					defer cancel()
-					traced := append(attemptTrace, AttemptObservation{
-						AccountID: selected.AccountID, Ordinal: attemptCount, StartedAtMS: upstreamStartedAt,
-						EndedAtMS: terminal.TerminalEventAtMS, UpstreamHTTPStatus: response.StatusCode,
-						UsageSnapshotID: selected.UsageSnapshotID, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
-						ShortUsedPercent: selected.ShortUsedPercent, ShortResetsAtMS: selected.ShortResetsAtMS,
-						WeeklyUsedPercent: selected.WeeklyUsedPercent, WeeklyResetsAtMS: selected.WeeklyResetsAtMS,
-					})
+					if terminal.FailureKind != "" {
+						_ = e.Authority.ReportFailure(ctx, key.ID, selected.AccountID, terminal.FailureKind)
+					}
 					_ = e.Authority.Observe(ctx, Observation{
 						RequestID: requestID, AccountID: selected.AccountID, ClientID: key.ID, ThreadID: threadID, TurnID: turnID, Endpoint: r.URL.Path,
 						RequestModel: metadata.Model, ReasoningEffort: metadata.Reasoning.Effort, RequestServiceTier: metadata.ServiceTier, PreviousResponseID: metadata.PreviousResponseID,
@@ -254,11 +239,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 						UpstreamAttempts: attemptCount, UpstreamHTTPStatus: response.StatusCode, RequestStartedAtMS: requestStartedAt, UpstreamStartedAtMS: upstreamStartedAt,
 						ResponseHeadersAtMS: responseHeadersAt, FirstResponseEventAtMS: terminal.FirstEventAtMS, TerminalEventAtMS: terminal.TerminalEventAtMS,
 						InputTokens: terminal.InputTokens, CachedInputTokens: terminal.CachedInputTokens, OutputTokens: terminal.OutputTokens, ReasoningTokens: terminal.ReasoningOutputTokens, TotalTokens: terminal.TotalTokens, UsageJSON: terminal.UsageJSON,
-						Attempts: traced,
 					})
-					if terminal.FailureKind != "" {
-						_ = e.Authority.ReportFailure(ctx, key.ID, selected.AccountID, terminal.FailureKind)
-					}
 				}
 				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction}
 				if e.Metrics != nil {
@@ -273,13 +254,6 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			return nil
 		}
 		response.Body.Close()
-		attemptTrace = append(attemptTrace, AttemptObservation{
-			AccountID: selected.AccountID, Ordinal: attemptCount, StartedAtMS: upstreamStartedAt,
-			EndedAtMS: responseHeadersAt, UpstreamHTTPStatus: response.StatusCode, FailureKind: kind,
-			UsageSnapshotID: selected.UsageSnapshotID, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
-			ShortUsedPercent: selected.ShortUsedPercent, ShortResetsAtMS: selected.ShortResetsAtMS,
-			WeeklyUsedPercent: selected.WeeklyUsedPercent, WeeklyResetsAtMS: selected.WeeklyResetsAtMS,
-		})
 		input.PreferredAccountID, input.FailedAccountID, input.FailureKind = selected.AccountID, selected.AccountID, kind
 	}
 }

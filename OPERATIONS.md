@@ -42,7 +42,9 @@ An optional `EXPORT` is an immutable manual snapshot. Normal usage, routing, and
 
 A fixed minimal ephemeral turn starts each account's weekly cycle at its rolling `7 days / eligible accounts` release slot (24 hours for seven accounts, 21 hours for eight). Pulses run one account at a time; short-window resets do not trigger extra pulses. When a weekly window expires, the account is held until its next slot. Routing waits when only held accounts remain, preserving the stagger. Existing clustered windows spread out as they expire; externally using a held account can delay its slot until that upstream weekly window expires. Usage reads and credential maintenance continue while held. Pulse attempts appear as `window.pulse` operations and use the normal credential checkpoint path.
 
-The regular usage poll also reads the authenticated Codex profile summary from ChatGPT. The latest successful response is cached per account for the dashboard; a failed profile read marks that cache stale but retains its last good values and does not invalidate otherwise-successful rate-limit evidence.
+Usage limits are polled every 3600 seconds plus 0–30 seconds of jitter by default (`WINDOWKEEPER_USAGE_POLL_SECONDS`). Profile statistics from `/backend-api/wham/profiles/me` are attempted at most once every 21600 seconds per account (`WINDOWKEEPER_PROFILE_POLL_SECONDS`), during a usage refresh. Both settings are exposed in Compose and the NixOS module (`usage.pollSeconds` and `usage.profilePollSeconds`). The latest successful profile is cached for the dashboard; failed reads retain the last good values. Repeated manual refreshes respect the profile interval, including after failures.
+
+An upstream quota rejection overrides cached usage percentages for every client and survives broker restart. The account is temporarily treated as fully exhausted until either known usage window resets or a successful complete usage read that started after the rejection arrives. Failed or already-in-flight reads do not unlock it. With no known reset, it stays blocked until a successful fresh read. Quota failures and completed proxy responses do not initiate extra usage reads. The dashboard marks blocked accounts as usage exhausted while account detail preserves the last reported percentages.
 
 ## Client keys
 
@@ -75,8 +77,10 @@ directly upstream. Clients must use `stream:true`; the broker passes these
 upstream limitations through unchanged.
 Before delivering output, `401/403` reports an auth failure to the router for
 refresh or failover; a refreshed account is tried once more. A second auth failure
-is returned without further replay. `429` reports quota failure and selects
-another account. Other upstream errors pass through. Transport failures and
+is returned without further replay. `429` and recognized quota errors in JSON
+error bodies mark the account exhausted across clients and select another
+account. Streamed quota failures mark the account exhausted for subsequent
+requests without replaying delivered output. Other upstream errors pass through. Transport failures and
 redirects return `502`; a broken response stream is aborted without replay.
 
 Known pool exhaustion returns immediate `429`, `Retry-After`, and an OpenAI-style
@@ -93,11 +97,12 @@ than same-account refreshes. Counters reset on restart. Names and key prefixes
 identify clients. Prompts and response content are not recorded; terminal
 response status, model, timing, and token-usage counters are retained for
 aggregate analysis. Per-model token and active-time totals are updated when a
-response terminates. Response detail and quota snapshots roll off after seven
-days while lifetime totals remain. Quota-per-active-hour statistics only accept
-positive, same-window observations whose account measurement interval was not
-shared by another proxy response; zero-point and reset-spanning observations are
-excluded.
+response terminates. Response detail and usage snapshots roll off after seven
+days while lifetime totals remain. Token counts and throughput come directly
+from Responses streams. Quota-per-hour statistics and their per-attempt
+measurement records have been removed; no error-history table is added.
+Upgrade the broker and relay edges together: the streamlined telemetry uses
+relay protocol version 3.
 Keep the macOS adapter for its ChatGPT-specific behavior until direct routing and
 native Voice routes have been verified on a Mac.
 
@@ -128,5 +133,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state; migration 018 adds per-model rolling and lifetime proxy usage. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state; migration 018 adds per-model rolling and lifetime proxy usage; migration 019 adds shared temporary quota blocks and removes obsolete quota-measurement records/columns while preserving token totals and response details. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change. Removed measurement data remains recoverable from the pre-v19 backup.
 6. Do not require account relogin for a normal upgrade.

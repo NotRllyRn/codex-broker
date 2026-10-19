@@ -69,6 +69,8 @@ assert
     dataDir = "/run/codex-broker";
   });
 assert basic.systemd.services.codex-broker.environment.WINDOWKEEPER_HOST == "127.0.0.1";
+assert basic.systemd.services.codex-broker.environment.WINDOWKEEPER_USAGE_POLL_SECONDS == "3600";
+assert basic.systemd.services.codex-broker.environment.WINDOWKEEPER_PROFILE_POLL_SECONDS == "21600";
 assert basic.systemd.services.codex-broker.serviceConfig.StateDirectoryMode == "0700";
 assert builtins.elem "d /srv/broker/data 0700 codex-broker codex-broker -"
   custom.systemd.tmpfiles.rules;

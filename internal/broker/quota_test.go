@@ -1,0 +1,144 @@
+package broker
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/NotRllyRn/codex-broker/internal/codex"
+	"github.com/NotRllyRn/codex-broker/internal/config"
+	"github.com/NotRllyRn/codex-broker/internal/events"
+	"github.com/NotRllyRn/codex-broker/internal/store"
+	"github.com/NotRllyRn/codex-broker/internal/vault"
+)
+
+func quotaFixture(t *testing.T) (Router, Account) {
+	t.Helper()
+	ctx, root := context.Background(), t.TempDir()
+	db, err := store.Open(ctx, filepath.Join(root, "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	instance, _ := db.InstanceID(ctx)
+	secrets, _ := vault.New(make([]byte, 32), instance)
+	settings := config.Config{UsagePollSeconds: 3600, UsageRefreshConcurrency: 1, ProcessStartConcurrency: 1, AuthConcurrency: 1, WindowPulseConcurrency: 1}
+	service := NewService(db, settings, secrets, codex.NewRuntimeManager(settings, secrets), events.New(10, 1))
+	t.Cleanup(service.Close)
+	now := time.Now()
+	_, err = db.DB.Exec(`
+		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','public','Account',1,'ACTIVE',1,1);
+		INSERT INTO account_state(account_id,auth_state,worker_state,overall_state,usage_state,state_version,updated_at_ms) VALUES('a','VERIFIED','STOPPED','HEALTHY','FRESH',1,1);
+		INSERT INTO usage_current(account_id,short_used_percent_raw,short_resets_at_s,weekly_used_percent_raw,weekly_resets_at_s) VALUES('a',80,?,40,?);
+		INSERT INTO client_api_keys(key_id,name,key_prefix,secret_hash,created_at_ms) VALUES('one','one','one',X'01',1),('two','two','two',X'02',1);
+	`, now.Add(2*time.Hour).Unix(), now.Add(3*24*time.Hour).Unix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "auth")
+	if err := os.Mkdir(home, 0700); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(map[string]any{"tokens": map[string]string{"access_token": testJWT(now.Add(time.Hour).Unix()), "refresh_token": "test"}})
+	if err := os.WriteFile(filepath.Join(home, "auth.json"), body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := secrets.Capture(home, "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.installBundle(ctx, "a", "ACTIVE", payload); err != nil {
+		t.Fatal(err)
+	}
+	router := Router{Store: db, Service: service}
+	accounts, err := router.accounts(ctx, "one", now.UnixMilli())
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("accounts=%+v err=%v", accounts, err)
+	}
+	return router, accounts[0]
+}
+
+func TestQuotaRejectionBlocksAllClientsWithoutUsageRead(t *testing.T) {
+	router, account := quotaFixture(t)
+	ctx := context.Background()
+	lease, wait, err := router.Route(ctx, "one", RouteRequest{FailedAccountID: account.PublicID, FailureKind: "quota"})
+	if err != nil || lease != nil || wait == nil {
+		t.Fatalf("lease=%+v wait=%+v err=%v", lease, wait, err)
+	}
+	for _, key := range []string{"one", "two"} {
+		lease, wait, err = router.Route(ctx, key, RouteRequest{})
+		if err != nil || lease != nil || wait == nil {
+			t.Fatalf("key=%s lease=%+v wait=%+v err=%v", key, lease, wait, err)
+		}
+	}
+	var retry, reads int64
+	if err := router.Store.DB.QueryRow("SELECT retry_at_ms FROM account_quota_blocks").Scan(&retry); err != nil {
+		t.Fatal(err)
+	}
+	if retry != account.ShortReset.Int64*1000 {
+		t.Fatalf("retry=%d want first reset=%d", retry, account.ShortReset.Int64*1000)
+	}
+	if err := router.Store.DB.QueryRow("SELECT count(*) FROM operations WHERE kind='usage.refresh'").Scan(&reads); err != nil || reads != 0 {
+		t.Fatalf("reads=%d err=%v", reads, err)
+	}
+	views, err := router.Service.Accounts(ctx)
+	if err != nil || len(views) != 1 || !views[0].QuotaBlocked || *views[0].ShortPercent != 100 || *views[0].WeeklyPercent != 100 {
+		t.Fatalf("views=%+v err=%v", views, err)
+	}
+	var short, weekly int
+	if err := router.Store.DB.QueryRow("SELECT short_used_percent_raw,weekly_used_percent_raw FROM usage_current").Scan(&short, &weekly); err != nil || short != 80 || weekly != 40 {
+		t.Fatalf("cached usage=%d/%d err=%v", short, weekly, err)
+	}
+}
+
+func TestQuotaBlockUnlocksOnEitherReset(t *testing.T) {
+	for _, first := range []string{"short", "weekly"} {
+		t.Run(first, func(t *testing.T) {
+			router, account := quotaFixture(t)
+			now := time.Now().UnixMilli()
+			soon, later := sql.NullInt64{Int64: now/1000 + 60, Valid: true}, sql.NullInt64{Int64: now/1000 + 600, Valid: true}
+			account.ShortReset, account.WeeklyReset = soon, later
+			if first == "weekly" {
+				account.ShortReset, account.WeeklyReset = later, soon
+			}
+			if err := router.blockQuota(context.Background(), account, now); err != nil {
+				t.Fatal(err)
+			}
+			accounts, err := router.accounts(context.Background(), "two", now)
+			if err != nil || !exhausted(accounts[0], now) || exhausted(accounts[0], soon.Int64*1000) {
+				t.Fatalf("accounts=%+v err=%v", accounts, err)
+			}
+		})
+	}
+}
+
+func TestFreshUsageReadUnlocksButInflightReadDoesNot(t *testing.T) {
+	ctx := context.Background()
+	router, account := quotaFixture(t)
+	now := time.Now().UnixMilli()
+	if err := router.blockQuota(ctx, account, now); err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(80), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": account.WeeklyReset.Int64}}
+	if err := router.Service.commitUsage(ctx, account, "inflight", raw, time.Hour, "test", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	var blocks int
+	if err := router.Store.DB.QueryRow("SELECT count(*) FROM account_quota_blocks").Scan(&blocks); err != nil || blocks != 1 {
+		t.Fatalf("inflight cleared block: %d err=%v", blocks, err)
+	}
+	if _, err := router.Store.DB.Exec("UPDATE account_quota_blocks SET blocked_at_ms=blocked_at_ms-1000"); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.Service.commitUsage(ctx, account, "fresh", raw, 0, "test", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	lease, wait, err := router.Route(ctx, "two", RouteRequest{})
+	if err != nil || lease == nil || wait != nil {
+		t.Fatalf("lease=%+v wait=%+v err=%v", lease, wait, err)
+	}
+}

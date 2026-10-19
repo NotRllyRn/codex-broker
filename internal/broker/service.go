@@ -236,7 +236,7 @@ func (s *Service) account(ctx context.Context, public string) (Account, error) {
 }
 
 func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
-	rows, err := s.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,s.worker_state,s.usage_state,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,u.complete_read_at_ms,s.last_routed_at_ms,u.last_error_summary,(SELECT group_concat(l.name, ', ') FROM account_labels al JOIN labels l USING(label_id) WHERE al.account_id=a.account_id),(SELECT kind FROM operations o WHERE o.account_id=a.account_id AND o.state NOT IN('SUCCEEDED','FAILED','CANCELLED') ORDER BY created_at_ms DESC LIMIT 1) FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)`)
+	rows, err := s.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,a.enabled,s.overall_state,s.auth_state,s.worker_state,s.usage_state,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,u.complete_read_at_ms,s.last_routed_at_ms,u.last_error_summary,q.retry_at_ms,(SELECT group_concat(l.name, ', ') FROM account_labels al JOIN labels l USING(label_id) WHERE al.account_id=a.account_id),(SELECT kind FROM operations o WHERE o.account_id=a.account_id AND o.state NOT IN('SUCCEEDED','FAILED','CANCELLED') ORDER BY created_at_ms DESC LIMIT 1) FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) LEFT JOIN account_quota_blocks q USING(account_id) WHERE a.deleted_at_ms IS NULL ORDER BY lower(a.display_name)`)
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +244,9 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 	for rows.Next() {
 		var item AccountSummary
 		var enabled int
-		var short, shortReset, weekly, weeklyReset, last, routed sql.NullInt64
+		var short, shortReset, weekly, weeklyReset, last, routed, blocked sql.NullInt64
 		var evidence, labels, active sql.NullString
-		if err := rows.Scan(&item.AccountID, &item.PublicToken, &item.DisplayName, &enabled, &item.OverallState, &item.AuthState, &item.WorkerState, &item.UsageState, &short, &shortReset, &weekly, &weeklyReset, &last, &routed, &evidence, &labels, &active); err != nil {
+		if err := rows.Scan(&item.AccountID, &item.PublicToken, &item.DisplayName, &enabled, &item.OverallState, &item.AuthState, &item.WorkerState, &item.UsageState, &short, &shortReset, &weekly, &weeklyReset, &last, &routed, &evidence, &blocked, &labels, &active); err != nil {
 			return nil, err
 		}
 		item.Evidence = "No complete usage read yet"
@@ -260,6 +260,15 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 		item.ShortResetMS = secondsPointer(shortReset)
 		item.WeeklyPercent = nullableInt(weekly)
 		item.WeeklyResetMS = secondsPointer(weeklyReset)
+		if blocked.Valid && blocked.Int64 > core.NowMS() {
+			item.QuotaBlocked = true
+			full := int64(100)
+			item.ShortPercent, item.WeeklyPercent = &full, &full
+			item.Evidence = "Upstream usage exhausted; waiting for a window reset or fresh usage poll"
+			if item.Enabled && (item.OverallState == "HEALTHY" || item.OverallState == "WARNING") {
+				item.OverallState = "WARNING"
+			}
+		}
 		item.LastRefreshMS = nullableInt(last)
 		item.LastRoutedMS = nullableInt(routed)
 		if labels.Valid {
@@ -318,6 +327,12 @@ func (s *Service) AccountDetail(ctx context.Context, public string) (map[string]
 	}
 	account["labels"] = labels
 	usage := rowMap(s.Store.DB.QueryRowContext(ctx, "SELECT * FROM usage_current WHERE account_id=?", a.ID), usageColumns)
+	var blockedUntil int64
+	err = s.Store.DB.QueryRowContext(ctx, "SELECT retry_at_ms FROM account_quota_blocks WHERE account_id=?", a.ID).Scan(&blockedUntil)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	account["quota_blocked"] = blockedUntil > core.NowMS()
 	operations, _ := s.OperationsFor(ctx, a.ID, 20)
 	pulses, _ := s.OperationsForKind(ctx, a.ID, "window.pulse", 100)
 	for _, items := range [][]map[string]any{operations, pulses} {

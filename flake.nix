@@ -88,6 +88,7 @@
             WINDOWKEEPER_SESSION_ABSOLUTE_HOURS = toString cfg.session.absoluteHours;
 
             WINDOWKEEPER_USAGE_POLL_SECONDS = toString cfg.usage.pollSeconds;
+            WINDOWKEEPER_PROFILE_POLL_SECONDS = toString cfg.usage.profilePollSeconds;
             WINDOWKEEPER_USAGE_REFRESH_CONCURRENCY = toString cfg.usage.refreshConcurrency;
 
             WINDOWKEEPER_WINDOW_PULSE_ENABLED = boolToStr cfg.windowPulse.enable;
@@ -313,8 +314,13 @@
             usage = {
               pollSeconds = lib.mkOption {
                 type = lib.types.ints.between 60 2147483647;
-                default = 300;
+                default = 3600;
                 description = "Interval (>=60s) between usage-limit polls. Maps to WINDOWKEEPER_USAGE_POLL_SECONDS.";
+              };
+              profilePollSeconds = lib.mkOption {
+                type = lib.types.ints.between 3600 2147483647;
+                default = 21600;
+                description = "Minimum interval between profile-statistics attempts. Maps to WINDOWKEEPER_PROFILE_POLL_SECONDS.";
               };
               refreshConcurrency = lib.mkOption {
                 type = lib.types.ints.between 1 16;

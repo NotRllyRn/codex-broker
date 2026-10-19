@@ -89,7 +89,7 @@ func (s *Server) relayEvents(w http.ResponseWriter, r *http.Request) error {
 			if event.FailureKind != "auth" && event.FailureKind != "quota" && event.FailureKind != "rate_limit" {
 				processErr = core.NewError("RELAY_EVENT_INVALID", "Relay failure event is invalid", 422)
 			} else {
-				processErr = s.App.Router.ReportRelayFailure(r.Context(), event.ClientID, event.AccountID, event.FailureKind)
+				processErr = s.App.Router.ReportRelayFailure(r.Context(), event.ClientID, event.AccountID, event.FailureKind, event.OccurredAtMS)
 			}
 		case "telemetry":
 			if event.Observation == nil {

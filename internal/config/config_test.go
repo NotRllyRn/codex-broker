@@ -21,6 +21,9 @@ func TestLoadValidatesDeploymentBoundaries(t *testing.T) {
 	if settings.RootPath != "/broker" || len(settings.TrustedProxies) != 2 || !settings.TrustedProxies[1].Contains(netip.MustParseAddr("10.1.2.3")) {
 		t.Fatalf("unexpected settings: %#v", settings)
 	}
+	if settings.UsagePollSeconds != 3600 || settings.ProfilePollSeconds != 21600 {
+		t.Fatalf("poll defaults: usage=%d profile=%d", settings.UsagePollSeconds, settings.ProfilePollSeconds)
+	}
 }
 
 func TestLoadRejectsUnsafeProxyAndEnrollmentOrigin(t *testing.T) {

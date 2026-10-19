@@ -157,7 +157,7 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 		}
 		event := noticeEvent(frame)
 		kind, _ := event["type"].(string)
-		if strings.HasPrefix(kind, "response.") {
+		if strings.HasPrefix(kind, "response.") || kind == "error" {
 			firstEventAtMS = time.Now().UnixMilli()
 			break
 		}
@@ -321,10 +321,10 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 		}
 		event := noticeEvent(frame)
 		item, _ := event["item"].(map[string]any)
-		terminal := event["type"] == "response.completed" || event["type"] == "response.incomplete" || event["type"] == "response.failed"
-		var observation TerminalResponse
+		terminal := event["type"] == "response.completed" || event["type"] == "response.incomplete" || event["type"] == "response.failed" || event["type"] == "error"
 		if terminal && observe != nil {
-			observation = terminalResponse(event, firstEventAtMS, time.Now().UnixMilli())
+			// Account availability must be updated even if the downstream disconnects.
+			observe(terminalResponse(event, firstEventAtMS, time.Now().UnixMilli()))
 		}
 		id, _ := item["id"].(string)
 		if pendingID == "" && event["type"] == "response.output_item.added" && item["type"] == "message" && item["role"] == "assistant" {
@@ -346,9 +346,6 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 						return false, err
 					}
 				}
-				if observe != nil {
-					observe(observation)
-				}
 				return inserted, nil
 			}
 			if event["type"] != "response.output_item.done" || id != pendingID {
@@ -367,9 +364,6 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 			return false, err
 		}
 		if terminal {
-			if observe != nil {
-				observe(observation)
-			}
 			return inserted, nil
 		}
 	}
@@ -383,6 +377,15 @@ func terminalResponse(event map[string]any, firstEventAtMS, terminalEventAtMS in
 	status, _ := event["type"].(string)
 	response, _ := event["response"].(map[string]any)
 	result := TerminalResponse{Status: strings.TrimPrefix(status, "response."), FirstEventAtMS: firstEventAtMS, TerminalEventAtMS: terminalEventAtMS}
+	if status == "error" {
+		result.Status = "failed"
+		failure := event["error"]
+		if failure == nil {
+			failure = event
+		}
+		result.FailureKind = terminalFailureKind(failure)
+		return result
+	}
 	result.ID, _ = response["id"].(string)
 	result.Model, _ = response["model"].(string)
 	result.ServiceTier, _ = response["service_tier"].(string)
@@ -409,7 +412,7 @@ func terminalResponse(event map[string]any, firstEventAtMS, terminalEventAtMS in
 func terminalFailureKind(value any) string {
 	encoded, _ := json.Marshal(value)
 	message := strings.ToLower(string(encoded))
-	for _, marker := range []string{"usage_limit", "usage limit", "quota", "rate_limit", "rate limit", "too many requests"} {
+	for _, marker := range []string{"usage_limit", "usage limit", "quota", "rate_limit", "rate limit", "too many requests", "usage maxed out", "out of usage", "usage is maxed out", "usage has been exhausted"} {
 		if strings.Contains(message, marker) {
 			return "quota"
 		}

@@ -14,7 +14,6 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/codex"
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/logbook"
-	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 )
@@ -288,14 +287,14 @@ func (s *Service) Refresh(ctx context.Context, public, trigger string) (string, 
 		return "", err
 	}
 	if created {
-		if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, operation, trigger != "PROXY_RESPONSE") }) {
+		if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, operation) }) {
 			_ = s.FailOperation(context.Background(), operation, "SERVICE_STOPPING", "Service is stopping")
 		}
 	}
 	return operation, nil
 }
 
-func (s *Service) runRefresh(ctx context.Context, account Account, operation string, refreshProfile bool) {
+func (s *Service) runRefresh(ctx context.Context, account Account, operation string) {
 	start := time.Now()
 	_ = s.OperationState(ctx, operation, "RUNNING", "READING_USAGE", "Reading complete rate limits")
 	select {
@@ -309,21 +308,21 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 	})
 	if err != nil {
 		_ = s.recordUsageFailure(ctx, account, operation, start, err)
-		if refreshProfile {
-			s.refreshProfile(ctx, account)
-		}
+		s.refreshProfile(ctx, account)
 		return
 	}
 	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil, false); err != nil {
 		return
 	}
-	if refreshProfile {
-		s.refreshProfile(ctx, account)
-	}
+	s.refreshProfile(ctx, account)
 }
 
 func (s *Service) refreshProfile(ctx context.Context, account Account) {
 	now := core.NowMS()
+	claimed, err := s.claimProfileRefresh(ctx, account.ID, now)
+	if err != nil || !claimed {
+		return
+	}
 	lease, err := s.Lease(ctx, account, now, false)
 	if err != nil {
 		_ = s.recordProfileFailure(ctx, account, err)
@@ -335,6 +334,22 @@ func (s *Service) refreshProfile(ctx context.Context, account Account) {
 		return
 	}
 	_ = s.commitProfile(ctx, account, profile)
+}
+
+func (s *Service) claimProfileRefresh(ctx context.Context, accountID string, now int64) (bool, error) {
+	interval := s.Config.ProfilePollSeconds
+	if interval <= 0 {
+		interval = 21600
+	}
+	// Claim before networking so concurrent manual refreshes share the cooldown.
+	result, err := s.Store.DB.ExecContext(ctx, `INSERT INTO account_profiles(account_id,last_attempt_at_ms) VALUES(?,?)
+		ON CONFLICT(account_id) DO UPDATE SET last_attempt_at_ms=excluded.last_attempt_at_ms
+		WHERE account_profiles.last_attempt_at_ms IS NULL OR account_profiles.last_attempt_at_ms<=?`, accountID, now, now-int64(interval)*1000)
+	if err != nil {
+		return false, err
+	}
+	changed, err := result.RowsAffected()
+	return changed == 1, err
 }
 
 func (s *Service) commitProfile(ctx context.Context, account Account, profile codex.AccountProfile) error {
@@ -416,11 +431,11 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		if _, err := db.ExecContext(ctx, `UPDATE usage_current SET snapshot_id=?,selected_limit_id=?,short_raw_slot=?,short_used_percent_raw=?,short_duration_minutes=?,short_resets_at_s=?,short_anomaly=?,weekly_raw_slot=?,weekly_used_percent_raw=?,weekly_duration_minutes=?,weekly_resets_at_s=?,weekly_anomaly=?,complete_read_at_ms=?,last_attempt_at_ms=?,stale=0,last_error_code=NULL,last_error_summary=NULL,source='APP_SERVER',state_version=state_version+1 WHERE account_id=?`, snapshot, nullString(usage.SelectedLimitID), ss, su, sd, sr, sa, ws, wu, wd, wr, wa, now, now, account.ID); err != nil {
 			return err
 		}
-		if err := proxytelemetry.CompleteUsage(ctx, db, account.ID, proxytelemetry.UsageSnapshot{
-			ID: snapshot, AtMS: now, ShortUsed: windowUsed(usage.Short), ShortResetsAtMS: windowResetMS(usage.Short),
-			WeeklyUsed: windowUsed(usage.Weekly), WeeklyResetsAtMS: windowResetMS(usage.Weekly),
-		}); err != nil {
-			return err
+		// A read already in flight when quota was rejected must not undo that rejection.
+		if usage.Short != nil && usage.Short.UsedPercent != nil && usage.Weekly != nil && usage.Weekly.UsedPercent != nil {
+			if _, err := db.ExecContext(ctx, "DELETE FROM account_quota_blocks WHERE account_id=? AND blocked_at_ms<?", account.ID, now-duration.Milliseconds()); err != nil {
+				return err
+			}
 		}
 		if _, err := db.ExecContext(ctx, "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, account.ID); err != nil {
 			return err
@@ -455,20 +470,6 @@ func windowDuration(window *Window) any {
 	return pointerAny(window.DurationMinutes)
 }
 
-func windowUsed(window *Window) *int64 {
-	if window == nil {
-		return nil
-	}
-	return window.UsedPercent
-}
-
-func windowResetMS(window *Window) *int64 {
-	if window == nil || window.ResetsAtS == nil {
-		return nil
-	}
-	value := *window.ResetsAtS * 1000
-	return &value
-}
 func windowReset(window *Window) any {
 	if window == nil {
 		return nil
@@ -548,7 +549,7 @@ func (s *Service) Pulse(ctx context.Context, public string) (string, error) {
 			return err
 		}
 		var eligible bool
-		err = db.QueryRowContext(ctx, `SELECT a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED',u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
+		err = db.QueryRowContext(ctx, `SELECT a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?),u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, now, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
 		if err != nil {
 			return err
 		}
@@ -603,7 +604,7 @@ func (s *Service) claimCyclePulse(ctx context.Context, now int64) (public, opera
 			return err
 		}
 		var accountID string
-		err = db.QueryRowContext(ctx, `SELECT a.account_id,a.public_token FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND p.last_attempt_at_ms<=? AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?) AND NOT EXISTS (SELECT 1 FROM relay_reservations rr WHERE rr.account_id=a.account_id AND rr.expires_at_ms>?) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.kind='window.pulse' AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) ORDER BY random() LIMIT 1`, now-int64(s.Config.WindowPulseRetrySeconds)*1000, now+1, now, now+1, now, now).Scan(&accountID, &public)
+		err = db.QueryRowContext(ctx, `SELECT a.account_id,a.public_token FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?) AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND p.last_attempt_at_ms<=? AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?) AND NOT EXISTS (SELECT 1 FROM relay_reservations rr WHERE rr.account_id=a.account_id AND rr.expires_at_ms>?) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.kind='window.pulse' AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) ORDER BY random() LIMIT 1`, now, now-int64(s.Config.WindowPulseRetrySeconds)*1000, now+1, now, now+1, now, now).Scan(&accountID, &public)
 		if err == sql.ErrNoRows {
 			return nil
 		}

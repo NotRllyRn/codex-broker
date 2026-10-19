@@ -53,6 +53,7 @@ type Config struct {
 	SessionIdleMinutes              int
 	SessionAbsoluteHours            int
 	UsagePollSeconds                int
+	ProfilePollSeconds              int
 	UsageRefreshConcurrency         int
 	WindowPulseEnabled              bool
 	WindowPulsePollSeconds          int
@@ -123,7 +124,8 @@ func Load() (Config, error) {
 		&c.RelayMaxStaleSeconds:            {"RELAY_MAX_STALE_SECONDS", 3600, 30, 86400},
 		&c.SessionIdleMinutes:              {"SESSION_IDLE_MINUTES", 44640, 1, 0},
 		&c.SessionAbsoluteHours:            {"SESSION_ABSOLUTE_HOURS", 2160, 1, 0},
-		&c.UsagePollSeconds:                {"USAGE_POLL_SECONDS", 300, 60, 0},
+		&c.UsagePollSeconds:                {"USAGE_POLL_SECONDS", 3600, 60, 0},
+		&c.ProfilePollSeconds:              {"PROFILE_POLL_SECONDS", 21600, 3600, 0},
 		&c.UsageRefreshConcurrency:         {"USAGE_REFRESH_CONCURRENCY", 4, 1, 16},
 		&c.WindowPulsePollSeconds:          {"WINDOW_PULSE_POLL_SECONDS", 60, 10, 0},
 		&c.WindowPulseRetrySeconds:         {"WINDOW_PULSE_RETRY_SECONDS", 900, 60, 0},

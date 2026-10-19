@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -132,7 +133,7 @@ func TestRelayOfflineFailureAndEmergencyReserve(t *testing.T) {
 	}
 }
 
-func TestRelayOfflineFailureExcludesOnlyFailingClient(t *testing.T) {
+func TestRelayOfflineQuotaFailureBlocksAllClients(t *testing.T) {
 	r, _ := relayFixture(t)
 	now := time.Now().UnixMilli()
 	remaining := int64(90)
@@ -145,8 +146,65 @@ func TestRelayOfflineFailureExcludesOnlyFailingClient(t *testing.T) {
 		t.Fatalf("selected=%s", lease.AccountID)
 	}
 	other, _, err := r.localRoute("other", gateway.RouteRequest{PreferredAccountID: "second"})
-	if err != nil || other.AccountID != "second" {
+	if err != nil || other.AccountID != "active" {
 		t.Fatalf("other=%+v err=%v", other, err)
+	}
+}
+
+func TestRelayQuotaBlockSurvivesCacheAndUnlocksOnFreshUsageOrReset(t *testing.T) {
+	for _, unlock := range []string{"usage", "reset"} {
+		t.Run(unlock, func(t *testing.T) {
+			r, _ := relayFixture(t)
+			now := time.Now().UnixMilli()
+			r.state.Snapshot.Leases[0].ShortResetsAtMS = pointer(now + time.Hour.Milliseconds())
+			if err := r.ReportFailure(context.Background(), "key", "active", "quota"); err != nil {
+				t.Fatal(err)
+			}
+			loaded := &Relay{config: r.config}
+			if err := loaded.load(); err != nil {
+				t.Fatal(err)
+			}
+			lease, wait, err := loaded.localRoute("other", gateway.RouteRequest{})
+			if err != nil || lease != nil || wait == nil || wait.NextRetryAtMS != *r.state.Snapshot.Leases[0].ShortResetsAtMS {
+				t.Fatalf("lease=%+v wait=%+v err=%v", lease, wait, err)
+			}
+			if unlock == "usage" {
+				loaded.state.Snapshot.Leases[0].UsageSnapshotAtMS = now + 1000
+			} else {
+				block := loaded.state.QuotaBlocks["active"]
+				block.RetryAtMS = now - 1
+				loaded.state.QuotaBlocks["active"] = block
+			}
+			lease, wait, err = loaded.localRoute("other", gateway.RouteRequest{})
+			if err != nil || lease == nil || wait != nil {
+				t.Fatalf("lease=%+v wait=%+v err=%v", lease, wait, err)
+			}
+		})
+	}
+}
+
+func TestRelayReportsQuotaBeforeQueuedTelemetry(t *testing.T) {
+	r, _ := relayFixture(t)
+	for range 101 {
+		r.state.Outbox = append(r.state.Outbox, relayprotocol.Event{ID: "old", Kind: "telemetry"})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		var batch relayprotocol.EventBatch
+		if err := json.NewDecoder(request.Body).Decode(&batch); err != nil {
+			t.Error(err)
+		}
+		if len(batch.Events) != 1 || batch.Events[0].Kind != "failure" || batch.Events[0].FailureKind != "quota" {
+			t.Errorf("batch=%+v", batch)
+		}
+		_, _ = io.WriteString(w, "{}")
+	}))
+	defer server.Close()
+	r.config.RelayBrokerURL, r.client, r.online = server.URL, server.Client(), true
+	if err := r.ReportFailure(context.Background(), "key", "active", "quota"); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.state.Outbox) != 102 {
+		t.Fatalf("outbox=%d", len(r.state.Outbox))
 	}
 }
 

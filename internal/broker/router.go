@@ -37,9 +37,11 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 	}
 	if failed != nil && request.FailureKind != "" {
 		if request.FailureKind == "quota" {
-			_, _ = r.Service.Refresh(ctx, failed.PublicID, "CLIENT_FAILURE")
+			if err := r.blockQuota(ctx, *failed, now); err != nil {
+				return nil, nil, err
+			}
 		}
-		if request.FailureKind == "auth" && (!r.Service.Config.WindowPulseEnabled || failed.CycleState == "IN_CYCLE") {
+		if request.FailureKind == "auth" && !quotaBlocked(*failed, now) && (!r.Service.Config.WindowPulseEnabled || failed.CycleState == "IN_CYCLE") {
 			if lease, error := r.Service.Lease(ctx, *failed, now, true); error == nil {
 				if err := r.markRouted(ctx, *failed, now); err != nil {
 					return nil, nil, err
@@ -49,8 +51,10 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 			}
 			_ = r.markAuth(ctx, failed.ID, now)
 		}
-		if err := r.exclude(ctx, keyID, *failed, request.FailureKind, now); err != nil {
-			return nil, nil, err
+		if request.FailureKind != "quota" {
+			if err := r.exclude(ctx, keyID, *failed, request.FailureKind, now); err != nil {
+				return nil, nil, err
+			}
 		}
 		accounts, err = r.accounts(ctx, keyID, now)
 		if err != nil {
@@ -99,6 +103,18 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 		return nil, &PoolWait{now + 10_000, 10}, nil
 	}
 	retry := nextRetry(accounts, now)
+	for _, account := range accounts {
+		if quotaBlocked(account, now) {
+			poll := max(60, r.Service.Config.UsagePollSeconds)
+			if poll == 60 && r.Service.Config.UsagePollSeconds == 0 {
+				poll = 3600
+			}
+			pollAt := now + int64(poll+30)*1000
+			if retry == 0 || pollAt < retry {
+				retry = pollAt
+			}
+		}
+	}
 	if retry == 0 {
 		return nil, nil, core.NewError("POOL_RESET_UNKNOWN", "No routable account has a reliable retry time", 503)
 	}
@@ -131,7 +147,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 		_, err := db.ExecContext(ctx, "DELETE FROM account_exclusions WHERE expires_at_ms<=?", now)
 		return err
 	})
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.snapshot_id,u.complete_read_at_ms,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms,rr.expires_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? LEFT JOIN relay_reservations rr ON rr.account_id=a.account_id AND rr.expires_at_ms>? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID, now)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.complete_read_at_ms,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms,rr.expires_at_ms,q.retry_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN account_quota_blocks q USING(account_id) LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? LEFT JOIN relay_reservations rr ON rr.account_id=a.account_id AND rr.expires_at_ms>? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +156,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 	for rows.Next() {
 		var account Account
 		var enabled int
-		if err := rows.Scan(&account.ID, &account.PublicID, &account.DisplayName, &account.Workspace, &enabled, &account.CreatedAtMS, &account.AuthState, &account.WorkerState, &account.Email, &account.Plan, &account.UsageSnapshotID, &account.UsageReadAt, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset, &account.ExcludedUntil, &account.CycleState, &account.CycleStarted, &account.RelayReservedUntil); err != nil {
+		if err := rows.Scan(&account.ID, &account.PublicID, &account.DisplayName, &account.Workspace, &enabled, &account.CreatedAtMS, &account.AuthState, &account.WorkerState, &account.Email, &account.Plan, &account.UsageReadAt, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset, &account.ExcludedUntil, &account.CycleState, &account.CycleStarted, &account.RelayReservedUntil, &account.QuotaBlockedUntil); err != nil {
 			return nil, err
 		}
 		account.Enabled = enabled == 1
@@ -150,7 +166,32 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 }
 
 func exhausted(a Account, now int64) bool {
-	return a.ShortUsed.Valid && a.ShortUsed.Int64 >= 100 && (!a.ShortReset.Valid || a.ShortReset.Int64*1000 > now) || a.WeeklyUsed.Valid && a.WeeklyUsed.Int64 >= 100 && (!a.WeeklyReset.Valid || a.WeeklyReset.Int64*1000 > now)
+	return quotaBlocked(a, now) || a.ShortUsed.Valid && a.ShortUsed.Int64 >= 100 && (!a.ShortReset.Valid || a.ShortReset.Int64*1000 > now) || a.WeeklyUsed.Valid && a.WeeklyUsed.Int64 >= 100 && (!a.WeeklyReset.Valid || a.WeeklyReset.Int64*1000 > now)
+}
+
+func quotaBlocked(a Account, now int64) bool {
+	return a.QuotaBlockedUntil.Valid && a.QuotaBlockedUntil.Int64 > now
+}
+
+// A quota rejection is authoritative across every client, even when cached
+// usage percentages say there is capacity. The first known reset allows a probe.
+func (r Router) blockQuota(ctx context.Context, account Account, now int64) error {
+	retry := int64(math.MaxInt64)
+	for _, reset := range []sql.NullInt64{account.ShortReset, account.WeeklyReset} {
+		if reset.Valid && reset.Int64 > now/1000 && reset.Int64*1000 < retry {
+			retry = reset.Int64 * 1000
+		}
+	}
+	err := r.Store.Write(ctx, func(db store.Executor) error {
+		_, err := db.ExecContext(ctx, `INSERT INTO account_quota_blocks(account_id,blocked_at_ms,retry_at_ms) VALUES(?,?,?)
+			ON CONFLICT(account_id) DO UPDATE SET blocked_at_ms=excluded.blocked_at_ms,retry_at_ms=excluded.retry_at_ms
+			WHERE excluded.blocked_at_ms>=account_quota_blocks.blocked_at_ms`, account.ID, now, retry)
+		return err
+	})
+	if err == nil && r.Service.Events != nil {
+		r.Service.Events.Publish("account.updated", map[string]any{"resource_id": account.PublicID, "state": "QUOTA_BLOCKED"})
+	}
+	return err
 }
 func futureReset(value sql.NullInt64, now int64) int64 {
 	if value.Valid && value.Int64*1000 > now {
@@ -199,21 +240,13 @@ func remainingPointer(value sql.NullInt64) *int64 {
 func routeLease(account Account, lease Lease, now int64) RouteLease {
 	return RouteLease{
 		AccountID: account.PublicID, AccountLabel: account.DisplayName, AccessToken: lease.AccessToken,
-		ChatGPTAccountID: lease.ChatGPTAccountID, UsageSnapshotID: account.UsageSnapshotID.String,
-		ExpiresAtMS: lease.ExpiresAtMS, UsageSnapshotAtMS: account.UsageReadAt.Int64,
-		ShortUsedPercent: nullablePointer(account.ShortUsed), WeeklyUsedPercent: nullablePointer(account.WeeklyUsed),
+		ChatGPTAccountID: lease.ChatGPTAccountID,
+		ExpiresAtMS:      lease.ExpiresAtMS, UsageSnapshotAtMS: account.UsageReadAt.Int64,
 		ShortRemainingPercent: remainingPointer(account.ShortUsed), WeeklyRemainingPercent: remainingPointer(account.WeeklyUsed),
 		ShortResetsAtMS: resetPointer(account.ShortReset, now), WeeklyResetsAtMS: resetPointer(account.WeeklyReset, now),
 	}
 }
 
-func nullablePointer(value sql.NullInt64) *int64 {
-	if !value.Valid {
-		return nil
-	}
-	result := value.Int64
-	return &result
-}
 func accountReset(account Account, now int64) int64 {
 	var values []int64
 	if account.ShortUsed.Valid && account.ShortUsed.Int64 >= 100 && account.ShortReset.Valid && account.ShortReset.Int64*1000 > now {
@@ -233,7 +266,7 @@ func accountReset(account Account, now int64) int64 {
 func nextRetry(accounts []Account, now int64) int64 {
 	result := int64(math.MaxInt64)
 	for _, account := range accounts {
-		for _, candidate := range []int64{accountReset(account, now), nullableTime(account.ExcludedUntil)} {
+		for _, candidate := range []int64{accountReset(account, now), nullableTime(account.ExcludedUntil), nullableTime(account.QuotaBlockedUntil)} {
 			if candidate > now && candidate < result {
 				result = candidate
 			}

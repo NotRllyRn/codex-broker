@@ -291,12 +291,12 @@ func TestProxyStoresResponseUsageAndCorrelation(t *testing.T) {
 	if requestStarted > upstreamStarted || upstreamStarted > headersAt || headersAt > firstEventAt || firstEventAt > terminalAt {
 		t.Fatalf("timestamps out of order: %d %d %d %d %d", requestStarted, upstreamStarted, headersAt, firstEventAt, terminalAt)
 	}
-	var aggregateRows, attemptRows int
+	var aggregateRows, refreshes int
 	if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM proxy_usage_totals WHERE model='gpt-test-result' AND response_count=1 AND total_tokens=150").Scan(&aggregateRows); err != nil || aggregateRows != 2 {
 		t.Fatalf("aggregate rows=%d err=%v", aggregateRows, err)
 	}
-	if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM proxy_response_attempts WHERE proxy_request_id IN (SELECT proxy_request_id FROM proxy_responses) AND model='gpt-test-result'").Scan(&attemptRows); err != nil || attemptRows != 1 {
-		t.Fatalf("attempt rows=%d err=%v", attemptRows, err)
+	if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM operations WHERE kind='usage.refresh'").Scan(&refreshes); err != nil || refreshes != 0 {
+		t.Fatalf("response triggered usage refreshes=%d err=%v", refreshes, err)
 	}
 	usage, err := s.proxyUsage(context.Background())
 	if err != nil || len(usage) != 2 || usage[0].Model != "all" || usage[1].Model != "gpt-test-result" || usage[1].Lifetime.TotalTokens != 150 {
@@ -382,9 +382,64 @@ func TestProxyRecognizesQuotaInSuccessfulFailedStream(t *testing.T) {
 			if got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`); got.Code != 200 {
 				t.Fatalf("response=%d %s", got.Code, got.Body.String())
 			}
-			var exclusions int
-			if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM account_exclusions WHERE key_id=?", key.ID).Scan(&exclusions); err != nil || exclusions != test.want {
-				t.Fatalf("exclusions=%d want=%d err=%v", exclusions, test.want, err)
+			var blocks int
+			if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM account_quota_blocks").Scan(&blocks); err != nil || blocks != test.want {
+				t.Fatalf("blocks=%d want=%d err=%v", blocks, test.want, err)
+			}
+		})
+	}
+}
+
+func TestProxyQuotaErrorsOverrideCachedCapacityForEveryClient(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"http429", 429, `{"error":{"code":"usage_limit_reached"}}`},
+		{"message400", 400, `{"error":{"message":"You're out of usage"}}`},
+		{"message403", 403, `{"error":{"message":"Usage maxed out"}}`},
+		{"detail403", 403, `{"detail":"You've hit your usage limit"}`},
+		{"streamFailed", 200, "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"You're out of usage\"}}}\n\n"},
+		{"streamError", 200, "data: {\"type\":\"error\",\"error\":{\"message\":\"Usage maxed out\"}}\n\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s, key := proxyFixture(t, 2)
+			now := time.Now()
+			_, err := s.App.Store.DB.Exec("UPDATE usage_current SET short_used_percent_raw=80,weekly_used_percent_raw=40,short_resets_at_s=?,weekly_resets_at_s=?", now.Add(2*time.Hour).Unix(), now.Add(3*24*time.Hour).Unix())
+			if err != nil {
+				t.Fatal(err)
+			}
+			failedCalls := 0
+			s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+				status, body := 200, proxyUsageStream("ok", "completed", 150)
+				if r.Header.Get("ChatGPT-Account-ID") == "account0" {
+					failedCalls++
+					status, body = test.status, test.body
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			if got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`); got.Code != 200 {
+				t.Fatalf("status=%d body=%s", got.Code, got.Body.String())
+			}
+			other, err := s.App.ClientKeys.Create(context.Background(), "other")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, token := range []string{key.Token, other.Token} {
+				if got := proxyRequest(s, token, "/v1/responses", `{"input":[]}`); got.Code != 200 {
+					t.Fatalf("status=%d body=%s", got.Code, got.Body.String())
+				}
+			}
+			if failedCalls != 1 {
+				t.Fatalf("quota-rejected account retried %d times", failedCalls)
+			}
+			var reads, blocks int
+			if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM operations WHERE kind='usage.refresh'").Scan(&reads); err != nil || reads != 0 {
+				t.Fatalf("reads=%d err=%v", reads, err)
+			}
+			if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM account_quota_blocks WHERE account_id='account0'").Scan(&blocks); err != nil || blocks != 1 {
+				t.Fatalf("blocks=%d err=%v", blocks, err)
 			}
 		})
 	}

@@ -3,7 +3,10 @@ package broker
 import (
 	"context"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/codex"
 	"github.com/NotRllyRn/codex-broker/internal/store"
@@ -59,5 +62,65 @@ func TestProfileCachePersistsLastGoodValuesOnFailure(t *testing.T) {
 	}
 	if tokens != 99 || stale != 1 {
 		t.Fatalf("tokens=%d stale=%d", tokens, stale)
+	}
+}
+
+func TestProfileRefreshThrottlesRecentSuccessAndFailure(t *testing.T) {
+	for _, stale := range []int{0, 1} {
+		ctx := context.Background()
+		db, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { db.Close() })
+		last := time.Now().Add(-time.Hour).UnixMilli()
+		_, err = db.DB.Exec(`INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','a','A',1,'ACTIVE',1,1);
+			INSERT INTO account_profiles(account_id,last_attempt_at_ms,stale) VALUES('a',?,?)`, last, stale)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// No credential/runtime is installed: a throttled profile call needs neither.
+		service := &Service{Store: db}
+		service.refreshProfile(ctx, Account{ID: "a"})
+		var after int64
+		if err := db.DB.QueryRow("SELECT last_attempt_at_ms FROM account_profiles").Scan(&after); err != nil || after != last {
+			t.Fatalf("last=%d after=%d err=%v", last, after, err)
+		}
+	}
+}
+
+func TestConcurrentProfileClaimsAllowOneAttemptPerInterval(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "broker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.DB.Exec("INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','a','A',1,'ACTIVE',1,1)"); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{Store: db}
+	var claimed atomic.Int32
+	var workers sync.WaitGroup
+	now := time.Now().UnixMilli()
+	for range 20 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			ok, err := service.claimProfileRefresh(ctx, "a", now)
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				claimed.Add(1)
+			}
+		}()
+	}
+	workers.Wait()
+	if claimed.Load() != 1 {
+		t.Fatalf("profile claims=%d", claimed.Load())
+	}
+	if ok, err := service.claimProfileRefresh(ctx, "a", now+6*time.Hour.Milliseconds()); err != nil || !ok {
+		t.Fatalf("next interval claim=%t err=%v", ok, err)
 	}
 }

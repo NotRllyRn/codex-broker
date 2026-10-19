@@ -270,7 +270,7 @@ func (a *Adapter) responses(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "upstream redirect rejected", http.StatusBadGateway)
 			return
 		}
-		kind := failureKind(response.StatusCode)
+		kind := responsesproxy.ResponseFailureKind(response)
 		if kind == "" {
 			a.setPreference(selected.AccountID)
 			if r.URL.Path == "/v1/responses" && response.StatusCode == http.StatusOK {

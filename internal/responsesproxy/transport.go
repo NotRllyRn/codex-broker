@@ -5,6 +5,7 @@ package responsesproxy
 import (
 	"bytes"
 	"crypto/tls"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
@@ -79,6 +80,32 @@ func FailureKind(status int) string {
 	default:
 		return ""
 	}
+}
+
+// Inspect only the error envelope, never assistant text or request content.
+// Restore the body so unrelated errors still pass through unchanged.
+func ResponseFailureKind(response *http.Response) string {
+	if response.StatusCode >= 200 && response.StatusCode < 300 {
+		return ""
+	}
+	if response.StatusCode == http.StatusTooManyRequests {
+		return "quota"
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	response.Body = &replayBody{Reader: io.MultiReader(bytes.NewReader(body), response.Body), Closer: response.Body}
+	var envelope struct {
+		Error  any `json:"error"`
+		Detail any `json:"detail"`
+	}
+	if err == nil && json.Unmarshal(body, &envelope) == nil && (terminalFailureKind(envelope.Error) == "quota" || terminalFailureKind(envelope.Detail) == "quota") {
+		return "quota"
+	}
+	return FailureKind(response.StatusCode)
+}
+
+type replayBody struct {
+	io.Reader
+	io.Closer
 }
 
 func CopyResponse(w http.ResponseWriter, response *http.Response) {

@@ -17,6 +17,9 @@ import (
 
 func accountView(account broker.AccountSummary) map[string]any {
 	cycleLabel := map[string]string{"HELD": "Held", "RELEASING": "Starting cycle", "IN_CYCLE": "In rotation"}[account.CycleState]
+	if account.QuotaBlocked {
+		cycleLabel = "Usage exhausted"
+	}
 	var gap any
 	if account.CycleGapMS != nil {
 		gap = compactDuration(int(*account.CycleGapMS / 1000))
@@ -71,7 +74,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 		}
 		view := accountView(account)
 		views = append(views, view)
-		if account.CycleState == "IN_CYCLE" {
+		if account.CycleState == "IN_CYCLE" && !account.QuotaBlocked {
 			cycleReady++
 		} else if account.CycleState == "HELD" || account.CycleState == "RELEASING" {
 			cycleHeld++
@@ -277,7 +280,7 @@ func (s *Server) logsExport(w http.ResponseWriter, r *http.Request) error {
 }
 
 func settingsMap(application *broker.Application) map[string]any {
-	return map[string]any{"usage_poll_seconds": application.Config.UsagePollSeconds, "browser_oauth_mode": application.Config.BrowserOAuthMode}
+	return map[string]any{"usage_poll_seconds": application.Config.UsagePollSeconds, "profile_poll_seconds": application.Config.ProfilePollSeconds, "browser_oauth_mode": application.Config.BrowserOAuthMode}
 }
 func compatibilityMap(application *broker.Application) map[string]any {
 	return map[string]any{"compatible": application.Compatibility.Compatible, "code": application.Compatibility.Code, "detail": application.Compatibility.Detail}

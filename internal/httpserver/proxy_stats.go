@@ -45,10 +45,8 @@ type proxyModelUsage struct {
 
 type proxyUsagePeriod struct {
 	proxytelemetry.Totals
-	TokensPerMinute    float64  `json:"tokens_per_minute"`
-	TokensPerHour      float64  `json:"tokens_per_hour"`
-	ShortUsagePerHour  *float64 `json:"short_usage_per_active_hour"`
-	WeeklyUsagePerHour *float64 `json:"weekly_usage_per_active_hour"`
+	TokensPerMinute float64 `json:"tokens_per_minute"`
+	TokensPerHour   float64 `json:"tokens_per_hour"`
 }
 
 type relayStatus struct {
@@ -200,12 +198,6 @@ func addTotals(target *proxytelemetry.Totals, value proxytelemetry.Totals) {
 	target.OutputTokens += value.OutputTokens
 	target.ReasoningOutputTokens += value.ReasoningOutputTokens
 	target.TotalTokens += value.TotalTokens
-	target.ShortSamples += value.ShortSamples
-	target.ShortActiveMS += value.ShortActiveMS
-	target.ShortUsagePercent += value.ShortUsagePercent
-	target.WeeklySamples += value.WeeklySamples
-	target.WeeklyActiveMS += value.WeeklyActiveMS
-	target.WeeklyUsagePercent += value.WeeklyUsagePercent
 }
 
 func withRates(value proxytelemetry.Totals) proxyUsagePeriod {
@@ -213,14 +205,6 @@ func withRates(value proxytelemetry.Totals) proxyUsagePeriod {
 	if value.ActiveMS > 0 {
 		result.TokensPerMinute = float64(value.TotalTokens) * float64(time.Minute/time.Millisecond) / float64(value.ActiveMS)
 		result.TokensPerHour = float64(value.TotalTokens) * float64(time.Hour/time.Millisecond) / float64(value.ActiveMS)
-	}
-	if value.ShortSamples > 0 && value.ShortActiveMS > 0 {
-		rate := float64(value.ShortUsagePercent) * float64(time.Hour/time.Millisecond) / float64(value.ShortActiveMS)
-		result.ShortUsagePerHour = &rate
-	}
-	if value.WeeklySamples > 0 && value.WeeklyActiveMS > 0 {
-		rate := float64(value.WeeklyUsagePercent) * float64(time.Hour/time.Millisecond) / float64(value.WeeklyActiveMS)
-		result.WeeklyUsagePerHour = &rate
 	}
 	return result
 }

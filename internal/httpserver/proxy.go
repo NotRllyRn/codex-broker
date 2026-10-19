@@ -35,21 +35,18 @@ func (a brokerGatewayAuthority) Route(ctx context.Context, keyID string, input g
 	}
 	return &gateway.Lease{
 		AccountID: selected.AccountID, AccountLabel: selected.AccountLabel, AccessToken: selected.AccessToken,
-		ChatGPTAccountID: selected.ChatGPTAccountID, UsageSnapshotID: selected.UsageSnapshotID,
-		ExpiresAtMS: selected.ExpiresAtMS, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
-		ShortUsedPercent: selected.ShortUsedPercent, WeeklyUsedPercent: selected.WeeklyUsedPercent,
+		ChatGPTAccountID: selected.ChatGPTAccountID,
+		ExpiresAtMS:      selected.ExpiresAtMS, UsageSnapshotAtMS: selected.UsageSnapshotAtMS,
+
 		ShortRemainingPercent: selected.ShortRemainingPercent, WeeklyRemainingPercent: selected.WeeklyRemainingPercent,
 		ShortResetsAtMS: selected.ShortResetsAtMS, WeeklyResetsAtMS: selected.WeeklyResetsAtMS,
 	}, nil, nil
 }
 
 func (a brokerGatewayAuthority) Observe(ctx context.Context, value gateway.Observation) error {
-	result, err := proxytelemetry.Record(ctx, a.server.App.Store, value)
+	_, err := proxytelemetry.Record(ctx, a.server.App.Store, value)
 	if err != nil && a.server.App.Logs != nil {
 		a.server.App.Logs.Log("ERROR", "proxy.usage.persist", "Proxy response usage could not be stored.")
-	}
-	if err == nil && result.RefreshAccount != "" {
-		_, _ = a.server.App.Service.Refresh(context.WithoutCancel(ctx), result.RefreshAccount, "PROXY_RESPONSE")
 	}
 	return err
 }

@@ -44,6 +44,9 @@ func (a *Application) RelaySnapshot(ctx context.Context, relayID string) (relayp
 	}
 	leasing := make([]relayprotocol.Lease, 0, len(accounts))
 	for _, account := range accounts {
+		if exhausted(account, now) {
+			continue
+		}
 		reserve := account.ID == reserveID
 		if account.CycleState != "IN_CYCLE" && !reserve {
 			continue
@@ -54,7 +57,7 @@ func (a *Application) RelaySnapshot(ctx context.Context, relayID string) (relayp
 		}
 		item := routeLease(account, lease, now)
 		leasing = append(leasing, relayprotocol.Lease{
-			Lease:      gateway.Lease{AccountID: item.AccountID, AccountLabel: item.AccountLabel, AccessToken: item.AccessToken, ChatGPTAccountID: item.ChatGPTAccountID, UsageSnapshotID: item.UsageSnapshotID, ExpiresAtMS: item.ExpiresAtMS, UsageSnapshotAtMS: item.UsageSnapshotAtMS, ShortUsedPercent: item.ShortUsedPercent, WeeklyUsedPercent: item.WeeklyUsedPercent, ShortRemainingPercent: item.ShortRemainingPercent, WeeklyRemainingPercent: item.WeeklyRemainingPercent, ShortResetsAtMS: item.ShortResetsAtMS, WeeklyResetsAtMS: item.WeeklyResetsAtMS},
+			Lease:      gateway.Lease{AccountID: item.AccountID, AccountLabel: item.AccountLabel, AccessToken: item.AccessToken, ChatGPTAccountID: item.ChatGPTAccountID, ExpiresAtMS: item.ExpiresAtMS, UsageSnapshotAtMS: item.UsageSnapshotAtMS, ShortRemainingPercent: item.ShortRemainingPercent, WeeklyRemainingPercent: item.WeeklyRemainingPercent, ShortResetsAtMS: item.ShortResetsAtMS, WeeklyResetsAtMS: item.WeeklyResetsAtMS},
 			CycleState: account.CycleState, CreatedAtMS: account.CreatedAtMS, Reserve: reserve, PermitEpoch: permit, PermitExpiresAtMS: permitExpiry,
 		})
 	}
@@ -69,9 +72,9 @@ func (a *Application) reserveForRelay(ctx context.Context, relayID string, now i
 		if _, err := db.ExecContext(ctx, "DELETE FROM relay_reservations WHERE expires_at_ms<=?", now); err != nil {
 			return err
 		}
-		err := db.QueryRowContext(ctx, `SELECT rr.account_id,rr.permit_epoch FROM relay_reservations rr JOIN window_pulse_state p USING(account_id) JOIN accounts a USING(account_id) JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' WHERE rr.relay_id=? AND rr.expires_at_ms>? AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?)`, relayID, now, now+1, now, now+1, now).Scan(&accountID, &epoch)
+		err := db.QueryRowContext(ctx, `SELECT rr.account_id,rr.permit_epoch FROM relay_reservations rr JOIN window_pulse_state p USING(account_id) JOIN accounts a USING(account_id) JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' WHERE rr.relay_id=? AND rr.expires_at_ms>? AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?) AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?)`, relayID, now, now, now+1, now, now+1, now).Scan(&accountID, &epoch)
 		if err == sql.ErrNoRows {
-			err = db.QueryRowContext(ctx, `SELECT a.account_id FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN relay_reservations rr USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND rr.account_id IS NULL AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?) ORDER BY random() LIMIT 1`, now+1, now, now+1, now).Scan(&accountID)
+			err = db.QueryRowContext(ctx, `SELECT a.account_id FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN relay_reservations rr USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND rr.account_id IS NULL AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?) AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?) ORDER BY random() LIMIT 1`, now, now+1, now, now+1, now).Scan(&accountID)
 			if err == sql.ErrNoRows {
 				return nil
 			}
@@ -104,7 +107,7 @@ func (a *Application) RelayRoute(ctx context.Context, clientID string, request g
 		}
 		return nil, &gateway.PoolWait{NextRetryAtMS: wait.NextRetryAtMS, RetryAfterSeconds: wait.RetryAfterSeconds}, nil
 	}
-	return &gateway.Lease{AccountID: selected.AccountID, AccountLabel: selected.AccountLabel, AccessToken: selected.AccessToken, ChatGPTAccountID: selected.ChatGPTAccountID, UsageSnapshotID: selected.UsageSnapshotID, ExpiresAtMS: selected.ExpiresAtMS, UsageSnapshotAtMS: selected.UsageSnapshotAtMS, ShortUsedPercent: selected.ShortUsedPercent, WeeklyUsedPercent: selected.WeeklyUsedPercent, ShortRemainingPercent: selected.ShortRemainingPercent, WeeklyRemainingPercent: selected.WeeklyRemainingPercent, ShortResetsAtMS: selected.ShortResetsAtMS, WeeklyResetsAtMS: selected.WeeklyResetsAtMS}, nil, nil
+	return &gateway.Lease{AccountID: selected.AccountID, AccountLabel: selected.AccountLabel, AccessToken: selected.AccessToken, ChatGPTAccountID: selected.ChatGPTAccountID, ExpiresAtMS: selected.ExpiresAtMS, UsageSnapshotAtMS: selected.UsageSnapshotAtMS, ShortRemainingPercent: selected.ShortRemainingPercent, WeeklyRemainingPercent: selected.WeeklyRemainingPercent, ShortResetsAtMS: selected.ShortResetsAtMS, WeeklyResetsAtMS: selected.WeeklyResetsAtMS}, nil, nil
 }
 
 func (r Router) ActivateRelayReserve(ctx context.Context, relayID, publicID, epoch string, occurredAt int64) error {
@@ -151,7 +154,7 @@ func (r Router) ActivateRelayReserve(ctx context.Context, relayID, publicID, epo
 	return err
 }
 
-func (r Router) ReportRelayFailure(ctx context.Context, keyID, publicID, kind string) error {
+func (r Router) ReportRelayFailure(ctx context.Context, keyID, publicID, kind string, occurredAt ...int64) error {
 	now := time.Now().UnixMilli()
 	var keyExists bool
 	if err := r.Store.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM client_api_keys WHERE key_id=?)", keyID).Scan(&keyExists); err != nil {
@@ -169,7 +172,14 @@ func (r Router) ReportRelayFailure(ctx context.Context, keyID, publicID, kind st
 			continue
 		}
 		if kind == "quota" {
-			_, _ = r.Service.Refresh(context.WithoutCancel(ctx), publicID, "RELAY_FAILURE")
+			if len(occurredAt) > 0 {
+				// A delayed offline event must not override a newer complete usage read.
+				now = min(now, occurredAt[0])
+				if account.UsageReadAt.Valid && account.UsageReadAt.Int64 > now {
+					return nil
+				}
+			}
+			return r.blockQuota(ctx, account, now)
 		}
 		if kind == "auth" {
 			if _, leaseErr := r.Service.Lease(ctx, account, now, true); leaseErr == nil {

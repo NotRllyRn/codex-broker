@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 18 {
+		if version != 19 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -37,6 +37,65 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		}
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestMigrationNineteenRemovesQuotaMeasurementsAndPreservesTokenTotals(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "broker.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		version, err := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if err != nil || version > 18 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := db.Exec(string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO schema_migrations VALUES(?,?,?,0)", version, entry.Name(), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now().UnixMilli()
+	_, err = db.Exec(`
+		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','a','A',1,'ACTIVE',1,1);
+		INSERT INTO proxy_responses(proxy_request_id,account_id,endpoint,terminal_status,upstream_attempts,upstream_http_status,request_started_at_ms,upstream_started_at_ms,response_headers_at_ms,first_response_event_at_ms,terminal_event_at_ms,total_tokens,stats_model,active_duration_ms,quota_isolated,short_usage_delta) VALUES('response','a','/v1/responses','completed',1,200,1,2,3,4,?,123,'model',100,1,5);
+		INSERT INTO proxy_response_attempts(proxy_request_id,ordinal,account_id,model,started_at_ms,ended_at_ms,upstream_http_status,quota_eligible,quota_isolated) VALUES('response',1,'a','model',1,2,200,1,1);
+		INSERT INTO proxy_usage_totals(period,model,response_count,active_duration_ms,total_tokens,short_usage_samples,short_usage_percent,updated_at_ms) VALUES('LIFETIME','model',1,100,123,1,5,?);
+	`, now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var responses, tokens, active int64
+	if err := migrated.DB.QueryRow("SELECT response_count,total_tokens,active_duration_ms FROM proxy_usage_totals WHERE period='LIFETIME' AND model='model'").Scan(&responses, &tokens, &active); err != nil || responses != 1 || tokens != 123 || active != 100 {
+		t.Fatalf("totals=%d/%d/%d err=%v", responses, tokens, active, err)
+	}
+	var count int
+	if err := migrated.DB.QueryRow("SELECT count(*) FROM proxy_responses WHERE total_tokens=123").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("responses=%d err=%v", count, err)
+	}
+	if err := migrated.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='proxy_response_attempts'").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("attempt table=%d err=%v", count, err)
+	}
+	for _, query := range []string{"SELECT quota_isolated FROM proxy_responses", "SELECT short_usage_samples FROM proxy_usage_totals"} {
+		if _, err := migrated.DB.Exec(query); err == nil {
+			t.Fatalf("obsolete measurement survived: %s", query)
 		}
 	}
 }

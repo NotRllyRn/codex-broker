@@ -8,6 +8,9 @@ Codex Broker{% endblock %} {% block content %}
     {{ detail.account.upstream_email|default_if_none:"Upstream identity not verified" }}{% if detail.account.upstream_plan %} | {{ detail.account.upstream_plan }}{% endif %}
   </p>
 </section>
+{% if detail.account.quota_blocked %}
+<p class="subtle">Usage temporarily exhausted upstream. This account is paused until a window resets or a fresh usage poll succeeds. The percentages below are the last reported values.</p>
+{% endif %}
 <section class="account-evidence-grid">
   <article>
     <h2>Authentication</h2>

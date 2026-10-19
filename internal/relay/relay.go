@@ -31,21 +31,25 @@ import (
 )
 
 type state struct {
-	Snapshot   relayprotocol.Snapshot
-	Outbox     []relayprotocol.Event
-	Exclusions map[string]int64
+	Snapshot    relayprotocol.Snapshot
+	Outbox      []relayprotocol.Event
+	Exclusions  map[string]int64
+	QuotaBlocks map[string]quotaBlock
 }
+
+type quotaBlock struct{ AtMS, RetryAtMS int64 }
 
 type diskEnvelope struct{ Nonce, Ciphertext []byte }
 
 const outboxLimit = 10000
 
 type Relay struct {
-	config config.Config
-	client *http.Client
-	mu     sync.RWMutex
-	state  state
-	online bool
+	config  config.Config
+	client  *http.Client
+	mu      sync.RWMutex
+	flushMu sync.Mutex
+	state   state
+	online  bool
 }
 
 func Open(settings config.Config) (*Relay, error) {
@@ -150,14 +154,18 @@ func (r *Relay) localRoute(clientID string, request gateway.RouteRequest) (*gate
 		if err := r.queueLocked(relayprotocol.Event{ID: core.NewID(), RelayID: r.config.RelayID, Kind: "failure", AccountID: request.FailedAccountID, ClientID: clientID, FailureKind: request.FailureKind, OccurredAtMS: now}, true); err != nil {
 			return nil, nil, err
 		}
-		r.state.Exclusions[clientID+"\x00"+request.FailedAccountID] = expires
+		if request.FailureKind == "quota" {
+			r.blockQuotaLocked(request.FailedAccountID, now)
+		} else {
+			r.state.Exclusions[clientID+"\x00"+request.FailedAccountID] = expires
+		}
 		if err := r.saveLocked(); err != nil {
 			return nil, nil, err
 		}
 	}
 	var active, reserve []relayprotocol.Lease
 	for _, item := range r.state.Snapshot.Leases {
-		if item.ExpiresAtMS <= now || exhausted(item.Lease, now) || r.state.Exclusions[clientID+"\x00"+item.AccountID] > now {
+		if item.ExpiresAtMS <= now || exhausted(item.Lease, now) || r.quotaBlockedLocked(item.Lease, now) || r.state.Exclusions[clientID+"\x00"+item.AccountID] > now {
 			continue
 		}
 		if item.Reserve {
@@ -180,6 +188,9 @@ func (r *Relay) localRoute(clientID string, request gateway.RouteRequest) (*gate
 			}
 		}
 		for _, item := range r.state.Snapshot.Leases {
+			if block := r.state.QuotaBlocks[item.AccountID]; r.quotaBlockedLocked(item.Lease, now) && block.RetryAtMS < next {
+				next = block.RetryAtMS
+			}
 			if reset := leaseReset(item.Lease, now); reset > now && reset < next {
 				next = reset
 			}
@@ -212,15 +223,54 @@ func (r *Relay) Observe(_ context.Context, value gateway.Observation) error {
 	return r.saveLocked()
 }
 
-func (r *Relay) ReportFailure(_ context.Context, clientID, accountID, kind string) error {
+func (r *Relay) ReportFailure(ctx context.Context, clientID, accountID, kind string) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	now := time.Now().UnixMilli()
-	if err := r.queueLocked(relayprotocol.Event{ID: core.NewID(), RelayID: r.config.RelayID, Kind: "failure", AccountID: accountID, ClientID: clientID, FailureKind: kind, OccurredAtMS: now}, true); err != nil {
+	event := relayprotocol.Event{ID: core.NewID(), RelayID: r.config.RelayID, Kind: "failure", AccountID: accountID, ClientID: clientID, FailureKind: kind, OccurredAtMS: now}
+	if err := r.queueLocked(event, true); err != nil {
+		r.mu.Unlock()
 		return err
 	}
-	r.state.Exclusions[clientID+"\x00"+accountID] = now + 5*time.Minute.Milliseconds()
-	return r.saveLocked()
+	if kind == "quota" {
+		r.blockQuotaLocked(accountID, now)
+	} else {
+		r.state.Exclusions[clientID+"\x00"+accountID] = now + 5*time.Minute.Milliseconds()
+	}
+	err, online := r.saveLocked(), r.online
+	r.mu.Unlock()
+	if err == nil && online {
+		// Do not let queued telemetry delay a shared quota block. The queued
+		// copy is reconciled idempotently during the next regular sync.
+		if reportErr := r.call(ctx, http.MethodPost, "/api/private/v1/relay/events", relayprotocol.EventBatch{Events: []relayprotocol.Event{event}}, &struct{}{}); reportErr != nil {
+			r.mu.Lock()
+			r.online = false
+			r.mu.Unlock()
+		}
+	}
+	return err
+}
+
+func (r *Relay) blockQuotaLocked(accountID string, now int64) {
+	retry := int64(math.MaxInt64)
+	for _, item := range r.state.Snapshot.Leases {
+		if item.AccountID != accountID {
+			continue
+		}
+		for _, reset := range []*int64{item.ShortResetsAtMS, item.WeeklyResetsAtMS} {
+			if reset != nil && *reset > now && *reset < retry {
+				retry = *reset
+			}
+		}
+	}
+	if r.state.QuotaBlocks == nil {
+		r.state.QuotaBlocks = map[string]quotaBlock{}
+	}
+	r.state.QuotaBlocks[accountID] = quotaBlock{AtMS: now, RetryAtMS: retry}
+}
+
+func (r *Relay) quotaBlockedLocked(lease gateway.Lease, now int64) bool {
+	block, exists := r.state.QuotaBlocks[lease.AccountID]
+	return exists && block.RetryAtMS > now && lease.UsageSnapshotAtMS <= block.AtMS
 }
 
 func (r *Relay) Activate(_ context.Context, lease gateway.Lease) error {
@@ -319,6 +369,8 @@ func (r *Relay) sync(ctx context.Context) {
 }
 
 func (r *Relay) flush(ctx context.Context) error {
+	r.flushMu.Lock()
+	defer r.flushMu.Unlock()
 	r.mu.RLock()
 	events := append([]relayprotocol.Event(nil), r.state.Outbox...)
 	r.mu.RUnlock()

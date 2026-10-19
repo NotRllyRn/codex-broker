@@ -457,11 +457,8 @@ if (proxyCard) {
 				total_tokens: usageNumber.format(values.total_tokens || 0),
 				tokens_per_minute: usageRate.format(values.tokens_per_minute || 0),
 				tokens_per_hour: usageNumber.format(values.tokens_per_hour || 0),
-				short_usage_per_active_hour: values.short_usage_per_active_hour == null ? "—" : `${usageRate.format(values.short_usage_per_active_hour)}%`,
-				weekly_usage_per_active_hour: values.weekly_usage_per_active_hour == null ? "—" : `${usageRate.format(values.weekly_usage_per_active_hour)}%`,
 			};
 			for (const node of panel.querySelectorAll("[data-usage]")) node.textContent = formatted[node.dataset.usage];
-			panel.querySelector("[data-usage-samples]").textContent = `${values.short_usage_samples || 0} isolated 5h · ${values.weekly_usage_samples || 0} isolated weekly samples`;
 		}
 	}
 	modelSelect.addEventListener("change", renderUsage);
