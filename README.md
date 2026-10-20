@@ -164,6 +164,10 @@ Account-level quota estimates divide measured percentage-point consumption by
 active proxy hours, using existing usage polls. Rolling estimates cover intervals
 ending in the last seven days; lifetime estimates retain their totals after
 response details expire. Overlapping responses count once per account.
+One model selector controls tokens/hour and short/weekly quota/hour in both
+periods. Model quota estimates use only intervals with one known model;
+mixed/unknown intervals remain in All models. Model quota lifetime starts when
+attribution is enabled; existing account/token totals are preserved.
 Usage limits are polled hourly by default; profile statistics are refreshed at
 most once every six hours. Known short and weekly resets also schedule a usage
 refresh after a two-minute grace period. Resets due together share one refresh.

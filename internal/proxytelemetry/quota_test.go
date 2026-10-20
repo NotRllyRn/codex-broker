@@ -35,7 +35,7 @@ func expectQuota(t *testing.T, db *store.Store, cutoff int64, period, window str
 	}
 	var found QuotaTotals
 	for _, row := range rows {
-		if row.Period == period && row.Window == window && row.AccountID == "public-a" {
+		if row.Period == period && row.Window == window && row.AccountID == "public-a" && row.Model == "" {
 			found = row
 		}
 	}
@@ -127,6 +127,7 @@ func TestQuotaIncludesMeasuredZeroConsumption(t *testing.T) {
 	}
 	measureQuota(t, db, "poll-2", 450, 12, 22)
 	expectQuota(t, db, 0, LifetimePeriod, "short", 2, 2, 200)
+	expectModelQuota(t, db, 0, LifetimePeriod, "gpt-a", 2, 2, 200)
 }
 
 func TestQuotaRejectsResetsAndInvalidSamplesIndependently(t *testing.T) {
@@ -198,4 +199,112 @@ func TestQuotaRejectsIntervalsOlderThanResponseRetention(t *testing.T) {
 	if err := db.DB.QueryRow("SELECT count(*) FROM quota_intervals").Scan(&count); err != nil || count != 0 {
 		t.Fatalf("expired baseline intervals=%d err=%v", count, err)
 	}
+}
+
+func expectModelQuota(t *testing.T, db *store.Store, cutoff int64, period, model string, samples, used, active int64) {
+	t.Helper()
+	rows, err := ReadQuotaTotals(context.Background(), db.DB, cutoff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found QuotaTotals
+	for _, row := range rows {
+		if row.AccountID == "public-a" && row.Model == model && row.Period == period && row.Window == "short" {
+			found = row
+		}
+	}
+	if found.Samples != samples || found.UsedPercent != used || found.ActiveMS != active {
+		t.Fatalf("%s/%s: %+v want %d/%d/%d", period, model, found, samples, used, active)
+	}
+}
+
+func TestQuotaModelsExcludeMixedAndUnknownIntervals(t *testing.T) {
+	for _, test := range []struct {
+		name, model string
+		start, end  int64
+		attributed  bool
+	}{
+		{"same model overlap", "gpt-a", 150, 250, true},
+		{"mixed overlap", "gpt-b", 150, 250, false},
+		{"mixed sequential", "gpt-b", 220, 250, false},
+		{"unknown model", "", 150, 250, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db, ctx := telemetryFixture(t)
+			if _, err := Record(ctx, db, observation("first", 100, 200)); err != nil {
+				t.Fatal(err)
+			}
+			value := observation("second", test.start, test.end)
+			value.ResponseModel, value.RequestModel = test.model, test.model
+			if _, err := Record(ctx, db, value); err != nil {
+				t.Fatal(err)
+			}
+			measureQuota(t, db, "poll", 300, 12, 23)
+			for _, period := range []string{RollingPeriod, LifetimePeriod} {
+				if test.attributed {
+					expectModelQuota(t, db, 0, period, "gpt-a", 1, 2, 150)
+				} else {
+					expectModelQuota(t, db, 0, period, "gpt-a", 0, 0, 0)
+					expectModelQuota(t, db, 0, period, "gpt-b", 0, 0, 0)
+				}
+			}
+		})
+	}
+}
+
+func TestQuotaLateModelRetractsAttributionAfterResponsePruning(t *testing.T) {
+	db, ctx := telemetryFixture(t)
+	if _, err := Record(ctx, db, observation("first", 100, 200)); err != nil {
+		t.Fatal(err)
+	}
+	measureQuota(t, db, "poll", 300, 12, 23)
+	if err := Prune(ctx, db, 250, 100); err != nil {
+		t.Fatal(err)
+	}
+	expectModelQuota(t, db, 0, LifetimePeriod, "gpt-a", 1, 2, 100)
+	// The late span is wholly contained: time does not change, attribution does.
+	value := observation("late", 120, 180)
+	value.ResponseModel = "gpt-b"
+	for range 2 {
+		if _, err := Record(ctx, db, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, period := range []string{RollingPeriod, LifetimePeriod} {
+		expectModelQuota(t, db, 0, period, "gpt-a", 0, 0, 0)
+		expectModelQuota(t, db, 0, period, "gpt-b", 0, 0, 0)
+		expectQuota(t, db, 0, period, "short", 1, 2, 100)
+	}
+}
+
+func TestQuotaModelLifetimeSurvivesRestartAndExpiry(t *testing.T) {
+	db, ctx := telemetryFixture(t)
+	measureQuota(t, db, "first", 250, 12, 23)
+	measureQuota(t, db, "second", 450, 15, 25)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(ctx, db.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	for _, value := range []struct {
+		id         string
+		start, end int64
+	}{{"late", 100, 500}, {"overlap", 110, 200}} {
+		if _, err := Record(ctx, reopened, observation(value.id, value.start, value.end)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, period := range []string{RollingPeriod, LifetimePeriod} {
+		expectModelQuota(t, reopened, 0, period, "gpt-a", 2, 5, 350)
+	}
+	// Query cutoff works before maintenance; lifetime never expires with detail.
+	expectModelQuota(t, reopened, 451, RollingPeriod, "gpt-a", 0, 0, 0)
+	if err := Prune(ctx, reopened, 600, 100); err != nil {
+		t.Fatal(err)
+	}
+	expectModelQuota(t, reopened, 0, RollingPeriod, "gpt-a", 0, 0, 0)
+	expectModelQuota(t, reopened, 0, LifetimePeriod, "gpt-a", 2, 5, 350)
 }

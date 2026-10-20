@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 21 {
+		if version != 22 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -99,10 +99,61 @@ func TestMigrationNineteenRemovesQuotaMeasurementsAndPreservesTokenTotals(t *tes
 		}
 	}
 	// New poll-based estimates must not invent lifetime history from retired data.
-	for _, table := range []string{"quota_intervals", "quota_lifetime"} {
+	for _, table := range []string{"quota_intervals", "quota_lifetime", "quota_model_lifetime"} {
 		if err := migrated.DB.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("%s rows=%d err=%v", table, count, err)
 		}
+	}
+}
+
+func TestMigrationTwentyTwoPreservesUnattributedQuotaHistory(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "broker.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		version, _ := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if version > 21 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := db.Exec(string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO schema_migrations VALUES(?,?,?,0)", version, entry.Name(), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`
+		INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','a','A',1,'ACTIVE',1,1);
+		INSERT INTO quota_intervals(snapshot_id,account_id,window_kind,started_at_ms,ended_at_ms,used_percent,active_ms,active_spans_json) VALUES('poll','a','short',1,100,5,50,'[[1,51]]');
+		INSERT INTO quota_lifetime(account_id,window_kind,samples,used_percent,active_ms) VALUES('a','short',1,5,50);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var unattributed bool
+	if err := migrated.DB.QueryRow("SELECT model IS NULL AND used_percent=5 AND active_ms=50 FROM quota_intervals").Scan(&unattributed); err != nil || !unattributed {
+		t.Fatalf("old interval preserved=%v err=%v", unattributed, err)
+	}
+	var used, active, count int
+	if err := migrated.DB.QueryRow("SELECT used_percent,active_ms FROM quota_lifetime").Scan(&used, &active); err != nil || used != 5 || active != 50 {
+		t.Fatalf("lifetime=%d/%d err=%v", used, active, err)
+	}
+	if err := migrated.DB.QueryRow("SELECT count(*) FROM quota_model_lifetime").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("invented model history=%d err=%v", count, err)
 	}
 }
 

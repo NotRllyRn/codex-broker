@@ -438,7 +438,6 @@ if (proxyCard) {
 	const relaySummary = proxyCard.querySelector("[data-relay-summary]");
 	const relayList = proxyCard.querySelector("[data-proxy-relays]");
 	const modelSelect = proxyCard.querySelector("[data-proxy-model]");
-	const accountSelect = proxyCard.querySelector("[data-quota-account]");
 	const usageNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 	const usageRate = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 	let usage = [];
@@ -450,10 +449,9 @@ if (proxyCard) {
 		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 	};
 	function renderUsage() {
-		const selected = usage.find((item) => item.model === modelSelect.value) || usage[0];
-		if (!selected) return;
+		const selected = usage.find((item) => item.model === modelSelect.value);
 		for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
-			const values = selected[panel.dataset.proxyPeriod] || {};
+			const values = selected?.[panel.dataset.proxyPeriod] || {};
 			const formatted = {
 				active_ms: activeDuration(values.active_ms),
 				total_tokens: usageNumber.format(values.total_tokens || 0),
@@ -462,12 +460,13 @@ if (proxyCard) {
 			};
 			for (const node of panel.querySelectorAll("[data-usage]")) node.textContent = formatted[node.dataset.usage];
 		}
+		renderQuotaUsage();
 	}
 	modelSelect.addEventListener("change", renderUsage);
 	function renderQuotaUsage() {
-		const selected = quotaUsage.find((item) => item.account_id === accountSelect.value) || quotaUsage[0];
-		for (const panel of proxyCard.querySelectorAll("[data-quota-period]")) {
-			const period = selected?.[panel.dataset.quotaPeriod] || {};
+		const selected = quotaUsage.find((item) => item.account_id === "all" && item.model === modelSelect.value);
+		for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
+			const period = selected?.[panel.dataset.proxyPeriod] || {};
 			for (const kind of ["short", "weekly"]) {
 				const window = period[kind] || {};
 				panel.querySelector(`[data-quota="${kind}_rate"]`).textContent = window.usage_per_hour == null ? "—" : `${usageRate.format(window.usage_per_hour)} pp/h`;
@@ -475,7 +474,6 @@ if (proxyCard) {
 			}
 		}
 	}
-	accountSelect.addEventListener("change", renderQuotaUsage);
 	const relayState = { ready: ["Ready ●", "ready"], connected: ["Connected ◐", "connected"], offline: ["Offline ○", "offline"] };
 	const relayTime = (value) => Date.now() - Date.parse(value) < 60_000 ? "just now" : relativeTime(value);
 	function relayRows(relays) {
@@ -503,25 +501,17 @@ if (proxyCard) {
 			if (!response.ok) throw new Error("Proxy counters unavailable");
 			const data = await response.json();
 			usage = Array.isArray(data.usage) ? data.usage : [];
-			const selectedModel = modelSelect.value;
-			modelSelect.replaceChildren(...usage.map((item) => {
-				const option = document.createElement("option");
-				option.value = item.model;
-				option.textContent = item.model === "all" ? "All models" : item.model;
-				return option;
-			}));
-			if (usage.some((item) => item.model === selectedModel)) modelSelect.value = selectedModel;
-			renderUsage();
 			quotaUsage = Array.isArray(data.quota_usage) ? data.quota_usage : [];
-			const selectedAccount = accountSelect.value;
-			accountSelect.replaceChildren(...quotaUsage.map((item) => {
+			const selectedModel = modelSelect.value;
+			const models = [...new Set(["all", ...usage.map((item) => item.model), ...quotaUsage.map((item) => item.model)])];
+			modelSelect.replaceChildren(...models.map((model) => {
 				const option = document.createElement("option");
-				option.value = item.account_id;
-				option.textContent = item.account_label;
+				option.value = model;
+				option.textContent = model === "all" ? "All models" : model;
 				return option;
 			}));
-			if (quotaUsage.some((item) => item.account_id === selectedAccount)) accountSelect.value = selectedAccount;
-			renderQuotaUsage();
+			if (models.includes(selectedModel)) modelSelect.value = selectedModel;
+			renderUsage();
 			const relays = Array.isArray(data.relays) ? data.relays : [];
 			const readyRelays = relays.filter((relay) => relay.ready).length;
 			const connectedRelays = relays.filter((relay) => relay.connected).length;

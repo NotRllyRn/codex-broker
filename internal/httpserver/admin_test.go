@@ -55,6 +55,14 @@ func TestDashboardShowsCycleStatusAndNextPulse(t *testing.T) {
 	if strings.Contains(body, "data-activity-mode") {
 		t.Error("dashboard still renders token activity mode controls")
 	}
+	if strings.Count(body, "data-proxy-model") != 1 || strings.Contains(body, "data-quota-account") || strings.Contains(body, "data-quota-period") {
+		t.Error("proxy statistics must share one model selector and period panels")
+	}
+	for _, field := range []string{"tokens_per_hour", "short_rate", "weekly_rate"} {
+		if strings.Count(body, `="`+field+`"`) != 2 {
+			t.Errorf("%s must appear in both rolling and lifetime panels", field)
+		}
+	}
 }
 
 func TestExhaustedAccountKeepsWindowDashboardStatus(t *testing.T) {

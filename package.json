@@ -3,6 +3,7 @@
   "private": true,
   "workspaces": ["packages/*"],
   "scripts": {
+    "test:proxy": "node --test scripts/proxy-usage.test.mjs",
     "check:pi": "npm --workspace @codex-broker/pi-extension run check",
     "test:pi": "npm --workspace @codex-broker/pi-extension test"
   }

@@ -124,8 +124,19 @@ Each window has its own measured-time denominator. Lifetime quota statistics
 start with newly measured intervals; historical quota rates are not invented or
 backfilled. Only retained intervals can receive late corrections.
 
+The proxy dashboard shares a model selector for token and quota statistics in
+both periods. Quota attribution requires exactly one known response model across
+an account's poll interval (including sequential, not just concurrent responses).
+Mixed/unknown intervals contribute only to All models. Late telemetry can retract
+previous model attribution from rolling and lifetime totals without changing the
+account total. Per-model lifetime counters survive response/interval pruning.
+Migration 022 starts model attribution without backfilling existing intervals;
+their model remains unknown even if additional late responses arrive. Existing
+account quota totals and token history are unchanged.
+
 These are estimates of quota percentage points per active account hour, not
-elapsed wall-clock hours or model-specific rates. Direct leased-client traffic,
+elapsed wall-clock hours. Model rates describe only attributable intervals and
+can have less measured time than token rates. Direct leased-client traffic,
 external account use, unrecorded interrupted streams, and upstream reporting
 delays can skew the estimate. The dashboard shows supporting measured active
 time and interval counts; unknown rates are displayed as a dash. No prompt,

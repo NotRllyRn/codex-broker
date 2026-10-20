@@ -83,7 +83,7 @@ func Record(ctx context.Context, database *store.Store, value gateway.Observatio
 		if err := addResponse(ctx, db, LifetimePeriod, model, activeMS, value, value.TerminalEventAtMS); err != nil {
 			return err
 		}
-		return recordQuotaActivity(ctx, db, accountID, value.UpstreamStartedAtMS, value.TerminalEventAtMS)
+		return recordQuotaActivity(ctx, db, accountID, model, value.UpstreamStartedAtMS, value.TerminalEventAtMS)
 	})
 	return result, err
 }

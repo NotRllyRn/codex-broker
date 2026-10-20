@@ -18,6 +18,7 @@ type quotaPeriod struct {
 	Weekly quotaWindowUsage `json:"weekly"`
 }
 type quotaAccountUsage struct {
+	Model        string      `json:"model"`
 	AccountID    string      `json:"account_id"`
 	AccountLabel string      `json:"account_label"`
 	Rolling      quotaPeriod `json:"rolling_7d"`
@@ -29,17 +30,27 @@ func (s *Server) quotaUsage(ctx context.Context, now time.Time) ([]*quotaAccount
 	if err != nil {
 		return nil, err
 	}
-	all := &quotaAccountUsage{AccountID: "all", AccountLabel: "All accounts"}
+	all := &quotaAccountUsage{AccountID: "all", AccountLabel: "All accounts", Model: "all"}
 	result := []*quotaAccountUsage{all}
-	byAccount := map[string]*quotaAccountUsage{}
+	type key struct{ account, model string }
+	byAccount := map[key]*quotaAccountUsage{{"all", "all"}: all}
 	for _, row := range rows {
-		item := byAccount[row.AccountID]
-		if item == nil {
-			item = &quotaAccountUsage{AccountID: row.AccountID, AccountLabel: row.AccountLabel}
-			byAccount[row.AccountID] = item
-			result = append(result, item)
+		model := row.Model
+		if model == "" {
+			model = "all"
 		}
-		for _, account := range []*quotaAccountUsage{item, all} {
+		for _, id := range []string{row.AccountID, "all"} {
+			k := key{id, model}
+			account := byAccount[k]
+			if account == nil {
+				label := row.AccountLabel
+				if id == "all" {
+					label = "All accounts"
+				}
+				account = &quotaAccountUsage{AccountID: id, AccountLabel: label, Model: model}
+				byAccount[k] = account
+				result = append(result, account)
+			}
 			period := &account.Rolling
 			if row.Period == proxytelemetry.LifetimePeriod {
 				period = &account.Lifetime

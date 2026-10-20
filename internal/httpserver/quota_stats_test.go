@@ -61,3 +61,67 @@ func TestQuotaDashboardWeightsAccountsAndKeepsUnknownRatesNull(t *testing.T) {
 		t.Fatalf("later=%+v err=%v", later, err)
 	}
 }
+
+func TestQuotaDashboardModelsKeepWeightedRollingAndLifetimeRates(t *testing.T) {
+	s, _ := proxyFixture(t, 2)
+	ctx, now := context.Background(), time.Now()
+	start := now.Add(-time.Hour).UnixMilli()
+	reset := now.Add(24 * time.Hour).Unix()
+	if _, err := s.App.Store.DB.Exec(`UPDATE usage_current SET complete_read_at_ms=?,short_used_percent_raw=10,short_resets_at_s=?,weekly_used_percent_raw=20,weekly_resets_at_s=?`, start, reset, reset); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		account       string
+		active, short int64
+	}{{"account0", 5 * time.Minute.Milliseconds(), 12}, {"account1", 15 * time.Minute.Milliseconds(), 14}} {
+		_, err := proxytelemetry.Record(ctx, s.App.Store, gateway.Observation{RequestID: item.account, AccountID: item.account, ResponseModel: "gpt-a", Endpoint: "/v1/responses", TerminalStatus: "completed", UpstreamAttempts: 1, UpstreamHTTPStatus: 200, UpstreamStartedAtMS: start, TerminalEventAtMS: start + item.active})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.App.Store.Write(ctx, func(db store.Executor) error {
+			return proxytelemetry.RecordUsage(ctx, db, item.account, proxytelemetry.QuotaSnapshot{ID: item.account, AtMS: now.UnixMilli(), Short: proxytelemetry.QuotaWindow{Used: &item.short, ResetS: &reset}})
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, err := s.quotaUsage(ctx, now)
+	if err != nil || len(rows) != 6 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	for _, row := range rows {
+		want := float64(18)
+		if row.AccountID == "account0" {
+			want = 24
+		}
+		if row.AccountID == "account1" {
+			want = 16
+		}
+		for _, period := range []quotaPeriod{row.Rolling, row.Lifetime} {
+			if period.Short.PerHour == nil || *period.Short.PerHour != want || period.Weekly.PerHour != nil {
+				t.Fatalf("account=%s model=%s period=%+v want=%f", row.AccountID, row.Model, period, want)
+			}
+		}
+	}
+	// A different model arriving late retracts only that account's attribution.
+	if _, err := proxytelemetry.Record(ctx, s.App.Store, gateway.Observation{RequestID: "late", AccountID: "account1", ResponseModel: "gpt-b", Endpoint: "/v1/responses", TerminalStatus: "completed", UpstreamAttempts: 1, UpstreamHTTPStatus: 200, UpstreamStartedAtMS: start, TerminalEventAtMS: start + 1000}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.quotaUsage(ctx, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.AccountID != "all" {
+			continue
+		}
+		want := float64(18)
+		if row.Model == "gpt-a" {
+			want = 24
+		}
+		for _, period := range []quotaPeriod{row.Rolling, row.Lifetime} {
+			if period.Short.PerHour == nil || *period.Short.PerHour != want {
+				t.Fatalf("model=%s period=%+v want=%f", row.Model, period, want)
+			}
+		}
+	}
+}

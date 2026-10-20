@@ -41,7 +41,7 @@
   <p class="proxy-totals" data-proxy-totals>Loading request counters…</p>
   <section class="proxy-usage" aria-labelledby="proxy-usage-title">
     <header>
-      <div><h3 id="proxy-usage-title">Proxy usage</h3><small>Exact response tokens and active upstream time</small></div>
+      <div><h3 id="proxy-usage-title">Proxy usage</h3><small>Response tokens and estimated quota consumption per active hour</small></div>
       <label><span>Model</span><select data-proxy-model><option value="all">All models</option></select></label>
     </header>
     <div class="proxy-usage-grid">
@@ -52,6 +52,10 @@
           <div><dt>Total tokens</dt><dd data-usage="total_tokens">—</dd></div>
           <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
           <div><dt>Tokens/hour</dt><dd data-usage="tokens_per_hour">—</dd></div>
+          <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
+          <div><dt>Measured quota time</dt><dd data-quota="short_time">—</dd></div>
+          <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
+          <div><dt>Measured quota time</dt><dd data-quota="weekly_time">—</dd></div>
         </dl>
       </article>
       <article data-proxy-period="lifetime">
@@ -61,36 +65,14 @@
           <div><dt>Total tokens</dt><dd data-usage="total_tokens">—</dd></div>
           <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
           <div><dt>Tokens/hour</dt><dd data-usage="tokens_per_hour">—</dd></div>
+          <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
+          <div><dt>Measured quota time</dt><dd data-quota="short_time">—</dd></div>
+          <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
+          <div><dt>Measured quota time</dt><dd data-quota="weekly_time">—</dd></div>
         </dl>
       </article>
     </div>
-  </section>
-  <section class="proxy-usage" aria-labelledby="quota-usage-title">
-    <header>
-      <div><h3 id="quota-usage-title">Estimated quota consumption</h3><small>Percentage points per active account hour · Recorded proxy activity only</small></div>
-      <label><span>Account</span><select data-quota-account><option value="all">All accounts</option></select></label>
-    </header>
-    <div class="proxy-usage-grid">
-      <article data-quota-period="rolling_7d">
-        <h3>Rolling seven days</h3>
-        <dl>
-          <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
-          <div><dt>Measured active time</dt><dd data-quota="short_time">—</dd></div>
-          <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
-          <div><dt>Measured active time</dt><dd data-quota="weekly_time">—</dd></div>
-        </dl>
-      </article>
-      <article data-quota-period="lifetime">
-        <h3>Lifetime</h3>
-        <dl>
-          <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
-          <div><dt>Measured active time</dt><dd data-quota="short_time">—</dd></div>
-          <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
-          <div><dt>Measured active time</dt><dd data-quota="weekly_time">—</dd></div>
-        </dl>
-      </article>
-    </div>
-    <small>Weighted estimates from usage polls; reset-spanning intervals are excluded. Seven-day membership uses the interval end time. Lifetime starts with recorded measurements. — means insufficient data. Account use outside this proxy can skew estimates.</small>
+    <small>Quota rates are percentage points per active account hour, estimated from usage polls. Model estimates use only single-model intervals; mixed/unknown activity stays in All models. Measured quota time may differ from token active time. Reset-spanning intervals are excluded; seven-day membership uses interval end time. Lifetime quota history starts when measurement was enabled, model history when attribution was enabled. — means insufficient data. Use outside this proxy can skew estimates.</small>
   </section>
   <div class="proxy-relays">
     <h3>Redundant relay edges</h3>
