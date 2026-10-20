@@ -6,8 +6,14 @@ needing to manage each account separately.
 
 It owns each account's refresh token, tracks usage limits, and
 leases short-lived access tokens or proxies Responses requests. The dashboard
-also caches per-account Codex profile activity and presents combined token, streak, task, skill, and account
-share statistics without requiring a fresh upstream read after restart.
+also caches per-account Codex profile activity, including lifetime tokens,
+peak usage, streaks, longest tasks, the activity calendar, and account token shares.
+Its usage panel estimates API costs for recorded proxy traffic using cached
+LiteLLM list rates, with daily cost/token charts, cache savings, and cost splits
+by token type and speed. Select an account and a 7-, 30-, or 90-day period.
+These estimates exclude direct leases and historical profile tokens; they are
+API-equivalent values, not subscription charges. Daily aggregates survive
+response cleanup, starting with the response history available at upgrade.
 
 ## Supported apps
 

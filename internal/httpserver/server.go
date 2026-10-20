@@ -21,6 +21,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
 	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
+	"github.com/NotRllyRn/codex-broker/internal/usage"
 	"github.com/NotRllyRn/codex-broker/internal/webassets"
 	"github.com/flosch/pongo2/v6"
 )
@@ -32,6 +33,8 @@ type Server struct {
 	App                                       *broker.Application
 	proxyClient                               *http.Client
 	proxyStats                                proxyStats
+	usageRates                                *usage.Catalog
+	usageRatesOnce                            sync.Once
 	proxyScrubPolicy                          responsesproxy.ScrubPolicy
 	gatewayEngine                             *gateway.Engine
 	gatewayOnce                               sync.Once
@@ -171,6 +174,7 @@ func (s *Server) routes() {
 	route("POST /settings/webhooks/{id}/delete", s.webhookDelete)
 	route("GET /api/internal/v1/dashboard", s.internalDashboard)
 	route("GET /api/internal/v1/proxy", s.internalProxy)
+	route("GET /api/internal/v1/usage", s.internalUsage)
 	route("GET /api/internal/v1/operations/{id}", s.internalOperation)
 	route("GET /api/internal/v1/login-attempts/{id}/interaction", s.interaction)
 	route("POST /api/internal/v1/login-attempts/{id}/browser-callback", s.callback)

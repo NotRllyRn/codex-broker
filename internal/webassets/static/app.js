@@ -1,3 +1,5 @@
+import { initUsageDashboard } from "./usage.js";
+
 const root = document.documentElement;
 const rootPath = root.dataset.rootPath || "";
 const appPath = (path) => `${rootPath}${path}`;
@@ -87,6 +89,7 @@ if (profileDashboard) {
 		profileDashboard.querySelector("[data-profile-data]").textContent || "[]",
 	);
 	const select = profileDashboard.querySelector("[data-profile-select]");
+	const loadUsage = initUsageDashboard(profileDashboard.querySelector("[data-usage-dashboard]"), appPath);
 	let pinnedActivityCell;
 	const compact = new Intl.NumberFormat(undefined, {
 		notation: "compact",
@@ -102,8 +105,6 @@ if (profileDashboard) {
 		const minutes = Math.floor((seconds % 3600) / 60);
 		return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 	};
-	const percentage = (number) =>
-		number == null ? "—" : `${Number(number).toFixed(number % 1 ? 1 : 0)}%`;
 
 	function clearActivityTooltip() {
 		pinnedActivityCell?.classList.remove("is-selected");
@@ -215,13 +216,6 @@ if (profileDashboard) {
 			current_streak_days: value(profile.current_streak_days, " days"),
 			longest_streak_days: value(profile.longest_streak_days, " days"),
 			longest_running_turn_sec: duration(profile.longest_running_turn_sec),
-			fast_mode_usage_percentage: percentage(profile.fast_mode_usage_percentage),
-			most_used_reasoning_effort: profile.most_used_reasoning_effort
-				? `${profile.most_used_reasoning_effort} · ${percentage(profile.most_used_reasoning_effort_percentage)}`
-				: "—",
-			unique_skills_used: value(profile.unique_skills_used),
-			total_skills_used: value(profile.total_skills_used),
-			total_threads: value(profile.total_threads),
 		};
 		for (const [key, formatted] of Object.entries(stats))
 			profileDashboard.querySelectorAll(`[data-profile-stat="${key}"]`).forEach((node) => (node.textContent = formatted));
@@ -231,6 +225,7 @@ if (profileDashboard) {
 			: "No cached profile data yet.";
 		renderActivity(profile);
 		renderTokenShare(profile);
+		loadUsage(profile.id);
 	}
 
 	select?.addEventListener("change", renderProfile);

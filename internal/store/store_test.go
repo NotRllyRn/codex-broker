@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 22 {
+		if version != 23 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -38,6 +38,54 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err := database.Close(); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestUsageDashboardMigrationBackfillsExistingResponses(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "before-usage.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		version, _ := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if version > 22 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := db.Exec(string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO schema_migrations VALUES(?,?,?,0)", version, entry.Name(), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = db.Exec(`INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','p','Account',1,'ACTIVE',1,1);
+		INSERT INTO proxy_responses(proxy_request_id,account_id,endpoint,request_model,response_model,request_service_tier,response_service_tier,terminal_status,upstream_attempts,upstream_http_status,request_started_at_ms,upstream_started_at_ms,response_headers_at_ms,first_response_event_at_ms,terminal_event_at_ms,input_tokens,cached_input_tokens,output_tokens,reasoning_output_tokens,total_tokens,stats_model)
+		VALUES('r','a','/v1/responses','requested','gpt-test','default','priority','completed',1,200,100,100,100,100,1792497600000,100,80,25,10,125,'gpt-test')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var day, tier string
+	var known, responses, input, cached, output int
+	err = migrated.DB.QueryRow(`SELECT day,service_tier,usage_known,responses,uncached_input_tokens,cached_input_tokens,output_tokens FROM usage_daily`).Scan(&day, &tier, &known, &responses, &input, &cached, &output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if day != "2026-10-20" || tier != "priority" || known != 1 || responses != 1 || input != 20 || cached != 80 || output != 25 {
+		t.Fatalf("backfill: %s %s %d %d %d %d %d", day, tier, known, responses, input, cached, output)
 	}
 }
 

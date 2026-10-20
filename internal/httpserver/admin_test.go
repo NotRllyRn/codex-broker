@@ -42,7 +42,7 @@ func TestDashboardShowsCycleStatusAndNextPulse(t *testing.T) {
 			t.Errorf("cycle status does not contain %q", expected)
 		}
 	}
-	for _, removed := range []string{"Last selected", "Weekly release order", "Next cycle pulse", `action="/accounts//pulse"`} {
+	for _, removed := range []string{"Activity insights", "Last selected", "Weekly release order", "Next cycle pulse", `action="/accounts//pulse"`} {
 		if strings.Contains(body, removed) {
 			t.Errorf("dashboard still contains %q", removed)
 		}

@@ -86,7 +86,7 @@
   <header class="profile-heading">
     <div>
       <p class="kicker">Account activity</p>
-      <h2 id="profile-dashboard-title">Codex profile</h2>
+      <h2 id="profile-dashboard-title">Usage &amp; Codex profile</h2>
       <p data-profile-subtitle>Combined statistics for every cached account.</p>
     </div>
     <label class="profile-picker">
@@ -96,6 +96,45 @@
       </select>
     </label>
   </header>
+  <section class="usage-dashboard" data-usage-dashboard aria-labelledby="usage-title">
+    <header class="usage-heading">
+      <div><h3 id="usage-title">Usage</h3><p>Recorded proxy traffic · API estimate · UTC days</p></div>
+      <div class="usage-controls">
+        <div class="usage-toggle" role="group" aria-label="Usage metric">
+          <button type="button" data-usage-metric="cost" aria-pressed="true">Cost</button>
+          <button type="button" data-usage-metric="tokens" aria-pressed="false">Tokens</button>
+        </div>
+        <label><select data-usage-days aria-label="Usage period"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label>
+        <button type="button" class="quiet-button" data-usage-refresh>Refresh usage</button>
+      </div>
+    </header>
+    <p class="usage-status" data-usage-status role="status">Loading recorded usage…</p>
+    <div class="usage-content" data-usage-content hidden>
+      <div class="usage-overview">
+        <div class="usage-headline"><strong data-usage-headline>—</strong><span data-usage-caption></span><small>API-equivalent value of recorded tokens. Subscription payments are billed separately.</small></div>
+        <figure class="usage-chart">
+          <figcaption data-usage-chart-title>Daily cost</figcaption>
+          <div class="usage-plot"><div class="usage-axis" data-usage-axis aria-hidden="true"></div><svg data-usage-chart viewBox="0 0 1000 220" preserveAspectRatio="none" role="img" aria-label="Daily cost"></svg></div>
+          <div class="usage-dates" data-usage-dates aria-hidden="true"></div>
+          <p class="usage-chart-detail" data-usage-chart-detail>Hover or focus a point to see a day.</p>
+        </figure>
+      </div>
+      <h3 class="usage-totals-title">Totals</h3>
+      <dl class="usage-totals">
+        <div><dt>Processed tokens</dt><dd data-usage-total="processed_tokens">—</dd></div>
+        <div><dt>Cached input</dt><dd data-usage-total="cached_input">—</dd></div>
+        <div><dt>Uncached input</dt><dd data-usage-total="uncached_input">—</dd></div>
+        <div><dt>Output</dt><dd data-usage-total="output">—</dd></div>
+        <div><dt>Cache savings</dt><dd data-usage-total="cache_savings_usd">—</dd></div>
+      </dl>
+      <div class="usage-costs">
+        <section><h3>Cost by type</h3><div class="usage-share-bar" data-usage-type-bar aria-hidden="true"></div><div class="usage-legend" data-usage-type-legend></div></section>
+        <section><header><h3>Cost by speed</h3><span>Premium <strong data-usage-premium>—</strong></span></header><div class="usage-share-bar" data-usage-speed-bar aria-hidden="true"></div><div class="usage-legend" data-usage-speed-legend></div></section>
+      </div>
+      <p class="usage-coverage" data-usage-coverage></p>
+    </div>
+  </section>
+  <h3 class="profile-section-title">Account-wide profile</h3>
   <div class="profile-metrics">
     <article><strong data-profile-stat="lifetime_tokens">—</strong><span>Lifetime tokens</span></article>
     <article><strong data-profile-stat="peak_daily_tokens">—</strong><span>Peak tokens</span></article>
@@ -118,16 +157,6 @@
       <div class="token-share-legend" data-token-share-legend></div>
     </article>
   </div>
-  <article class="profile-insights">
-    <h3>Activity insights</h3>
-    <dl>
-      <div><dt>Fast mode</dt><dd data-profile-stat="fast_mode_usage_percentage">—</dd></div>
-      <div><dt>Most used reasoning</dt><dd data-profile-stat="most_used_reasoning_effort">—</dd></div>
-      <div><dt>Skills explored</dt><dd data-profile-stat="unique_skills_used">—</dd></div>
-      <div><dt>Total skills used</dt><dd data-profile-stat="total_skills_used">—</dd></div>
-      <div><dt>Total tasks</dt><dd data-profile-stat="total_threads">—</dd></div>
-    </dl>
-  </article>
   <script type="application/json" data-profile-data>{{ profiles_json|safe }}</script>
 </section>
 <form class="filter-bar" method="get" action="/">
