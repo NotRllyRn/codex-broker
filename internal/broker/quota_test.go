@@ -12,6 +12,8 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/codex"
 	"github.com/NotRllyRn/codex-broker/internal/config"
 	"github.com/NotRllyRn/codex-broker/internal/events"
+	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 )
@@ -140,5 +142,38 @@ func TestFreshUsageReadUnlocksButInflightReadDoesNot(t *testing.T) {
 	lease, wait, err := router.Route(ctx, "two", RouteRequest{})
 	if err != nil || lease == nil || wait != nil {
 		t.Fatalf("lease=%+v wait=%+v err=%v", lease, wait, err)
+	}
+}
+
+func TestUsageCommitMeasuresActualPollDeltaBeforeReplacingBaseline(t *testing.T) {
+	router, account := quotaFixture(t)
+	ctx, now := context.Background(), time.Now()
+	start := now.Add(-time.Hour).UnixMilli()
+	if _, err := router.Store.DB.Exec("UPDATE usage_current SET complete_read_at_ms=?", start); err != nil {
+		t.Fatal(err)
+	}
+	if err := router.blockQuota(ctx, account, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := proxytelemetry.Record(ctx, router.Store, gateway.Observation{RequestID: "response", AccountID: account.PublicID, Endpoint: "/v1/responses", TerminalStatus: "completed", UpstreamAttempts: 1, UpstreamHTTPStatus: 200, UpstreamStartedAtMS: now.Add(-30 * time.Minute).UnixMilli(), TerminalEventAtMS: now.Add(-10 * time.Minute).UnixMilli()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(85), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}, "secondary": map[string]any{"usedPercent": int64(43), "windowDurationMins": int64(10080), "resetsAt": account.WeeklyReset.Int64}}
+	if err := router.Service.commitUsage(ctx, account, "poll", raw, 0, "test", nil, false); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := proxytelemetry.ReadQuotaTotals(ctx, router.Store.DB, 0)
+	if err != nil || len(rows) != 4 {
+		t.Fatalf("rows=%+v err=%v", rows, err)
+	}
+	for _, row := range rows {
+		want := int64(5)
+		if row.Window == "weekly" {
+			want = 3
+		}
+		if row.UsedPercent != want || row.ActiveMS != 20*time.Minute.Milliseconds() {
+			t.Fatalf("row=%+v", row)
+		}
 	}
 }

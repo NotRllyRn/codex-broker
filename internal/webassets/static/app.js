@@ -438,9 +438,11 @@ if (proxyCard) {
 	const relaySummary = proxyCard.querySelector("[data-relay-summary]");
 	const relayList = proxyCard.querySelector("[data-proxy-relays]");
 	const modelSelect = proxyCard.querySelector("[data-proxy-model]");
+	const accountSelect = proxyCard.querySelector("[data-quota-account]");
 	const usageNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 	const usageRate = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 	let usage = [];
+	let quotaUsage = [];
 	const activeDuration = (milliseconds) => {
 		const seconds = Math.round((milliseconds || 0) / 1000);
 		if (seconds < 60) return `${seconds}s`;
@@ -462,6 +464,18 @@ if (proxyCard) {
 		}
 	}
 	modelSelect.addEventListener("change", renderUsage);
+	function renderQuotaUsage() {
+		const selected = quotaUsage.find((item) => item.account_id === accountSelect.value) || quotaUsage[0];
+		for (const panel of proxyCard.querySelectorAll("[data-quota-period]")) {
+			const period = selected?.[panel.dataset.quotaPeriod] || {};
+			for (const kind of ["short", "weekly"]) {
+				const window = period[kind] || {};
+				panel.querySelector(`[data-quota="${kind}_rate"]`).textContent = window.usage_per_hour == null ? "—" : `${usageRate.format(window.usage_per_hour)} pp/h`;
+				panel.querySelector(`[data-quota="${kind}_time"]`).textContent = window.active_ms ? `${activeDuration(window.active_ms)} · ${window.samples} intervals` : "—";
+			}
+		}
+	}
+	accountSelect.addEventListener("change", renderQuotaUsage);
 	const relayState = { ready: ["Ready ●", "ready"], connected: ["Connected ◐", "connected"], offline: ["Offline ○", "offline"] };
 	const relayTime = (value) => Date.now() - Date.parse(value) < 60_000 ? "just now" : relativeTime(value);
 	function relayRows(relays) {
@@ -498,6 +512,16 @@ if (proxyCard) {
 			}));
 			if (usage.some((item) => item.model === selectedModel)) modelSelect.value = selectedModel;
 			renderUsage();
+			quotaUsage = Array.isArray(data.quota_usage) ? data.quota_usage : [];
+			const selectedAccount = accountSelect.value;
+			accountSelect.replaceChildren(...quotaUsage.map((item) => {
+				const option = document.createElement("option");
+				option.value = item.account_id;
+				option.textContent = item.account_label;
+				return option;
+			}));
+			if (quotaUsage.some((item) => item.account_id === selectedAccount)) accountSelect.value = selectedAccount;
+			renderQuotaUsage();
 			const relays = Array.isArray(data.relays) ? data.relays : [];
 			const readyRelays = relays.filter((relay) => relay.ready).length;
 			const connectedRelays = relays.filter((relay) => relay.connected).length;

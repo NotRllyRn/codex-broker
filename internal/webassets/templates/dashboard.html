@@ -65,6 +65,33 @@
       </article>
     </div>
   </section>
+  <section class="proxy-usage" aria-labelledby="quota-usage-title">
+    <header>
+      <div><h3 id="quota-usage-title">Estimated quota consumption</h3><small>Percentage points per active account hour · Recorded proxy activity only</small></div>
+      <label><span>Account</span><select data-quota-account><option value="all">All accounts</option></select></label>
+    </header>
+    <div class="proxy-usage-grid">
+      <article data-quota-period="rolling_7d">
+        <h3>Rolling seven days</h3>
+        <dl>
+          <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
+          <div><dt>Measured active time</dt><dd data-quota="short_time">—</dd></div>
+          <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
+          <div><dt>Measured active time</dt><dd data-quota="weekly_time">—</dd></div>
+        </dl>
+      </article>
+      <article data-quota-period="lifetime">
+        <h3>Lifetime</h3>
+        <dl>
+          <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
+          <div><dt>Measured active time</dt><dd data-quota="short_time">—</dd></div>
+          <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
+          <div><dt>Measured active time</dt><dd data-quota="weekly_time">—</dd></div>
+        </dl>
+      </article>
+    </div>
+    <small>Weighted estimates from usage polls; reset-spanning intervals are excluded. Seven-day membership uses the interval end time. Lifetime starts with recorded measurements. — means insufficient data. Account use outside this proxy can skew estimates.</small>
+  </section>
   <div class="proxy-relays">
     <h3>Redundant relay edges</h3>
     <ul data-proxy-relays aria-label="Relay edge status"></ul>

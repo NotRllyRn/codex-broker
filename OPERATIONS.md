@@ -101,8 +101,35 @@ response status, model, timing, and token-usage counters are retained for
 aggregate analysis. Per-model token and active-time totals are updated when a
 response terminates. Response detail and usage snapshots roll off after seven
 days while lifetime totals remain. Token counts and throughput come directly
-from Responses streams. Quota-per-hour statistics and their per-attempt
-measurement records have been removed; no error-history table is added.
+from Responses streams. Account-level quota-per-hour estimates use consecutive
+successful usage polls, without extra upstream reads or per-turn quota snapshots.
+For each short/weekly window, only nondecreasing readings from the same unexpired
+reset window are compared. Missing/invalid readings, reset-spanning intervals,
+and baselines older than seven days are excluded. Temporary quota blocks never
+substitute for actual usage measurements. Measured zero-point changes are
+included when response activity exists, avoiding upward bias from percentage
+rounding; intervals without recorded activity contribute neither consumption
+nor time until a late response supplies activity.
+
+Each interval stores its percentage-point change and clipped, merged proxy
+activity spans. Responses crossing poll boundaries contribute only their time
+inside each interval; simultaneous responses count once per account. Completed
+streams and delayed relay telemetry update retained intervals and adjust their
+lifetime contributions idempotently, even after original response rows expire.
+The seven-day view sums intervals whose end time is within seven days, independent
+of the hourly cleanup schedule. Interval records expire after seven days; compact
+per-account/window lifetime totals remain. Rates divide summed consumption by
+summed measured hours, including for All accounts, rather than averaging rates.
+Each window has its own measured-time denominator. Lifetime quota statistics
+start with newly measured intervals; historical quota rates are not invented or
+backfilled. Only retained intervals can receive late corrections.
+
+These are estimates of quota percentage points per active account hour, not
+elapsed wall-clock hours or model-specific rates. Direct leased-client traffic,
+external account use, unrecorded interrupted streams, and upstream reporting
+delays can skew the estimate. The dashboard shows supporting measured active
+time and interval counts; unknown rates are displayed as a dash. No prompt,
+response content, or new error-history table is added.
 Upgrade the broker and relay edges together: the streamlined telemetry uses
 relay protocol version 3.
 Keep the macOS adapter for its ChatGPT-specific behavior until direct routing and
@@ -135,5 +162,5 @@ Back up the database and vault key separately. A database without its matching k
 2. Stop the old process.
 3. Start the new image against a copy first and run readiness, account listing, lease, and managed checkpoint checks.
 4. Preserve the physical `windowkeeper-data` volume, `windowkeeper.db`, lock, vault KDF/AAD strings, sentinel, and historical schema identifiers.
-5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state; migration 018 adds per-model rolling and lifetime proxy usage; migration 019 adds shared temporary quota blocks and removes obsolete quota-measurement records/columns while preserving token totals and response details; migration 020 adds the compact reset-poll schedule. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change. Removed measurement data remains recoverable from the pre-v19 backup.
+5. Migration 009 removes legacy activation tables and state; migration 010 adds minimal window-pulse state; migration 011 adds public enrollment claims; migration 012 adds the per-account profile-stat cache; migrations 013-015 add dynamic weekly cadence; migration 016 adds response telemetry; migration 017 adds relay reservations, idempotency, and heartbeat state; migration 018 adds per-model rolling and lifetime proxy usage; migration 019 adds shared temporary quota blocks and removes obsolete quota-measurement records/columns while preserving token totals and response details; migration 020 adds the compact reset-poll schedule; migration 021 adds poll-interval quota measurements and durable lifetime counters. These migrations do not change existing credentials. Restore the corresponding automatic pre-migration backup before running software that predates a schema change. Removed measurement data remains recoverable from the pre-v19 backup.
 6. Do not require account relogin for a normal upgrade.

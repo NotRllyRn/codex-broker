@@ -14,6 +14,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/codex"
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/logbook"
+	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 	"github.com/NotRllyRn/codex-broker/internal/vault"
 )
@@ -428,6 +429,15 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		}
 		ss, su, sd, sr, sa := values(usage.Short)
 		ws, wu, wd, wr, wa := values(usage.Weekly)
+		quotaWindow := func(window *Window) proxytelemetry.QuotaWindow {
+			if window == nil {
+				return proxytelemetry.QuotaWindow{}
+			}
+			return proxytelemetry.QuotaWindow{Used: window.UsedPercent, ResetS: window.ResetsAtS}
+		}
+		if err := proxytelemetry.RecordUsage(ctx, db, account.ID, proxytelemetry.QuotaSnapshot{ID: snapshot, AtMS: now, Short: quotaWindow(usage.Short), Weekly: quotaWindow(usage.Weekly)}); err != nil {
+			return err
+		}
 		if _, err := db.ExecContext(ctx, `UPDATE usage_current SET snapshot_id=?,selected_limit_id=?,short_raw_slot=?,short_used_percent_raw=?,short_duration_minutes=?,short_resets_at_s=?,short_anomaly=?,weekly_raw_slot=?,weekly_used_percent_raw=?,weekly_duration_minutes=?,weekly_resets_at_s=?,weekly_anomaly=?,complete_read_at_ms=?,last_attempt_at_ms=?,stale=0,last_error_code=NULL,last_error_summary=NULL,source='APP_SERVER',state_version=state_version+1 WHERE account_id=?`, snapshot, nullString(usage.SelectedLimitID), ss, su, sd, sr, sa, ws, wu, wd, wr, wa, now, now, account.ID); err != nil {
 			return err
 		}

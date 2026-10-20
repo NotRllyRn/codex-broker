@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 20 {
+		if version != 21 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -96,6 +96,12 @@ func TestMigrationNineteenRemovesQuotaMeasurementsAndPreservesTokenTotals(t *tes
 	for _, query := range []string{"SELECT quota_isolated FROM proxy_responses", "SELECT short_usage_samples FROM proxy_usage_totals"} {
 		if _, err := migrated.DB.Exec(query); err == nil {
 			t.Fatalf("obsolete measurement survived: %s", query)
+		}
+	}
+	// New poll-based estimates must not invent lifetime history from retired data.
+	for _, table := range []string{"quota_intervals", "quota_lifetime"} {
+		if err := migrated.DB.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s rows=%d err=%v", table, count, err)
 		}
 	}
 }

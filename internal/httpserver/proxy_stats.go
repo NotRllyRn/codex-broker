@@ -22,19 +22,20 @@ type proxyClientStats struct {
 }
 
 type proxySnapshot struct {
-	Ready                 bool               `json:"ready"`
-	Active                int                `json:"active"`
-	Requests              uint64             `json:"requests"`
-	Failovers             uint64             `json:"failovers"`
-	ScrubbedRequests      uint64             `json:"scrubbed_requests"`
-	ScrubbedInputBytes    uint64             `json:"scrubbed_input_bytes"`
-	ScrubbedOutputBytes   uint64             `json:"scrubbed_output_bytes"`
-	ScrubbedRemovedBytes  uint64             `json:"scrubbed_removed_bytes"`
-	ScrubRejectedRequests uint64             `json:"scrub_rejected_requests"`
-	NativeCompactionArmed uint64             `json:"native_compaction_armed"`
-	RecentClients         []proxyClientStats `json:"recent_clients"`
-	Relays                []relayStatus      `json:"relays"`
-	Usage                 []proxyModelUsage  `json:"usage"`
+	Ready                 bool                 `json:"ready"`
+	Active                int                  `json:"active"`
+	Requests              uint64               `json:"requests"`
+	Failovers             uint64               `json:"failovers"`
+	ScrubbedRequests      uint64               `json:"scrubbed_requests"`
+	ScrubbedInputBytes    uint64               `json:"scrubbed_input_bytes"`
+	ScrubbedOutputBytes   uint64               `json:"scrubbed_output_bytes"`
+	ScrubbedRemovedBytes  uint64               `json:"scrubbed_removed_bytes"`
+	ScrubRejectedRequests uint64               `json:"scrub_rejected_requests"`
+	NativeCompactionArmed uint64               `json:"native_compaction_armed"`
+	RecentClients         []proxyClientStats   `json:"recent_clients"`
+	Relays                []relayStatus        `json:"relays"`
+	Usage                 []proxyModelUsage    `json:"usage"`
+	QuotaUsage            []*quotaAccountUsage `json:"quota_usage"`
 }
 
 type proxyModelUsage struct {
@@ -148,6 +149,10 @@ func (s *Server) internalProxy(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	snapshot.Usage, err = s.proxyUsage(r.Context())
+	if err != nil {
+		return err
+	}
+	snapshot.QuotaUsage, err = s.quotaUsage(r.Context(), time.Now())
 	if err != nil {
 		return err
 	}
