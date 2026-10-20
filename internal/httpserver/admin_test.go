@@ -57,6 +57,14 @@ func TestDashboardShowsCycleStatusAndNextPulse(t *testing.T) {
 	}
 }
 
+func TestExhaustedAccountKeepsWindowDashboardStatus(t *testing.T) {
+	full, reset := int64(100), int64(1790185173000)
+	view := accountView(broker.AccountSummary{OverallState: "HEALTHY", QuotaBlocked: true, ShortPercent: &full, WeeklyPercent: &full, ShortResetMS: &reset, WeeklyResetMS: &reset})
+	if view["overall_state"] != "HEALTHY" || view["cycle_label"] != "Usage exhausted" || view["short_percent"] != &full || view["weekly_percent"] != &full || view["short_reset"] == nil || view["weekly_reset"] == nil {
+		t.Fatalf("exhausted account dashboard status=%+v", view)
+	}
+}
+
 func TestAccountDetailRendersPulseHistory(t *testing.T) {
 	renderer, err := newRenderer("templates")
 	if err != nil {

@@ -91,9 +91,31 @@ func TestQuotaRejectionBlocksAllClientsWithoutUsageRead(t *testing.T) {
 	if err != nil || len(views) != 1 || !views[0].QuotaBlocked || *views[0].ShortPercent != 100 || *views[0].WeeklyPercent != 100 {
 		t.Fatalf("views=%+v err=%v", views, err)
 	}
+	if views[0].OverallState != "HEALTHY" {
+		t.Fatalf("quota exhaustion requires attention: %s", views[0].OverallState)
+	}
 	var short, weekly int
 	if err := router.Store.DB.QueryRow("SELECT short_used_percent_raw,weekly_used_percent_raw FROM usage_current").Scan(&short, &weekly); err != nil || short != 80 || weekly != 40 {
 		t.Fatalf("cached usage=%d/%d err=%v", short, weekly, err)
+	}
+}
+
+func TestQuotaBlockPreservesUnrelatedAccountStatus(t *testing.T) {
+	router, account := quotaFixture(t)
+	ctx := context.Background()
+	if err := router.blockQuota(ctx, account, time.Now().UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"} {
+		t.Run(state, func(t *testing.T) {
+			if _, err := router.Store.DB.Exec("UPDATE account_state SET overall_state=? WHERE account_id=?", state, account.ID); err != nil {
+				t.Fatal(err)
+			}
+			views, err := router.Service.Accounts(ctx)
+			if err != nil || len(views) != 1 || views[0].OverallState != state || !views[0].QuotaBlocked {
+				t.Fatalf("views=%+v err=%v", views, err)
+			}
+		})
 	}
 }
 

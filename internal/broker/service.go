@@ -266,9 +266,6 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 			full := int64(100)
 			item.ShortPercent, item.WeeklyPercent = &full, &full
 			item.Evidence = "Upstream usage exhausted; waiting for a window reset or fresh usage poll"
-			if item.Enabled && (item.OverallState == "HEALTHY" || item.OverallState == "WARNING") {
-				item.OverallState = "WARNING"
-			}
 		}
 		item.LastRefreshMS = nullableInt(last)
 		item.LastRoutedMS = nullableInt(routed)
