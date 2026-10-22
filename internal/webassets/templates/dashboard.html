@@ -82,6 +82,20 @@
   <ul data-proxy-clients aria-label="Recent proxy clients"></ul>
   <small>Since broker restart · Recent clients: last five minutes</small>
 </section>
+<section class="pool-usage" aria-labelledby="pool-usage-title">
+  <header><h2 id="pool-usage-title">Total pool usage</h2><p>Latest reported quotas · Equal capacity per account · Refresh view to update</p></header>
+  <div class="pool-usage-grid">
+    {% for window in pool_usage %}
+    <article>
+      <div class="pool-ring" style="--pool-used: {{ window.Used|floatformat:1 }}%" role="img" aria-label="{{ window.Label }}: {% if window.Accounts %}{{ window.Used|floatformat:1 }}% used, {{ window.Remaining|floatformat:1 }}% left{% else %}no measured capacity{% endif %}">
+        <strong>{% if window.Accounts %}{{ window.Used|floatformat:1 }}%<small>used</small>{% else %}—<small>No capacity</small>{% endif %}</strong>
+      </div>
+      <div><h3>{{ window.Label }}</h3><p>{% if window.Accounts %}{{ window.Remaining|floatformat:1 }}% left{% else %}No measured capacity{% endif %}</p><small>{{ window.Accounts }} accounts included · {{ window.Unknown }} unknown · {{ window.Excluded }} excluded</small></div>
+    </article>
+    {% endfor %}
+  </div>
+  <p class="subtle">5-hour capacity excludes exhausted, weekly-full, disabled, and unauthenticated accounts. Weekly usage includes every account's reported weekly quota, including exhausted accounts. Missing or invalid readings are omitted. Cached readings may lag upstream usage.</p>
+</section>
 <section class="profile-dashboard" data-profile-dashboard aria-labelledby="profile-dashboard-title">
   <header class="profile-heading">
     <div>

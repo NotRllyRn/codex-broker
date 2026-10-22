@@ -48,6 +48,15 @@ Each known short or weekly reset also schedules a usage refresh two minutes afte
 
 An upstream quota rejection overrides cached usage percentages for every client and survives broker restart. The account is temporarily treated as fully exhausted until either known usage window resets or a successful complete usage read that started after the rejection arrives. Failed or already-in-flight reads do not unlock it. With no known reset, it stays blocked until a successful fresh read. Quota failures and completed proxy responses do not initiate extra usage reads. The dashboard marks blocked accounts as usage exhausted and preserves the last reported percentages in both the overview and account detail.
 
+The total pool dashboard averages the latest reported quota percentages with equal
+capacity per account (upstream does not expose comparable token allowances across
+plans). The 5-hour pool excludes disabled, unverified, quota-blocked, and reported
+100%-used short/weekly accounts. The weekly pool includes all nondeleted accounts,
+including exhausted accounts, using their reported weekly percentages. Missing or
+invalid percentages are omitted per window and counted as unknown. Empty pools
+show no measured capacity. Pool totals ignore account-list filters and the profile
+selector; use Refresh view to reload cached readings without extra upstream calls.
+
 ## Client keys
 
 Create a key in Settings or offline:

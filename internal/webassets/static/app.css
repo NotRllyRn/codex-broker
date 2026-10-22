@@ -1506,3 +1506,11 @@ textarea {
 @media (max-width: 680px) {
 	.proxy-usage-grid { grid-template-columns: 1fr; }
 }
+
+.pool-usage { margin-block: 2rem; padding-block: 1.5rem; border-block: 1px solid var(--line); }
+.pool-usage header p, .pool-usage small { color: var(--muted); }
+.pool-usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 2rem; margin-block: 1.5rem; }
+.pool-usage-grid article { display: flex; align-items: center; gap: 1.5rem; }
+.pool-ring { flex: 0 0 9rem; width: 9rem; height: 9rem; border-radius: 50%; display: grid; place-items: center; background: conic-gradient(var(--accent) var(--pool-used), var(--surface-2) 0); }
+.pool-ring strong { display: grid; align-content: center; text-align: center; width: 7rem; height: 7rem; border-radius: 50%; background: var(--surface); font: 600 1.5rem BrokerMono, monospace; }
+.pool-ring small { margin-top: .35rem; font: .75rem BrokerSans, sans-serif; }
