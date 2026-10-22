@@ -99,12 +99,6 @@ if (profileDashboard) {
 	const colors = ["#2678d9", "#36a58b", "#8b6fd6", "#e18b38", "#d65370", "#6b8e23", "#2b9eb3", "#b76e9b"];
 	const value = (number, suffix = "") =>
 		number == null ? "—" : `${compact.format(number)}${suffix}`;
-	const duration = (seconds) => {
-		if (seconds == null) return "—";
-		const hours = Math.floor(seconds / 3600);
-		const minutes = Math.floor((seconds % 3600) / 60);
-		return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-	};
 
 	function clearActivityTooltip() {
 		pinnedActivityCell?.classList.remove("is-selected");
@@ -213,9 +207,6 @@ if (profileDashboard) {
 		const stats = {
 			lifetime_tokens: value(profile.lifetime_tokens),
 			peak_daily_tokens: value(profile.peak_daily_tokens),
-			current_streak_days: value(profile.current_streak_days, " days"),
-			longest_streak_days: value(profile.longest_streak_days, " days"),
-			longest_running_turn_sec: duration(profile.longest_running_turn_sec),
 		};
 		for (const [key, formatted] of Object.entries(stats))
 			profileDashboard.querySelectorAll(`[data-profile-stat="${key}"]`).forEach((node) => (node.textContent = formatted));
