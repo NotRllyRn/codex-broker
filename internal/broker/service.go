@@ -263,8 +263,6 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 		item.WeeklyResetMS = secondsPointer(weeklyReset)
 		if blocked.Valid && blocked.Int64 > core.NowMS() {
 			item.QuotaBlocked = true
-			full := int64(100)
-			item.ShortPercent, item.WeeklyPercent = &full, &full
 			item.Evidence = "Upstream usage exhausted; waiting for a window reset or fresh usage poll"
 		}
 		item.LastRefreshMS = nullableInt(last)

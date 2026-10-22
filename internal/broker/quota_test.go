@@ -88,7 +88,7 @@ func TestQuotaRejectionBlocksAllClientsWithoutUsageRead(t *testing.T) {
 		t.Fatalf("reads=%d err=%v", reads, err)
 	}
 	views, err := router.Service.Accounts(ctx)
-	if err != nil || len(views) != 1 || !views[0].QuotaBlocked || *views[0].ShortPercent != 100 || *views[0].WeeklyPercent != 100 {
+	if err != nil || len(views) != 1 || !views[0].QuotaBlocked || *views[0].ShortPercent != 80 || *views[0].WeeklyPercent != 40 {
 		t.Fatalf("views=%+v err=%v", views, err)
 	}
 	if views[0].OverallState != "HEALTHY" {
