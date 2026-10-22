@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 23 {
+		if version != 24 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -368,7 +368,7 @@ func TestMigrationThirteenPreservesPulseState(t *testing.T) {
 	}
 }
 
-func TestMigrationSixPreservesCredentialGenerations(t *testing.T) {
+func TestUpgradePreservesManagedCredentialsAndRemovesExports(t *testing.T) {
 	ctx, path := context.Background(), filepath.Join(t.TempDir(), "windowkeeper.db")
 	database, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -399,7 +399,50 @@ func TestMigrationSixPreservesCredentialGenerations(t *testing.T) {
 	}
 	defer migrated.Close()
 	var count int
-	if err := migrated.DB.QueryRowContext(ctx, "SELECT count(*) FROM credential_bundles WHERE account_id='a'").Scan(&count); err != nil || count != 3 {
+	if err := migrated.DB.QueryRowContext(ctx, "SELECT count(*) FROM credential_bundles WHERE account_id='a'").Scan(&count); err != nil || count != 2 {
 		t.Fatalf("credential count=%d, error=%v", count, err)
+	}
+}
+
+func TestRemoveExportsPreservesActiveCredential(t *testing.T) {
+	ctx, path := context.Background(), filepath.Join(t.TempDir(), "broker.db")
+	database, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.DB.Exec(`INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','p','Account',1,'ACTIVE',1,1);
+ INSERT INTO credential_bundles VALUES('active','a','ACTIVE',1,1,'primary',X'01',X'1234',X'5678','test',1,1,NULL);
+ INSERT INTO credential_bundles VALUES('export','a','EXPORT',1,1,'primary',X'02',X'9999',X'8888','test',2,NULL,NULL);
+ DELETE FROM schema_migrations WHERE version=24;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		migrated, err := Open(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var id, state string
+		var cipher, aad []byte
+		var created, promoted int64
+		err = migrated.DB.QueryRow("SELECT bundle_id,state,ciphertext,aad,created_at_ms,promoted_at_ms FROM credential_bundles").Scan(&id, &state, &cipher, &aad, &created, &promoted)
+		if err != nil || id != "active" || state != "ACTIVE" || string(cipher) != string([]byte{0x12, 0x34}) || string(aad) != string([]byte{0x56, 0x78}) || created != 1 || promoted != 1 {
+			t.Fatalf("managed credential changed: %s %s %x %x %d %d: %v", id, state, cipher, aad, created, promoted, err)
+		}
+		var count int
+		_ = migrated.DB.QueryRow("SELECT count(*) FROM credential_bundles").Scan(&count)
+		if count != 1 {
+			t.Fatalf("credential count=%d", count)
+		}
+		_ = migrated.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE name='credential_one_export_uq'").Scan(&count)
+		if count != 0 {
+			t.Fatal("export index retained")
+		}
+		if err = migrated.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

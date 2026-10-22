@@ -402,13 +402,6 @@ if (loginProgress) {
 			return;
 		}
 		if (update.attempt_id !== attempt) return;
-		if (update.state === "FORKING_CREDENTIALS") {
-			status.textContent = "Creating managed and downloadable credentials.";
-			loginProgress
-				.querySelectorAll("[data-device], [data-browser]")
-				.forEach((panel) => (panel.hidden = true));
-			loading.hidden = false;
-		}
 		if (update.state === "COMPLETED")
 			location.assign(appPath(`/accounts/${account}`));
 		if (

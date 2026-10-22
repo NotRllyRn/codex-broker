@@ -16,11 +16,15 @@ Primary pinned sources:
 
 Codex Broker lets Codex own normal managed refresh timing and treats `auth.json` as opaque mutable state. Every authenticated runtime is quiesced and checkpointed before deletion, including when its requested RPC fails.
 
-For the required download feature, enrollment may attempt one controlled second refresh to create an `EXPORT` snapshot after the new `ACTIVE` credential is already durable. Codex Broker never uses or refreshes that export and never rolls ACTIVE back when export issuance fails.
+Enrollment now checkpoints the original verified OAuth credential directly.
+There is no export issuance or auth-file download. Migration 024 removes legacy
+export snapshots while preserving active credentials and retired history.
 
-## Limitations
+## Historical risk
 
-- The export may stop renewing after ACTIVE rotates.
-- One export must not be copied into multiple independently refreshing services.
-- Multiple independent named exports require another OAuth approval or a coordinated credential-lease protocol; static cloning is not safe.
-- Live-account release evidence can observe current behavior but cannot turn it into an upstream guarantee.
+The removed implementation refreshed the same original source separately for
+managed and export credentials. Different token values did not establish
+independent refresh lineages. On 2026-10-22, an affected account's managed and
+export access tokens both returned `token_revoked`, and both refresh tokens
+returned `refresh_token_invalidated`. Those results establish upstream
+invalidation but do not prove its cause.

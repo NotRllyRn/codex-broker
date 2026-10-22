@@ -105,7 +105,7 @@ func TestConcurrentNearExpiryLeasesRefreshOnce(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.installBundle(ctx, "internal", "ACTIVE", payload); err != nil {
+	if err := service.replaceActive(ctx, "internal", payload); err != nil {
 		t.Fatal(err)
 	}
 	router := Router{Store: database, Service: service, PaddingSeconds: 10}
@@ -185,7 +185,7 @@ func TestCheckpointFailureQuarantinesCredential(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.installBundle(ctx, "internal", "ACTIVE", payload); err != nil {
+	if err := service.replaceActive(ctx, "internal", payload); err != nil {
 		t.Fatal(err)
 	}
 	_, err = service.Lease(ctx, Account{ID: "internal", PublicID: "public"}, now, false)

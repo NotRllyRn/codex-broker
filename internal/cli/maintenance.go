@@ -181,10 +181,9 @@ func verifyKey(ctx context.Context, settings config.Config, args []string) error
 }
 
 type credentialRow struct {
-	bundleID, accountID, state, keyID, codexVersion string
-	envelopeVersion, payloadVersion                 int
-	nonce, ciphertext, aad                          []byte
-	created                                         int64
+	bundleID, accountID, keyID, codexVersion string
+	envelopeVersion, payloadVersion          int
+	nonce, ciphertext, aad                   []byte
 }
 type destinationRow struct {
 	id          string
@@ -230,14 +229,14 @@ func rotateKey(ctx context.Context, settings config.Config, args []string) error
 	newVault, _ := vault.New(newKey, instance, "rotated")
 	count := 0
 	err = database.Write(ctx, func(db store.Executor) error {
-		rows, err := db.QueryContext(ctx, "SELECT bundle_id,account_id,state,envelope_version,payload_schema_version,key_id,nonce,ciphertext,aad,codex_version,created_at_ms FROM credential_bundles WHERE state IN('ACTIVE','EXPORT')")
+		rows, err := db.QueryContext(ctx, "SELECT bundle_id,account_id,envelope_version,payload_schema_version,key_id,nonce,ciphertext,aad,codex_version FROM credential_bundles WHERE state='ACTIVE'")
 		if err != nil {
 			return err
 		}
 		var credentials []credentialRow
 		for rows.Next() {
 			var row credentialRow
-			if err := rows.Scan(&row.bundleID, &row.accountID, &row.state, &row.envelopeVersion, &row.payloadVersion, &row.keyID, &row.nonce, &row.ciphertext, &row.aad, &row.codexVersion, &row.created); err != nil {
+			if err := rows.Scan(&row.bundleID, &row.accountID, &row.envelopeVersion, &row.payloadVersion, &row.keyID, &row.nonce, &row.ciphertext, &row.aad, &row.codexVersion); err != nil {
 				rows.Close()
 				return err
 			}
@@ -272,22 +271,10 @@ func rotateKey(ctx context.Context, settings config.Config, args []string) error
 			if err != nil {
 				return err
 			}
-			if row.state == "ACTIVE" {
-				if _, err = db.ExecContext(ctx, "UPDATE credential_bundles SET state='RETIRED',retired_at_ms=? WHERE bundle_id=?", now, row.bundleID); err != nil {
-					return err
-				}
-			} else {
-				if _, err = db.ExecContext(ctx, "DELETE FROM credential_bundles WHERE bundle_id=?", row.bundleID); err != nil {
-					return err
-				}
+			if _, err = db.ExecContext(ctx, "UPDATE credential_bundles SET state='RETIRED',retired_at_ms=? WHERE bundle_id=?", now, row.bundleID); err != nil {
+				return err
 			}
-			created := now
-			var promoted any = now
-			if row.state == "EXPORT" {
-				created = row.created
-				promoted = nil
-			}
-			if _, err = db.ExecContext(ctx, "INSERT INTO credential_bundles VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", envelope.BundleID, envelope.AccountID, row.state, envelope.EnvelopeVersion, envelope.PayloadSchemaVersion, envelope.KeyID, envelope.Nonce, envelope.Ciphertext, envelope.AAD, row.codexVersion, created, promoted, nil); err != nil {
+			if _, err = db.ExecContext(ctx, "INSERT INTO credential_bundles VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", envelope.BundleID, envelope.AccountID, "ACTIVE", envelope.EnvelopeVersion, envelope.PayloadSchemaVersion, envelope.KeyID, envelope.Nonce, envelope.Ciphertext, envelope.AAD, row.codexVersion, now, now, nil); err != nil {
 				return err
 			}
 			count++

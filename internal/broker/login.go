@@ -132,7 +132,7 @@ func (s *Service) StartLogin(ctx context.Context, public, method, session string
 	})
 	if err != nil {
 		var active int
-		_ = s.Store.DB.QueryRowContext(ctx, "SELECT count(*) FROM login_attempts WHERE account_id=? AND state IN('CREATED','STARTING_RUNTIME','STARTING_LOGIN','WAITING_FOR_USER','OAUTH_COMPLETED','VERIFYING_ACCOUNT','STARTING_EXPORT_LOGIN','WAITING_FOR_EXPORT_USER','VERIFYING_EXPORT','FORKING_CREDENTIALS','QUIESCING_RUNTIME','CHECKPOINTING_CREDENTIAL','CANCEL_REQUESTED')", account.ID).Scan(&active)
+		_ = s.Store.DB.QueryRowContext(ctx, "SELECT count(*) FROM login_attempts WHERE account_id=? AND state IN('CREATED','STARTING_RUNTIME','STARTING_LOGIN','WAITING_FOR_USER','OAUTH_COMPLETED','VERIFYING_ACCOUNT','QUIESCING_RUNTIME','CHECKPOINTING_CREDENTIAL','CANCEL_REQUESTED')", account.ID).Scan(&active)
 		if active > 0 {
 			_ = s.FailOperation(ctx, operation, "LOGIN_ALREADY_ACTIVE", "Another sign-in is active")
 			return nil, core.NewError("LOGIN_ALREADY_ACTIVE", "Another sign-in is already active for this account", 409)
@@ -308,35 +308,7 @@ func (s *Service) runLogin(ctx context.Context, account Account, operation, atte
 		return
 	}
 	safe = true
-	_ = s.Runtime.Discard(runtime)
-	sourceFingerprint, err := s.Vault.AuthFingerprint(source)
-	if err != nil {
-		fail(err)
-		return
-	}
-	managedIdentity, err := s.issueCandidate(ctx, account, source, observed, "ACTIVE", map[string]bool{sourceFingerprint: true})
-	if err != nil {
-		fail(err)
-		return
-	}
-	exportErr := ""
-	if _, err = s.bundle(ctx, account.ID, "EXPORT"); err != nil {
-		active, activeErr := s.bundle(ctx, account.ID, "ACTIVE")
-		if activeErr != nil {
-			fail(activeErr)
-			return
-		}
-		activeFingerprint, activeErr := s.Vault.AuthFingerprint(active)
-		if activeErr != nil {
-			fail(activeErr)
-			return
-		}
-		_, err = s.issueCandidate(ctx, account, source, observed, "EXPORT", map[string]bool{sourceFingerprint: true, activeFingerprint: true})
-		if err != nil {
-			exportErr = "EXPORT_FORK_FAILED"
-		}
-	}
-	if err = s.commitLogin(ctx, account, operation, attempt, method, managedIdentity, exportErr); err != nil {
+	if err = s.commitLogin(ctx, account, operation, attempt, method, identity); err != nil {
 		fail(err)
 		return
 	}
@@ -405,66 +377,7 @@ func (s *Service) promoteLogin(ctx context.Context, accountID, attempt string, p
 	})
 }
 
-func (s *Service) issueCandidate(ctx context.Context, account Account, source vault.Payload, sourceIdentity map[string]any, state string, forbidden map[string]bool) (map[string]any, error) {
-	if err := s.setCredentialUse(ctx, account.ID, true, true); err != nil {
-		return nil, err
-	}
-	runtime, err := s.Runtime.Start(ctx, account.ID, &source, pointerString(account.Workspace))
-	if err != nil {
-		_ = s.setCredentialUse(ctx, account.ID, false, true)
-		return nil, err
-	}
-	safe, completed := false, false
-	defer func() {
-		if completed {
-			_ = s.Runtime.Discard(runtime)
-			safe = true
-		} else {
-			closeErr := runtime.Client.Close()
-			if state == "EXPORT" && closeErr == nil {
-				s.Runtime.Archive(runtime)
-				safe = true
-			} else {
-				s.Runtime.Preserve(runtime)
-			}
-		}
-		_ = s.setCredentialUse(context.WithoutCancel(ctx), account.ID, false, safe)
-	}()
-	identity, err := runtime.Adapter.Account(ctx, true)
-	if err != nil {
-		return nil, err
-	}
-	expected := account
-	if email := stringValue(sourceIdentity["email"]); email != "" {
-		expected.Email = sql.NullString{String: email, Valid: true}
-	}
-	if _, err = verifyIdentity(expected, identity); err != nil {
-		return nil, err
-	}
-	if err = runtime.Client.Close(); err != nil {
-		return nil, err
-	}
-	payload, err := s.Vault.Capture(runtime.CodexHome(), s.Config.CodexVersion, pointerString(account.Workspace))
-	if err != nil {
-		return nil, err
-	}
-	fingerprint, err := s.Vault.AuthFingerprint(payload)
-	if err != nil || forbidden[fingerprint] {
-		return nil, core.NewError("CODEX_TOKEN_NOT_ROTATED", "Codex did not create a separate credential", 409)
-	}
-	if state == "ACTIVE" {
-		err = s.replaceActive(ctx, account.ID, payload)
-	} else {
-		err = s.installBundle(ctx, account.ID, state, payload)
-	}
-	if err != nil {
-		return nil, err
-	}
-	completed = true
-	return identity, nil
-}
-
-func (s *Service) commitLogin(ctx context.Context, account Account, operation, attempt, method string, identity map[string]any, exportError string) error {
+func (s *Service) commitLogin(ctx context.Context, account Account, operation, attempt, method string, identity map[string]any) error {
 	observed, err := verifyIdentity(account, identity)
 	if err != nil {
 		return err
@@ -495,26 +408,14 @@ func (s *Service) commitLogin(ctx context.Context, account Account, operation, a
 		if _, err = db.ExecContext(ctx, "UPDATE account_state SET auth_state='VERIFIED',worker_state='STOPPED',overall_state='WARNING',upstream_email=COALESCE(?,upstream_email),upstream_plan=COALESCE(?,upstream_plan),last_auth_verified_at_ms=?,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", nullString(email), nullString(plan), now, now, account.ID); err != nil {
 			return err
 		}
-		code, summary := "COMPLETED", "Sign-in completed and credentials were checkpointed"
-		if exportError != "" {
-			code, summary = exportError, "Sign-in completed; export snapshot is unavailable"
-		}
-		errorSummary := any(nil)
-		if exportError != "" {
-			errorSummary = "The managed credential is safe; reauthenticate to retry export creation"
-		}
-		_, err = db.ExecContext(ctx, "UPDATE operations SET state='SUCCEEDED',progress_code=?,progress_summary=?,error_code=?,error_summary=?,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?", code, summary, nullString(exportError), errorSummary, now, operation)
+		_, err = db.ExecContext(ctx, "UPDATE operations SET state='SUCCEEDED',progress_code='COMPLETED',progress_summary='Sign-in completed and credentials were checkpointed',error_code=NULL,error_summary=NULL,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?", now, operation)
 		return err
 	})
 	if err != nil {
 		return err
 	}
 	_ = s.ResolveIncident(ctx, account.ID, "authentication_failed")
-	exportAvailable := true
-	if _, bundleErr := s.bundle(ctx, account.ID, "EXPORT"); bundleErr != nil {
-		exportAvailable = false
-	}
-	s.Events.Publish("login.updated", map[string]any{"attempt_id": attempt, "account_id": account.PublicID, "state": "COMPLETED", "export_available": exportAvailable})
+	s.Events.Publish("login.updated", map[string]any{"attempt_id": attempt, "account_id": account.PublicID, "state": "COMPLETED"})
 	return nil
 }
 

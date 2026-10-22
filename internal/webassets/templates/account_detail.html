@@ -56,32 +56,6 @@ Codex Broker{% endblock %} {% block content %}
     <p>Reset: {{ detail.usage.weekly_resets_at_s|default_if_none:"unknown" }}</p>
   </article>
 </section>
-<section class="detail-section reauth-panel">
-  <h2>Downloadable credential snapshot</h2>
-  {% if detail.auth_export.available %}
-  <p class="subtle">
-    This enrollment <code>auth.json</code> is externally owned and never used,
-    refreshed, or replaced by Codex Broker. It may stop renewing after the
-    managed credential rotates. Do not use one copy in multiple independent
-    services.
-  </p>
-  <form
-    class="account-form"
-    method="post"
-    action="/accounts/{{ detail.account.public_token }}/auth-export"
-  >
-    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-    <button class="primary-button" type="submit">
-      Download export snapshot
-    </button>
-  </form>
-  {% else %}
-  <p class="subtle">
-    No downloadable credential is available. Complete one ChatGPT sign-in to
-    create it.
-  </p>
-  {% endif %}
-</section>
 <section class="action-row">
   <form method="post" action="/accounts/{{ detail.account.public_token }}/pulse">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />

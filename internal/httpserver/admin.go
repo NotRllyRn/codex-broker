@@ -134,20 +134,6 @@ func (s *Server) accountDetail(w http.ResponseWriter, r *http.Request) error {
 	}
 	return s.renderer.render(w, 200, "account_detail.html", pongo2.Context{"root_path": s.App.Config.RootPath, "detail": detail, "csrf": cookie(r, csrfCookie)})
 }
-func (s *Server) authExport(w http.ResponseWriter, r *http.Request) error {
-	if err := s.requireForm(r); err != nil {
-		return err
-	}
-	content, err := s.App.Service.ExportAuth(r.Context(), r.PathValue("public"))
-	if err != nil {
-		return err
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", `attachment; filename="auth.json"`)
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
-	_, err = w.Write(content)
-	return err
-}
 func (s *Server) pulse(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
 		return err

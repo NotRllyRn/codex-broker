@@ -15,7 +15,7 @@ The public process exposes only:
 
 It calls narrowly scoped private broker endpoints over authenticated HTTPS. `WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY` is an internal service-to-service secret: visitors never enter or receive it, and it cannot authenticate to `/api/v1/route` or administrator routes. Enrollment secrets are held only in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie and are never placed in a URL. Responses use a restrictive CSP, HSTS, `no-store`, and no referrer. Starts are limited per source address and globally capped; active flows expire with the normal login timeout.
 
-A successful login verifies the identity returned by Codex, rejects a duplicate managed/pending email, renames the account to the normalized email, and promotes the credential through the existing encrypted checkpoint path. Failed or interrupted placeholder accounts are soft-deleted.
+A successful login verifies the identity returned by Codex, rejects a duplicate managed/pending email, renames the account to the normalized email, and promotes the original credential through the existing encrypted checkpoint path. It does not fork or proactively rotate tokens, or create downloadable auth files. Failed or interrupted placeholder accounts are soft-deleted.
 
 This feature intentionally grants the broker ongoing access to the visitor's ChatGPT account. The page says so explicitly. Operate it only for users who understand and authorize that access.
 

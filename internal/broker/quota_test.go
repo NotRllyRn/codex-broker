@@ -53,7 +53,7 @@ func quotaFixture(t *testing.T) (Router, Account) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.installBundle(ctx, "a", "ACTIVE", payload); err != nil {
+	if err := service.replaceActive(ctx, "a", payload); err != nil {
 		t.Fatal(err)
 	}
 	router := Router{Store: db, Service: service}

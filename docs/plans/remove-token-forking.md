@@ -30,6 +30,8 @@ This does not recover credentials already revoked upstream.
    unchanged and no export is created. Verify upgrade preserves managed rows,
    removes exports, and reopens idempotently. Check the removed endpoint rejects POST with 405 (the existing GET fallback).
 4. Run the automated release gates, including race tests and client checks.
+   Proxy fixtures copy one closed, empty migrated database instead of rerunning
+   the historical migrations per test; migration coverage stays in store tests.
 5. Commit and push the tested change with concise messages.
 
 ## Production rollout

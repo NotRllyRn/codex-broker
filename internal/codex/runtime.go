@@ -116,14 +116,6 @@ func (m *RuntimeManager) Discard(runtime *Runtime) error {
 	return os.RemoveAll(runtime.Root)
 }
 
-func (m *RuntimeManager) Archive(runtime *Runtime) {
-	m.mu.Lock()
-	if m.runtimes[runtime.AccountID] == runtime {
-		delete(m.runtimes, runtime.AccountID)
-	}
-	m.mu.Unlock()
-}
-
 func (m *RuntimeManager) Preserve(runtime *Runtime) {
 	_ = runtime.Client.Close()
 	m.mu.Lock()

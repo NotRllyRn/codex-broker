@@ -89,7 +89,7 @@ func TestRouterActivatesHeldAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := service.installBundle(ctx, "account", "ACTIVE", payload); err != nil {
+	if err := service.replaceActive(ctx, "account", payload); err != nil {
 		t.Fatal(err)
 	}
 	router := Router{Store: database, Service: service}

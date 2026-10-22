@@ -85,9 +85,8 @@ func TestAccountDetailRendersPulseHistory(t *testing.T) {
 		"pulse_operations": []map[string]any{{
 			"operation_id": "pulse", "trigger": "CYCLE_RELEASE", "state": "SUCCEEDED", "created_at": "2026-09-30T13:54:47.000000Z", "progress_summary": "Usage windows kept active",
 		}},
-		"operations":  []map[string]any{},
-		"incidents":   []map[string]any{},
-		"auth_export": map[string]any{"available": false},
+		"operations": []map[string]any{},
+		"incidents":  []map[string]any{},
 	}
 	if err := renderer.render(response, 200, "account_detail.html", pongo2.Context{"detail": detail}); err != nil {
 		t.Fatal(err)
@@ -97,5 +96,14 @@ func TestAccountDetailRendersPulseHistory(t *testing.T) {
 		if !strings.Contains(body, expected) {
 			t.Errorf("pulse history does not contain %q", expected)
 		}
+	}
+}
+
+func TestAuthExportRouteRemoved(t *testing.T) {
+	server, _ := proxyFixture(t, 0)
+	response := httptest.NewRecorder()
+	server.mux.ServeHTTP(response, httptest.NewRequest("POST", "/accounts/account/auth-export", nil))
+	if response.Code != 405 {
+		t.Fatalf("removed credential download returned %d", response.Code)
 	}
 }

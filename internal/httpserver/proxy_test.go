@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,9 +34,35 @@ type proxyRoundTrip func(*http.Request) (*http.Response, error)
 
 func (f proxyRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+// HTTP tests need isolated data, not a repeat of every historical migration.
+// Cache only the closed, empty database; each fixture writes its own copy.
+var proxyDatabaseSeed = sync.OnceValues(func() ([]byte, error) {
+	root, err := os.MkdirTemp("", "codex-broker-proxy-seed-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(root)
+	path := filepath.Join(root, "broker.db")
+	database, err := store.Open(context.Background(), path)
+	if err != nil {
+		return nil, err
+	}
+	if err := database.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+})
+
 func proxyFixture(t *testing.T, accounts int) (*Server, auth.IssuedClientKey) {
 	t.Helper()
 	ctx, root := context.Background(), t.TempDir()
+	seed, err := proxyDatabaseSeed()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "broker.db"), seed, 0600); err != nil {
+		t.Fatal(err)
+	}
 	db, err := store.Open(ctx, filepath.Join(root, "broker.db"))
 	if err != nil {
 		t.Fatal(err)

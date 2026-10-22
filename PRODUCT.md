@@ -21,7 +21,7 @@ One hardened Docker-first Go process runs on a trusted Linux host. Same-network 
 ## Capabilities and constraints
 
 - Multiple isolated ChatGPT/Codex accounts with labels.
-- One mutable encrypted `ACTIVE` lineage and at most one immutable `EXPORT` snapshot per account.
+- One mutable encrypted `ACTIVE` credential per account; no credential forking or auth-file downloads.
 - Opaque credential checkpointing after every authenticated broker runtime, including failures and cancellation.
 - Device-code and managed browser login; manual token import is retired.
 - Authoritative short/weekly usage polling and stable preferred-account routing.

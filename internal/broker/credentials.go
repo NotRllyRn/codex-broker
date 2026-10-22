@@ -62,24 +62,6 @@ func (s *Service) replaceActive(ctx context.Context, accountID string, payload v
 	})
 }
 
-func (s *Service) installBundle(ctx context.Context, accountID, state string, payload vault.Payload) error {
-	envelope, err := s.Vault.Encrypt(accountID, payload)
-	if err != nil {
-		return err
-	}
-	now := core.NowMS()
-	return s.Store.Write(ctx, func(db store.Executor) error {
-		_, err := db.ExecContext(ctx, "INSERT INTO credential_bundles VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", envelope.BundleID, envelope.AccountID, state, envelope.EnvelopeVersion, envelope.PayloadSchemaVersion, envelope.KeyID, envelope.Nonce, envelope.Ciphertext, envelope.AAD, s.Config.CodexVersion, now, nullablePromoted(state, now), nil)
-		return err
-	})
-}
-func nullablePromoted(state string, now int64) any {
-	if state == "ACTIVE" {
-		return now
-	}
-	return nil
-}
-
 func (s *Service) setCredentialUse(ctx context.Context, accountID string, started, safe bool) error {
 	now := core.NowMS()
 	return s.Store.Write(ctx, func(db store.Executor) error {
@@ -249,18 +231,6 @@ func splitToken(value string) []string {
 		}
 	}
 	return append(result, value[start:])
-}
-
-func (s *Service) ExportAuth(ctx context.Context, public string) ([]byte, error) {
-	account, err := s.account(ctx, public)
-	if err != nil {
-		return nil, err
-	}
-	payload, err := s.bundle(ctx, account.ID, "EXPORT")
-	if err != nil {
-		return nil, core.NewError("AUTH_EXPORT_UNAVAILABLE", "No downloadable auth.json is available", 409)
-	}
-	return s.Vault.AuthJSON(payload)
 }
 
 func (s *Service) Refresh(ctx context.Context, public, trigger string) (string, error) {

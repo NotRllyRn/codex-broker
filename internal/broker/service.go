@@ -343,9 +343,7 @@ func (s *Service) AccountDetail(ctx context.Context, public string) (map[string]
 		}
 	}
 	incidents, _ := s.IncidentsFor(ctx, a.ID)
-	var exportAt sql.NullInt64
-	_ = s.Store.DB.QueryRowContext(ctx, "SELECT created_at_ms FROM credential_bundles WHERE account_id=? AND state='EXPORT'", a.ID).Scan(&exportAt)
-	return map[string]any{"account": account, "usage": usage, "operations": operations, "pulse_operations": pulses, "incidents": incidents, "auth_export": map[string]any{"available": exportAt.Valid, "created_at_ms": nullableAny(exportAt)}}, nil
+	return map[string]any{"account": account, "usage": usage, "operations": operations, "pulse_operations": pulses, "incidents": incidents}, nil
 }
 
 func (s *Service) SetLabels(ctx context.Context, public string, labels []string) error {

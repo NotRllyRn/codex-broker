@@ -7,7 +7,7 @@ A release is blocked unless every applicable gate passes.
 ```bash
 test -z "$(gofmt -l cmd internal)"
 go vet ./...
-go test -race ./...
+go test -race -timeout=30m ./...
 go build ./cmd/codex-broker ./cmd/codex-broker-adapter
 GOOS=darwin GOARCH=amd64 go build -o /tmp/codex-broker-adapter-amd64 ./cmd/codex-broker-adapter
 GOOS=darwin GOARCH=arm64 go build -o /tmp/codex-broker-adapter-arm64 ./cmd/codex-broker-adapter
@@ -22,6 +22,8 @@ Required coverage includes:
 - migrations through 012, foreign keys, idempotency, and credential-generation preservation;
 - upgrade from a pre-rename database without account relogin;
 - vault mismatch, verification, rotation, backup, and restore;
+- login preserving the original credential without forced refresh or export creation;
+- migration 024 removing exports without changing active credentials or retired history;
 - managed credential checkpointing after success, RPC failure, cancellation, and restart;
 - concurrent near-expiry leases producing one credential mutation;
 - stable preferred routing, failed-account exclusion, known exhaustion, exact reset padding, and unknown-reset failure;
@@ -80,4 +82,4 @@ and Codex state contain no leased access token or native ChatGPT bearer.
 
 ## Final
 
-Test against a copy of a real existing data volume. Release only after account listing, export decryption, route leasing, and a managed credential checkpoint succeed without relogin. Do not push or publish from the implementation session.
+Test against a copy of a real existing data volume. Release only after account listing, active credential decryption, route leasing, and a managed credential checkpoint succeed without relogin. Do not push or publish from the implementation session.
