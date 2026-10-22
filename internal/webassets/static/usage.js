@@ -3,6 +3,7 @@ const usd = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD
 const dateLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
 export function initUsageDashboard(panel, appPath) {
+	if (panel.hidden) return () => {};
 	const find = (name) => panel.querySelector(`[data-usage-${name}]`);
 	const content = find("content");
 	const status = find("status");
