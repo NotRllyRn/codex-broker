@@ -7,7 +7,6 @@
 {% endif %}
 <section class="dash-intro">
   <div>
-    <p class="kicker">Credential broker</p>
     <h1>Codex accounts, one authority.</h1>
     <p class="intro-copy">
       Monitor account capacity, lease access tokens, and proxy Responses for your
@@ -41,38 +40,47 @@
   <p class="proxy-totals" data-proxy-totals>Loading request counters…</p>
   <section class="proxy-usage" aria-labelledby="proxy-usage-title">
     <header>
-      <div><h3 id="proxy-usage-title">Proxy usage</h3><small>Response tokens and estimated quota consumption per active hour</small></div>
+      <div><h3 id="proxy-usage-title">Proxy usage</h3></div>
       <label><span>Model</span><select data-proxy-model><option value="all">All models</option></select></label>
     </header>
     <div class="proxy-usage-grid">
       <article data-proxy-period="rolling_7d">
-        <h3>Rolling seven days</h3>
+        <h3>Last 7 days</h3>
         <dl>
-          <div><dt>Active time</dt><dd data-usage="active_ms">—</dd></div>
           <div><dt>Total tokens</dt><dd data-usage="total_tokens">—</dd></div>
-          <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
           <div><dt>Tokens/hour</dt><dd data-usage="tokens_per_hour">—</dd></div>
           <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
-          <div><dt>Measured quota time</dt><dd data-quota="short_time">—</dd></div>
           <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
-          <div><dt>Measured quota time</dt><dd data-quota="weekly_time">—</dd></div>
         </dl>
+        <details class="proxy-usage-details">
+          <summary>More metrics</summary>
+          <dl>
+            <div><dt>Active time</dt><dd data-usage="active_ms">—</dd></div>
+            <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
+            <div><dt>5h measured time</dt><dd data-quota="short_time">—</dd></div>
+            <div><dt>Weekly measured time</dt><dd data-quota="weekly_time">—</dd></div>
+          </dl>
+        </details>
       </article>
       <article data-proxy-period="lifetime">
         <h3>Lifetime</h3>
         <dl>
-          <div><dt>Active time</dt><dd data-usage="active_ms">—</dd></div>
           <div><dt>Total tokens</dt><dd data-usage="total_tokens">—</dd></div>
-          <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
           <div><dt>Tokens/hour</dt><dd data-usage="tokens_per_hour">—</dd></div>
           <div><dt>5h quota/hour</dt><dd data-quota="short_rate">—</dd></div>
-          <div><dt>Measured quota time</dt><dd data-quota="short_time">—</dd></div>
           <div><dt>Weekly quota/hour</dt><dd data-quota="weekly_rate">—</dd></div>
-          <div><dt>Measured quota time</dt><dd data-quota="weekly_time">—</dd></div>
         </dl>
+        <details class="proxy-usage-details">
+          <summary>More metrics</summary>
+          <dl>
+            <div><dt>Active time</dt><dd data-usage="active_ms">—</dd></div>
+            <div><dt>Tokens/min</dt><dd data-usage="tokens_per_minute">—</dd></div>
+            <div><dt>5h measured time</dt><dd data-quota="short_time">—</dd></div>
+            <div><dt>Weekly measured time</dt><dd data-quota="weekly_time">—</dd></div>
+          </dl>
+        </details>
       </article>
     </div>
-    <small>Quota rates are percentage points per active account hour, estimated from usage polls. Model estimates use only single-model intervals; mixed/unknown activity stays in All models. Measured quota time may differ from token active time. Reset-spanning intervals are excluded; seven-day membership uses interval end time. Lifetime quota history starts when measurement was enabled, model history when attribution was enabled. — means insufficient data. Use outside this proxy can skew estimates.</small>
   </section>
   <div class="proxy-relays">
     <h3>Redundant relay edges</h3>
@@ -83,7 +91,7 @@
   <small>Since broker restart · Recent clients: last five minutes</small>
 </section>
 <section class="pool-usage" aria-labelledby="pool-usage-title">
-  <header><h2 id="pool-usage-title">Total pool usage</h2><p>Latest reported quotas · Equal capacity per account · Refresh view to update</p></header>
+  <header><h2 id="pool-usage-title">Total pool usage</h2><p>{{ pool_usage.0.Available }} account{% if pool_usage.0.Available != 1 %}s{% endif %} available</p></header>
   <div class="pool-usage-grid">
     {% for window in pool_usage %}
     <article>
@@ -94,11 +102,10 @@
         </svg>
         <strong>{% if window.Accounts %}{{ window.Used|floatformat:1 }}%<small>used</small>{% else %}—<small>No capacity</small>{% endif %}</strong>
       </div>
-      <div><h3>{{ window.Label }}</h3><p>{% if window.Accounts %}{{ window.Remaining|floatformat:1 }}% left{% else %}No measured capacity{% endif %}</p><small>{{ window.Accounts }} accounts included · {{ window.Unknown }} unknown · {{ window.Excluded }} excluded</small></div>
+      <div><h3>{{ window.Label }}</h3><p>{% if window.Accounts %}{{ window.Remaining|floatformat:1 }}% left{% else %}No measured capacity{% endif %}</p></div>
     </article>
     {% endfor %}
   </div>
-  <p class="subtle">5-hour usage counts quota-exhausted and weekly-full accounts as 100% used; disabled and unauthenticated accounts are excluded. Weekly usage includes every account's reported weekly quota, including exhausted accounts. Other missing or invalid readings are omitted. Cached readings may lag upstream usage.</p>
 </section>
 <section class="profile-dashboard" data-profile-dashboard aria-labelledby="profile-dashboard-title">
   <header class="profile-heading">

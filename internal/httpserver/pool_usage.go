@@ -6,6 +6,7 @@ type poolWindow struct {
 	Label                       string
 	Used, Remaining             float64
 	Accounts, Unknown, Excluded int
+	Available                   int
 }
 
 // Pool percentages give each account one equal share of capacity; upstream
@@ -30,6 +31,10 @@ func poolUsage(accounts []broker.AccountSummary) []poolWindow {
 			if !valid(used) {
 				window.Unknown++
 				continue
+			}
+			// Availability uses measured capacity, without counting exhausted shares.
+			if i == 0 && *used < 100 {
+				window.Available++
 			}
 			window.Used += float64(*used)
 			window.Accounts++

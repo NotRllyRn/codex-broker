@@ -60,12 +60,15 @@ func TestPoolUsageDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	response := httptest.NewRecorder()
-	err = renderer.render(response, 200, "dashboard.html", pongo2.Context{"pool_usage": []poolWindow{{Label: "5-hour window", Used: 25, Remaining: 75, Accounts: 2}, {Label: "Weekly window", Unknown: 1}}})
+	err = renderer.render(response, 200, "dashboard.html", pongo2.Context{"pool_usage": []poolWindow{{Label: "5-hour window", Used: 25, Remaining: 75, Accounts: 2, Available: 1}, {Label: "Weekly window", Unknown: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := response.Body.String()
-	for _, want := range []string{"Total pool usage", "25.0% used, 75.0% left", `stroke-dasharray="25.0 100"`, `25.0%<small>used</small>`, "Weekly window: no measured capacity", "2 accounts included", "1 unknown"} {
+	if strings.Count(body, "account available") != 1 {
+		t.Error("availability should appear once for both rings")
+	}
+	for _, want := range []string{"Total pool usage", "25.0% used, 75.0% left", `stroke-dasharray="25.0 100"`, `25.0%<small>used</small>`, "Weekly window: no measured capacity", "1 account available"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}
@@ -92,5 +95,22 @@ func TestPoolUsageRingPercentages(t *testing.T) {
 		if strings.Count(body, `class="pool-ring-fill"`) != 1 {
 			t.Fatal("unknown usage should not render a filled arc")
 		}
+	}
+}
+
+func TestPoolAvailableAccounts(t *testing.T) {
+	number := func(n int64) *int64 { return &n }
+	accounts := []broker.AccountSummary{
+		{Enabled: true, AuthState: "VERIFIED", ShortPercent: number(20), WeeklyPercent: number(40)},
+		{Enabled: true, AuthState: "VERIFIED", ShortPercent: number(100), WeeklyPercent: number(40)},
+		{Enabled: true, AuthState: "VERIFIED", ShortPercent: number(0), WeeklyPercent: number(100)},
+		{Enabled: true, AuthState: "VERIFIED", ShortPercent: number(0), QuotaBlocked: true},
+		{AuthState: "VERIFIED", ShortPercent: number(0)},
+		{Enabled: true, AuthState: "AUTH_REQUIRED", ShortPercent: number(0)},
+		{Enabled: true, AuthState: "VERIFIED"},
+		{Enabled: true, AuthState: "VERIFIED", ShortPercent: number(-1)},
+	}
+	if got := poolUsage(accounts)[0].Available; got != 1 {
+		t.Fatalf("available = %d, want 1", got)
 	}
 }

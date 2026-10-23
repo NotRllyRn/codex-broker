@@ -1496,6 +1496,9 @@ textarea {
 .proxy-usage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
 .proxy-usage-grid article { padding: 0.85rem; border: 1px solid var(--line); background: var(--background); }
 .proxy-usage-grid dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; gap: 0.65rem; }
+.proxy-usage-details { margin-top: 0.85rem; color: var(--muted); font-size: 0.75rem; }
+.proxy-usage-details summary { cursor: pointer; }
+.proxy-usage-details[open] summary { margin-bottom: 0.75rem; }
 .proxy-usage-grid dl div { min-width: 0; }
 .proxy-usage-grid dt { color: var(--muted); font-size: 0.68rem; }
 .proxy-usage-grid dd { margin: 0.15rem 0 0; font-family: BrokerMono, monospace; font-size: 0.88rem; overflow-wrap: anywhere; }
@@ -1508,6 +1511,7 @@ textarea {
 }
 
 .pool-usage { margin-block: 2rem; padding-block: 1.5rem; border-block: 1px solid var(--line); }
+.pool-usage > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem 1rem; }
 .pool-usage header p, .pool-usage small { color: var(--muted); }
 .pool-usage-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 2rem; margin-block: 1.5rem; }
 .pool-usage-grid article { display: flex; align-items: center; gap: 1.5rem; }

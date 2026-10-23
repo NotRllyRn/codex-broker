@@ -171,7 +171,9 @@ The 5-hour ring counts quota-blocked or weekly-full accounts as 100% used,
 even if their short-window reading is zero or missing; disabled and
 unauthenticated accounts are excluded. The weekly ring uses all valid weekly
 readings. Other missing or invalid readings are omitted, and cached readings
-may lag upstream usage.
+may lag upstream usage. A shared availability count shows enabled, verified
+accounts with measured short-window capacity that are neither quota-blocked
+nor weekly-full. Proxy usage keeps secondary metrics under **More metrics**.
 Account-level quota estimates divide measured percentage-point consumption by
 active proxy hours, using existing usage polls. Rolling estimates cover intervals
 ending in the last seven days; lifetime estimates retain their totals after
