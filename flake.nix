@@ -492,7 +492,7 @@
               };
               attemptsPerHour = lib.mkOption {
                 type = lib.types.ints.between 1 20;
-                default = 3;
+                default = 20;
                 description = "Enrollment attempts allowed per hour (1-20). Maps to WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR.";
               };
             };

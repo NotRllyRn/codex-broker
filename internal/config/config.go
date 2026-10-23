@@ -118,7 +118,7 @@ func Load() (Config, error) {
 		&c.Port:                            {"PORT", 8787, 1, 65535},
 		&c.PublicEnrollmentPort:            {"PUBLIC_ENROLLMENT_PORT", 8788, 1, 65535},
 		&c.PublicEnrollmentMaxActive:       {"PUBLIC_ENROLLMENT_MAX_ACTIVE", 4, 1, 32},
-		&c.PublicEnrollmentAttemptsPerHour: {"PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR", 3, 1, 20},
+		&c.PublicEnrollmentAttemptsPerHour: {"PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR", 20, 1, 20},
 		&c.RelayPort:                       {"RELAY_PORT", 8787, 1, 65535},
 		&c.RelaySyncSeconds:                {"RELAY_SYNC_SECONDS", 15, 5, 300},
 		&c.RelayMaxStaleSeconds:            {"RELAY_MAX_STALE_SECONDS", 3600, 30, 86400},

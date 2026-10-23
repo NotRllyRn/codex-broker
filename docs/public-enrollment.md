@@ -72,7 +72,7 @@ Disabling does not stop the isolated container because its liveness endpoint rem
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_PORT` | `8788` | Public listener container port. |
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE` | unset | Public listener certificate. |
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE` | unset | Public listener private key. |
-| `WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR` | `3` | Per-source start limit. |
+| `WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR` | `20` | Per-source start limit. |
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_MAX_ACTIVE` | `4` | Global concurrent enrollment cap. |
 
 For a non-Compose installation, configure the internal key, broker CA, and TLS files, then run:
