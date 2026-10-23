@@ -87,6 +87,7 @@ Codex Broker{% endblock %} {% block content %}
 </section>
 <section class="detail-section">
   <h2>Labels</h2>
+  <p class="subtle">Labels group accounts and control access for scoped client keys.</p>
   <form
     class="account-form"
     method="post"
@@ -94,7 +95,7 @@ Codex Broker{% endblock %} {% block content %}
   >
     <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
       for="account_labels"
-      >Comma-separated labels</label
+      >Comma-separated names</label
     ><input
       id="account_labels"
       name="labels"

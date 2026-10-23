@@ -69,7 +69,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 		if filter != "" && account.OverallState != filter {
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(account.DisplayName), query) {
+		if query != "" && !strings.Contains(strings.ToLower(account.DisplayName+" "+strings.Join(account.Labels, " ")), query) {
 			continue
 		}
 		view := accountView(account)
