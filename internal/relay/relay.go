@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -141,6 +142,17 @@ func (r *Relay) localRoute(clientID string, request gateway.RouteRequest) (*gate
 	if !r.readyLocked(now) {
 		return nil, nil, errors.New("relay cache is stale")
 	}
+	allowed := func(accountID string) bool {
+		for _, client := range r.state.Snapshot.Clients {
+			if client.ID == clientID {
+				return !client.Restricted || slices.Contains(client.AllowedAccountIDs, accountID)
+			}
+		}
+		return false
+	}
+	if request.FailedAccountID != "" && !allowed(request.FailedAccountID) {
+		return nil, nil, core.NewError("FAILED_ACCOUNT_INVALID", "Failed account is not routable", 422)
+	}
 	if request.FailedAccountID != "" && request.FailureKind != "" {
 		expires := now + 5*time.Minute.Milliseconds()
 		for _, item := range r.state.Snapshot.Leases {
@@ -165,7 +177,7 @@ func (r *Relay) localRoute(clientID string, request gateway.RouteRequest) (*gate
 	}
 	var active, reserve []relayprotocol.Lease
 	for _, item := range r.state.Snapshot.Leases {
-		if item.ExpiresAtMS <= now || exhausted(item.Lease, now) || r.quotaBlockedLocked(item.Lease, now) || r.state.Exclusions[clientID+"\x00"+item.AccountID] > now {
+		if !allowed(item.AccountID) || item.ExpiresAtMS <= now || exhausted(item.Lease, now) || r.quotaBlockedLocked(item.Lease, now) || r.state.Exclusions[clientID+"\x00"+item.AccountID] > now {
 			continue
 		}
 		if item.Reserve {
@@ -188,6 +200,9 @@ func (r *Relay) localRoute(clientID string, request gateway.RouteRequest) (*gate
 			}
 		}
 		for _, item := range r.state.Snapshot.Leases {
+			if !allowed(item.AccountID) {
+				continue
+			}
 			if block := r.state.QuotaBlocks[item.AccountID]; r.quotaBlockedLocked(item.Lease, now) && block.RetryAtMS < next {
 				next = block.RetryAtMS
 			}

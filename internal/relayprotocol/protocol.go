@@ -2,11 +2,13 @@ package relayprotocol
 
 import "github.com/NotRllyRn/codex-broker/internal/gateway"
 
-const Version = 3
+const Version = 4
 
 type Client struct {
-	ID, Name, Prefix string
-	Digest           []byte
+	ID, Name, Prefix  string
+	Digest            []byte
+	Restricted        bool
+	AllowedAccountIDs []string
 }
 
 type Lease struct {

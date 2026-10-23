@@ -371,7 +371,7 @@ func (s *Service) SetLabels(ctx context.Context, public string, labels []string)
 				return err
 			}
 		}
-		_, err := db.ExecContext(ctx, "DELETE FROM labels WHERE NOT EXISTS (SELECT 1 FROM account_labels WHERE account_labels.label_id=labels.label_id)")
+		_, err := db.ExecContext(ctx, "DELETE FROM labels WHERE NOT EXISTS (SELECT 1 FROM account_labels WHERE account_labels.label_id=labels.label_id) AND NOT EXISTS (SELECT 1 FROM client_key_labels WHERE client_key_labels.label_id=labels.label_id)")
 		return err
 	})
 	if err == nil {

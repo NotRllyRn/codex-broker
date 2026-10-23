@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 24 {
+		if version != 25 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -413,7 +413,8 @@ func TestRemoveExportsPreservesActiveCredential(t *testing.T) {
 	_, err = database.DB.Exec(`INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','p','Account',1,'ACTIVE',1,1);
  INSERT INTO credential_bundles VALUES('active','a','ACTIVE',1,1,'primary',X'01',X'1234',X'5678','test',1,1,NULL);
  INSERT INTO credential_bundles VALUES('export','a','EXPORT',1,1,'primary',X'02',X'9999',X'8888','test',2,NULL,NULL);
- DELETE FROM schema_migrations WHERE version=24;`)
+ DROP TABLE client_key_labels;
+ DELETE FROM schema_migrations WHERE version>=24;`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,6 +443,60 @@ func TestRemoveExportsPreservesActiveCredential(t *testing.T) {
 			t.Fatal("export index retained")
 		}
 		if err = migrated.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestKeyScopeMigrationPreservesExistingKeys(t *testing.T) {
+	ctx, path := t.Context(), filepath.Join(t.TempDir(), "before-scopes.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		version, _ := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if version > 24 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := db.Exec(string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO schema_migrations VALUES(?,?,?,0)", version, entry.Name(), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec("INSERT INTO client_api_keys VALUES('legacy','Existing','cbk_prefix',X'1234',11,22,NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		migrated, err := Open(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var name, prefix string
+		var digest []byte
+		var created, used int64
+		var revoked sql.NullInt64
+		if err := migrated.DB.QueryRow("SELECT name,key_prefix,secret_hash,created_at_ms,last_used_at_ms,revoked_at_ms FROM client_api_keys WHERE key_id='legacy'").Scan(&name, &prefix, &digest, &created, &used, &revoked); err != nil {
+			t.Fatal(err)
+		}
+		if name != "Existing" || prefix != "cbk_prefix" || string(digest) != string([]byte{0x12, 0x34}) || created != 11 || used != 22 || revoked.Valid {
+			t.Fatal("migration changed existing key")
+		}
+		var count int
+		if err := migrated.DB.QueryRow("SELECT count(*) FROM client_key_labels").Scan(&count); err != nil || count != 0 {
+			t.Fatalf("existing key received rules: %d %v", count, err)
+		}
+		if err := migrated.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"sort"
 
+	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 )
@@ -147,7 +148,7 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 		_, err := db.ExecContext(ctx, "DELETE FROM account_exclusions WHERE expires_at_ms<=?", now)
 		return err
 	})
-	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.complete_read_at_ms,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms,rr.expires_at_ms,q.retry_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN account_quota_blocks q USING(account_id) LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? LEFT JOIN relay_reservations rr ON rr.account_id=a.account_id AND rr.expires_at_ms>? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') ORDER BY a.created_at_ms,a.account_id`, now, keyID, now)
+	rows, err := r.Store.DB.QueryContext(ctx, `SELECT a.account_id,a.public_token,a.display_name,COALESCE(a.workspace_constraint,''),a.enabled,a.created_at_ms,s.auth_state,s.worker_state,s.upstream_email,s.upstream_plan,u.complete_read_at_ms,u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s,e.expires_at_ms,COALESCE(p.cycle_state,CASE WHEN u.weekly_used_percent_raw>0 AND u.weekly_resets_at_s*1000>? THEN 'IN_CYCLE' ELSE 'HELD' END),p.weekly_started_at_ms,rr.expires_at_ms,q.retry_at_ms FROM accounts a JOIN account_state s USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN account_quota_blocks q USING(account_id) LEFT JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state p USING(account_id) LEFT JOIN account_exclusions e ON e.account_id=a.account_id AND e.key_id=? LEFT JOIN relay_reservations rr ON rr.account_id=a.account_id AND rr.expires_at_ms>? WHERE a.deleted_at_ms IS NULL AND a.enabled=1 AND s.auth_state='VERIFIED' AND s.worker_state IN('STOPPED','CREDENTIAL_IN_USE') AND `+auth.AccountScopeSQL+` ORDER BY a.created_at_ms,a.account_id`, now, keyID, now, sql.Named("scope_key_id", keyID))
 	if err != nil {
 		return nil, err
 	}

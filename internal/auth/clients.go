@@ -26,6 +26,7 @@ type ClientKey struct {
 	CreatedAtMS      int64
 	LastUsedAtMS     sql.NullInt64
 	RevokedAtMS      sql.NullInt64
+	Scopes           []LabelScope
 }
 
 func NewClientKeys(database *store.Store) *ClientKeys { return &ClientKeys{database} }
@@ -35,7 +36,7 @@ func KeyDigest(value string) []byte {
 	return digest[:]
 }
 
-func (c *ClientKeys) Create(ctx context.Context, displayName string) (IssuedClientKey, error) {
+func (c *ClientKeys) Create(ctx context.Context, displayName string, scopes ...LabelScope) (IssuedClientKey, error) {
 	name := strings.Join(strings.Fields(displayName), " ")
 	if utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 80 {
 		return IssuedClientKey{}, errors.New("client key name must contain 1-80 characters")
@@ -44,7 +45,10 @@ func (c *ClientKeys) Create(ctx context.Context, displayName string) (IssuedClie
 	issued.Prefix = issued.Token[:12]
 	err := c.store.Write(ctx, func(connection store.Executor) error {
 		_, err := connection.ExecContext(ctx, "INSERT INTO client_api_keys VALUES(?,?,?,?,?,NULL,NULL)", issued.ID, issued.Name, issued.Prefix, KeyDigest(issued.Token), issued.CreatedAtMS)
-		return err
+		if err != nil {
+			return err
+		}
+		return saveScopes(ctx, connection, issued.ID, scopes)
 	})
 	return issued, err
 }
@@ -127,5 +131,30 @@ func (c *ClientKeys) List(ctx context.Context) ([]ClientKey, error) {
 		}
 		keys = append(keys, key)
 	}
-	return keys, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	rules, err := c.store.DB.QueryContext(ctx, "SELECT kl.key_id,l.label_id,l.name,kl.mode FROM client_key_labels kl JOIN labels l USING(label_id) ORDER BY lower(l.name)")
+	if err != nil {
+		return nil, err
+	}
+	defer rules.Close()
+	byID := map[string]int{}
+	for i, key := range keys {
+		byID[key.ID] = i
+	}
+	for rules.Next() {
+		var id string
+		var scope LabelScope
+		if err := rules.Scan(&id, &scope.ID, &scope.Name, &scope.Mode); err != nil {
+			return nil, err
+		}
+		if i, ok := byID[id]; ok {
+			keys[i].Scopes = append(keys[i].Scopes, scope)
+		}
+	}
+	return keys, rules.Err()
 }

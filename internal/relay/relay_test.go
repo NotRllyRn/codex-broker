@@ -38,7 +38,7 @@ func relayFixture(t *testing.T) (*Relay, string) {
 			Snapshot: relayprotocol.Snapshot{
 				ProtocolVersion: relayprotocol.Version,
 				RelayID:         "relay-test", SnapshotID: "snapshot", GeneratedAtMS: now,
-				Clients: []relayprotocol.Client{{ID: "key", Name: "test", Prefix: "cbk_test", Digest: digest[:]}},
+				Clients: []relayprotocol.Client{{ID: "key", Name: "test", Prefix: "cbk_test", Digest: digest[:]}, {ID: "other"}},
 				Leases: []relayprotocol.Lease{{Lease: gateway.Lease{
 					AccountID: "active", AccountLabel: "Active", AccessToken: "access-secret", ChatGPTAccountID: "chatgpt",
 					ExpiresAtMS: now + time.Hour.Milliseconds(), ShortRemainingPercent: &short, WeeklyRemainingPercent: &weekly,
@@ -321,5 +321,32 @@ func TestRelayServerUsesSharedGatewayForEveryRoute(t *testing.T) {
 				t.Fatalf("status=%d target=%q body=%s", response.Code, target, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestOfflineRelayScopes(t *testing.T) {
+	r, _ := relayFixture(t)
+	now := time.Now().UnixMilli()
+	r.state.Snapshot.Leases = append(r.state.Snapshot.Leases, relayprotocol.Lease{Lease: gateway.Lease{AccountID: "reserve", ExpiresAtMS: now + time.Hour.Milliseconds()}, Reserve: true, PermitEpoch: "permit", PermitExpiresAtMS: now + time.Hour.Milliseconds()})
+	client := &r.state.Snapshot.Clients[0]
+	client.Restricted = true
+	client.AllowedAccountIDs = []string{"reserve"}
+	lease, _, err := r.localRoute("key", gateway.RouteRequest{PreferredAccountID: "active"})
+	if err != nil || lease == nil || lease.AccountID != "reserve" {
+		t.Fatalf("reserve selection: %+v %v", lease, err)
+	}
+	if lease, _, err := r.localRoute("key", gateway.RouteRequest{FailedAccountID: "active", FailureKind: "quota"}); err == nil || lease != nil {
+		t.Fatalf("unauthorized failed account: %+v %v", lease, err)
+	}
+	client.AllowedAccountIDs = nil
+	if lease, _, err := r.localRoute("key", gateway.RouteRequest{}); err == nil || lease != nil {
+		t.Fatalf("empty scoped pool escaped: %+v %v", lease, err)
+	}
+	if lease, _, err := r.localRoute("other", gateway.RouteRequest{}); err != nil || lease == nil || lease.AccountID != "active" {
+		t.Fatalf("unrestricted routing changed: %+v %v", lease, err)
+	}
+	r.state.Snapshot.ProtocolVersion--
+	if r.Ready() {
+		t.Fatal("older snapshot accepted")
 	}
 }
