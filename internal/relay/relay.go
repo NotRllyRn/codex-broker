@@ -194,14 +194,12 @@ func (r *Relay) localRoute(clientID string, request gateway.RouteRequest) (*gate
 	}
 	if len(active) == 0 {
 		next := int64(math.MaxInt64)
-		for _, expires := range r.state.Exclusions {
-			if expires > now && expires < next {
-				next = expires
-			}
-		}
 		for _, item := range r.state.Snapshot.Leases {
 			if !allowed(item.AccountID) {
 				continue
+			}
+			if expires := r.state.Exclusions[clientID+"\x00"+item.AccountID]; expires > now && expires < next {
+				next = expires
 			}
 			if block := r.state.QuotaBlocks[item.AccountID]; r.quotaBlockedLocked(item.Lease, now) && block.RetryAtMS < next {
 				next = block.RetryAtMS

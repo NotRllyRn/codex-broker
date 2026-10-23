@@ -339,9 +339,11 @@ func TestOfflineRelayScopes(t *testing.T) {
 		t.Fatalf("unauthorized failed account: %+v %v", lease, err)
 	}
 	client.AllowedAccountIDs = nil
+	r.state.Exclusions["other\x00active"] = now + time.Minute.Milliseconds()
 	if lease, _, err := r.localRoute("key", gateway.RouteRequest{}); err == nil || lease != nil {
 		t.Fatalf("empty scoped pool escaped: %+v %v", lease, err)
 	}
+	delete(r.state.Exclusions, "other\x00active")
 	if lease, _, err := r.localRoute("other", gateway.RouteRequest{}); err != nil || lease == nil || lease.AccountID != "active" {
 		t.Fatalf("unrestricted routing changed: %+v %v", lease, err)
 	}
