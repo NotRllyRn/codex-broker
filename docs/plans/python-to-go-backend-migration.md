@@ -190,7 +190,7 @@ The configuration parity table is:
 | `PUBLIC_ENROLLMENT_CA_CERT` | unset | verified private-broker CA |
 | `PUBLIC_ENROLLMENT_HOST` / `PORT` | `127.0.0.1` / `8788` | port 1-65535; non-loopback requires public TLS |
 | `PUBLIC_ENROLLMENT_TLS_CERT_FILE`, `PUBLIC_ENROLLMENT_TLS_KEY_FILE` | unset | used together for public HTTPS |
-| `PUBLIC_ENROLLMENT_MAX_ACTIVE` | `4` | 1-32 |
+| `PUBLIC_ENROLLMENT_MAX_ACTIVE` | `16` | 1-32 |
 | `PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR` | `3` | 1-20 |
 | `VAULT_KEY_FILE`, `VAULT_KEY` | unset | key file cannot be inside data root |
 | `ADMIN_PASSWORD_FILE`, `ADMIN_PASSWORD` | unset | protected file overrides environment |
@@ -203,7 +203,7 @@ The configuration parity table is:
 | `WINDOW_PULSE_POLL_SECONDS` | `60` | at least 10 |
 | `WINDOW_PULSE_RETRY_SECONDS` | `900` | at least 60 |
 | `WINDOW_PULSE_CONCURRENCY` | `2` | 1-8 |
-| `AUTH_CONCURRENCY` | `2` | 1-8 |
+| `AUTH_CONCURRENCY` | `8` | 1-8 |
 | `PROCESS_START_CONCURRENCY` | `2` | 1-8 |
 | `RESET_PADDING_SECONDS` | `10` | 0-300 |
 | `BROWSER_OAUTH_MODE` | `manual` | `disabled`, `manual`, or `host-loopback` |

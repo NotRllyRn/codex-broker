@@ -117,7 +117,7 @@ func Load() (Config, error) {
 	}{
 		&c.Port:                            {"PORT", 8787, 1, 65535},
 		&c.PublicEnrollmentPort:            {"PUBLIC_ENROLLMENT_PORT", 8788, 1, 65535},
-		&c.PublicEnrollmentMaxActive:       {"PUBLIC_ENROLLMENT_MAX_ACTIVE", 4, 1, 32},
+		&c.PublicEnrollmentMaxActive:       {"PUBLIC_ENROLLMENT_MAX_ACTIVE", 16, 1, 32},
 		&c.PublicEnrollmentAttemptsPerHour: {"PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR", 20, 1, 20},
 		&c.RelayPort:                       {"RELAY_PORT", 8787, 1, 65535},
 		&c.RelaySyncSeconds:                {"RELAY_SYNC_SECONDS", 15, 5, 300},
@@ -130,7 +130,7 @@ func Load() (Config, error) {
 		&c.WindowPulsePollSeconds:          {"WINDOW_PULSE_POLL_SECONDS", 60, 10, 0},
 		&c.WindowPulseRetrySeconds:         {"WINDOW_PULSE_RETRY_SECONDS", 900, 60, 0},
 		&c.WindowPulseConcurrency:          {"WINDOW_PULSE_CONCURRENCY", 2, 1, 8},
-		&c.AuthConcurrency:                 {"AUTH_CONCURRENCY", 2, 1, 8},
+		&c.AuthConcurrency:                 {"AUTH_CONCURRENCY", 8, 1, 8},
 		&c.ProcessStartConcurrency:         {"PROCESS_START_CONCURRENCY", 2, 1, 8},
 		&c.ResetPaddingSeconds:             {"RESET_PADDING_SECONDS", 10, 0, 300},
 		&c.LoginTimeoutSeconds:             {"LOGIN_TIMEOUT_SECONDS", 900, 60, 3600},

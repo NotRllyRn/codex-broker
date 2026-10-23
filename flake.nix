@@ -354,7 +354,7 @@
 
             authConcurrency = lib.mkOption {
               type = lib.types.ints.between 1 8;
-              default = 2;
+              default = 8;
               description = "Concurrent authentication workers (1-8). Maps to WINDOWKEEPER_AUTH_CONCURRENCY.";
             };
 
@@ -487,7 +487,7 @@
               };
               maxActive = lib.mkOption {
                 type = lib.types.ints.between 1 32;
-                default = 4;
+                default = 16;
                 description = "Maximum concurrent enrollment attempts (1-32). Maps to WINDOWKEEPER_PUBLIC_ENROLLMENT_MAX_ACTIVE.";
               };
               attemptsPerHour = lib.mkOption {
