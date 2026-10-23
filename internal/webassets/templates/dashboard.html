@@ -87,14 +87,18 @@
   <div class="pool-usage-grid">
     {% for window in pool_usage %}
     <article>
-      <div class="pool-ring" style="--pool-used: {{ window.Used|floatformat:1 }}%" role="img" aria-label="{{ window.Label }}: {% if window.Accounts %}{{ window.Used|floatformat:1 }}% used, {{ window.Remaining|floatformat:1 }}% left{% else %}no measured capacity{% endif %}">
+      <div class="pool-ring" role="img" aria-label="{{ window.Label }}: {% if window.Accounts %}{{ window.Used|floatformat:1 }}% used, {{ window.Remaining|floatformat:1 }}% left{% else %}no measured capacity{% endif %}">
+        <svg viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+          <circle class="pool-ring-track" cx="50" cy="50" r="44" />
+          {% if window.Accounts %}<circle class="pool-ring-fill" cx="50" cy="50" r="44" pathLength="100" stroke-dasharray="{{ window.Used|floatformat:1 }} 100" transform="rotate(-90 50 50)" />{% endif %}
+        </svg>
         <strong>{% if window.Accounts %}{{ window.Used|floatformat:1 }}%<small>used</small>{% else %}—<small>No capacity</small>{% endif %}</strong>
       </div>
       <div><h3>{{ window.Label }}</h3><p>{% if window.Accounts %}{{ window.Remaining|floatformat:1 }}% left{% else %}No measured capacity{% endif %}</p><small>{{ window.Accounts }} accounts included · {{ window.Unknown }} unknown · {{ window.Excluded }} excluded</small></div>
     </article>
     {% endfor %}
   </div>
-  <p class="subtle">5-hour capacity excludes exhausted, weekly-full, disabled, and unauthenticated accounts. Weekly usage includes every account's reported weekly quota, including exhausted accounts. Missing or invalid readings are omitted. Cached readings may lag upstream usage.</p>
+  <p class="subtle">5-hour usage counts quota-exhausted and weekly-full accounts as 100% used; disabled and unauthenticated accounts are excluded. Weekly usage includes every account's reported weekly quota, including exhausted accounts. Other missing or invalid readings are omitted. Cached readings may lag upstream usage.</p>
 </section>
 <section class="profile-dashboard" data-profile-dashboard aria-labelledby="profile-dashboard-title">
   <header class="profile-heading">

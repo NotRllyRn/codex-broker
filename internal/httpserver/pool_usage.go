@@ -16,8 +16,15 @@ func poolUsage(accounts []broker.AccountSummary) []poolWindow {
 	for _, account := range accounts {
 		for i, used := range []*int64{account.ShortPercent, account.WeeklyPercent} {
 			window := &windows[i]
-			if i == 0 && (!account.Enabled || account.AuthState != "VERIFIED" || account.QuotaBlocked || account.ShortPercent != nil && *account.ShortPercent == 100 || account.WeeklyPercent != nil && *account.WeeklyPercent == 100) {
+			if i == 0 && (!account.Enabled || account.AuthState != "VERIFIED") {
 				window.Excluded++
+				continue
+			}
+			// Exhausted accounts retain their share of the pool but cannot
+			// supply short-window capacity, even when that reading is zero or missing.
+			if i == 0 && (account.QuotaBlocked || account.WeeklyPercent != nil && *account.WeeklyPercent == 100) {
+				window.Used += 100
+				window.Accounts++
 				continue
 			}
 			if !valid(used) {
