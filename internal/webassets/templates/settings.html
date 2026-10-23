@@ -52,7 +52,9 @@
 <section class="detail-section">
   <h2>Client access keys</h2>
   <p class="subtle">
-    Each app or installation should have its own revocable client key.
+    Without label rules, keys can access all accounts, including unlabeled accounts.
+    Allow requires any matching allowed label. Block overrides Allow.
+    Account label changes update access; offline relays use their last synced scope.
   </p>
   {% if issued_key %}
   <div class="service-alert" role="status">
@@ -70,6 +72,17 @@
       <small
         >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms|default_if_none:"never" }}</small
       >
+      <span>{% if key.restricted %}Label-scoped access{% else %}All accounts{% endif %}</span>
+      {% if not key.revoked_at_ms %}
+      <details>
+        <summary>Edit account access</summary>
+        <form class="account-form" method="post" action="/settings/client-keys/{{ key.key_id }}/scopes">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+          {% include "key_scope_fields.html" with scope_options=key.scope_options %}
+          <button class="quiet-button" type="submit">Save scope</button>
+        </form>
+      </details>
+      {% endif %}
       <form
         method="post"
         action="/settings/client-keys/{{ key.key_id }}/{% if key.revoked_at_ms %}delete{% else %}revoke{% endif %}"
@@ -98,6 +111,7 @@
       required
       placeholder="Laptop"
     />
+    {% include "key_scope_fields.html" %}
     <button class="primary-button" type="submit">Create key</button>
   </form>
 </section>

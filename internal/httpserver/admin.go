@@ -271,13 +271,49 @@ func settingsMap(application *broker.Application) map[string]any {
 func compatibilityMap(application *broker.Application) map[string]any {
 	return map[string]any{"compatible": application.Compatibility.Compatible, "code": application.Compatibility.Code, "detail": application.Compatibility.Detail}
 }
-func keysView(keys []auth.ClientKey) []map[string]any {
+func keysView(keys []auth.ClientKey, labels []auth.LabelScope) []map[string]any {
 	result := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, map[string]any{"key_id": key.ID, "name": key.Name, "key_prefix": key.Prefix, "created_at_ms": key.CreatedAtMS, "last_used_at_ms": nullInt(key.LastUsedAtMS), "revoked_at_ms": nullInt(key.RevokedAtMS)})
+		result = append(result, map[string]any{"key_id": key.ID, "name": key.Name, "key_prefix": key.Prefix, "created_at_ms": key.CreatedAtMS, "last_used_at_ms": nullInt(key.LastUsedAtMS), "revoked_at_ms": nullInt(key.RevokedAtMS), "scope_options": scopeOptions(labels, key.Scopes), "restricted": len(key.Scopes) > 0})
 	}
 	return result
 }
+func scopeOptions(labels, rules []auth.LabelScope) []map[string]string {
+	modes := map[string]string{}
+	for _, rule := range rules {
+		modes[rule.ID] = rule.Mode
+	}
+	options := make([]map[string]string, 0, len(labels))
+	for _, label := range labels {
+		options = append(options, map[string]string{"id": label.ID, "name": label.Name, "mode": modes[label.ID]})
+	}
+	return options
+}
+
+func formScopes(r *http.Request) []auth.LabelScope {
+	var scopes []auth.LabelScope
+	for name, values := range r.PostForm {
+		if strings.HasPrefix(name, "label_") && len(values) > 0 && values[0] != "" {
+			scopes = append(scopes, auth.LabelScope{ID: strings.TrimPrefix(name, "label_"), Mode: values[0]})
+		}
+	}
+	return scopes
+}
+
+func (s *Server) clientKeyScopes(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireForm(r); err != nil {
+		return err
+	}
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	if err := s.App.ClientKeys.SetScopes(r.Context(), r.PathValue("id"), formScopes(r)); err != nil {
+		return err
+	}
+	s.redirect(w, r, "/settings")
+	return nil
+}
+
 func nullInt(value sql.NullInt64) any {
 	if value.Valid {
 		return value.Int64
@@ -293,11 +329,15 @@ func (s *Server) settingsContext(r *http.Request, issued any) (pongo2.Context, e
 	if err != nil {
 		return nil, err
 	}
+	labels, err := s.App.ClientKeys.Labels(r.Context())
+	if err != nil {
+		return nil, err
+	}
 	open, err := s.App.Service.PublicEnrollmentOpen(r.Context())
 	if err != nil {
 		return nil, err
 	}
-	return pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys), "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}, nil
+	return pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}, nil
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
@@ -324,8 +364,10 @@ func (s *Server) clientKeyCreate(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
 		return err
 	}
-	_ = r.ParseForm()
-	issued, err := s.App.ClientKeys.Create(r.Context(), r.Form.Get("name"))
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	issued, err := s.App.ClientKeys.Create(r.Context(), r.Form.Get("name"), formScopes(r)...)
 	if err != nil {
 		return err
 	}

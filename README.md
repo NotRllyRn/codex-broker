@@ -29,6 +29,19 @@ All integrations use existing revocable `cbk_` client keys. Leased access tokens
 stay in memory; proxy clients receive only Responses output. Apps never receive
 broker refresh tokens or a complete broker-managed `auth.json`.
 
+## Client key account access
+
+In **Settings → Client access keys**, choose label rules when creating a key or
+open **Edit account access** on an active key. No rules means all accounts,
+including unlabeled accounts; existing keys keep this access after upgrading.
+An **Allow** rule requires a match with at least one allowed label. **Block**
+excludes matching accounts and takes precedence over Allow. With only Block
+rules, all other accounts remain accessible. Routing never falls back outside
+these permissions when the permitted accounts are exhausted.
+
+Manage labels on each account page. Adding or removing account labels changes
+which scoped keys can use that account. See [scope design](docs/key-scopes.md).
+
 ## Start the broker
 
 For a TLS-protected LAN deployment, install Docker and Compose, then run:

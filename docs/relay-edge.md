@@ -52,6 +52,14 @@ curl --cacert deployment/relay/ca.crt https://<relay-ip>:8787/health/ready
 when the encrypted cache is protocol-compatible, recent, and contains a usable
 unexpired access token.
 
+Label scopes require relay protocol 4. Upgrade the broker and relays to the
+same revision; older snapshots are incompatible with the updated relay.
+Snapshots include permitted account IDs for scoped keys, and offline routing
+applies them to both in-rotation accounts and the emergency reserve. Scope and
+account-label changes take effect on the next successful sync. During an
+outage, the last synced permissions remain usable until the existing snapshot
+staleness deadline, just like cached key revocations.
+
 ## Load balancer
 
 Configure the primary as the normal server and the relay as `backup`. Health

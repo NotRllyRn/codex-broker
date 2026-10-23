@@ -1,0 +1,15 @@
+<fieldset>
+  <legend>Account access</legend>
+  {% for label in scope_options %}
+  <label>
+    <span>{{ label.name }}</span>
+    <select name="label_{{ label.id }}">
+      <option value=""{% if not label.mode %} selected{% endif %}>No rule</option>
+      <option value="allow"{% if label.mode == "allow" %} selected{% endif %}>Allow</option>
+      <option value="block"{% if label.mode == "block" %} selected{% endif %}>Block</option>
+    </select>
+  </label>
+  {% empty %}
+  <p class="subtle">All accounts. Add labels to accounts to configure a scope.</p>
+  {% endfor %}
+</fieldset>
