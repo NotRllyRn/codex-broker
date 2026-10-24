@@ -94,7 +94,7 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	const script = readFileSync(new URL("../internal/webassets/static/usage.js", import.meta.url), "utf8");
 	const context = { Intl, Date, URLSearchParams, AbortController,
 		document: { createElement: node, createElementNS: node },
-		fetch: async (url) => { urls.push(url); return { ok: true, json: async () => zero }; } };
+		fetch: async (url) => { urls.push(url); return { ok: true, json: async () => new URL(url,"https://test").searchParams.has("identity") ? {...zero,ccusage:true,reports:1,processed_tokens:7,output:7,pricing:{status:"ccusage"}} : zero }; } };
 	runInNewContext(script.replace("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
 	const load = context.initialize(panel, (path) => "/broker" + path);
 	await load("account1");
@@ -106,6 +106,10 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	assert.equal(device.options[1].hidden, false);
 	assert.equal(device.options[2].hidden, true);
 	assert.match(urls.at(-1), /identity=tim&device=all$/);
+ assert.match(find("[data-usage-caption]").textContent,/1 daily device reports/);
+ assert.equal(find("[data-usage-costs]").hidden,true);
+ assert.equal(find("[data-usage-cache-savings]").hidden,true);
+ assert.match(find("[data-usage-coverage]").textContent,/including HTTP proxy requests/);
 	device.value = "laptop";
 	device.listeners.change();
 	await new Promise(setImmediate);
@@ -119,5 +123,6 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	identity.listeners.change();
 	await new Promise(setImmediate);
 	assert.equal(device.disabled, true);
+ assert.equal(find("[data-usage-costs]").hidden,false);
 	assert.equal(new URL(urls.at(-1), "https://test").searchParams.has("identity"), false);
 });
