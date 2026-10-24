@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -446,6 +447,7 @@ func Run(ctx context.Context, args []string, input *os.File, output io.Writer) e
 		if lockErr != nil {
 			return lockErr
 		}
+		err = readJSON(filepath.Join(*directory, "config.json"), &config)
 		err = install(ctx, *directory, &config, err, *address, *name, *ca, *configPath, *codeStdin, input, output)
 		unlock()
 		if err != nil {
@@ -468,6 +470,9 @@ func Run(ctx context.Context, args []string, input *os.File, output io.Writer) e
 	if args[0] == "install" && errors.Is(err, ErrSyncRunning) {
 		fmt.Fprintln(output, "Installed; the background sync is already running.")
 		return nil
+	}
+	if args[0] == "install" && err != nil {
+		return fmt.Errorf("installed, but initial sync failed: %w; check the Broker URL and CA, then rerun install --broker-url https://YOUR-BROKER with the same --state-dir to correct the saved connection", err)
 	}
 	return err
 }
@@ -517,6 +522,11 @@ func install(ctx context.Context, directory string, config *Config, readErr erro
 			return err
 		}
 	}
+	if readErr == nil && (address != "" || ca != "") {
+		if err := updateConnection(directory, config, address, ca); err != nil {
+			return err
+		}
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err
@@ -545,6 +555,38 @@ func install(ctx context.Context, directory string, config *Config, readErr erro
 		}
 	}
 	fmt.Fprintf(output, "Installed in %s. All usage sources are included; ccusage %s.\n", directory, usagereport.Version)
+	return nil
+}
+
+// Explicit connection overrides repair a failed installation without reenrollment.
+func updateConnection(directory string, config *Config, address, ca string) error {
+	next := *config
+	if address != "" {
+		next.URL = strings.TrimRight(address, "/")
+	}
+	if ca != "" {
+		next.CA = ca
+	}
+	client, err := transport(next)
+	if err != nil {
+		return err
+	}
+	client.CloseIdleConnections()
+	if ca != "" {
+		data, err := os.ReadFile(ca)
+		if err != nil {
+			return err
+		}
+		// Keep the previous CA usable if saving the new configuration fails.
+		next.CA = filepath.Join(directory, fmt.Sprintf("broker-ca-%x.pem", sha256.Sum256(data)))
+		if err := os.WriteFile(next.CA, data, 0600); err != nil {
+			return err
+		}
+	}
+	if err := atomicJSON(filepath.Join(directory, "config.json"), next); err != nil {
+		return err
+	}
+	*config = next
 	return nil
 }
 
