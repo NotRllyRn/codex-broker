@@ -1,0 +1,50 @@
+<section class="detail-section" id="usage-identities">
+  <h2>Usage identities</h2>
+  <p class="subtle">Group usage from multiple devices under one name. Identity codes enroll devices; each device receives its own upload-only credential. Assign proxy keys below to count their future usage here.</p>
+  {% if identity_code %}
+  <div class="service-alert" role="status">
+    <strong>Copy this identity code now. It will not be shown again.</strong>
+    <code>{{ identity_code }}</code>
+    <p>Enter it at the usage sync installer's private prompt on each device. Rotating this code leaves existing devices connected.</p>
+  </div>
+  {% endif %}
+  {% for identity in identities %}
+  <article class="detail-section">
+    <h3>{{ identity.Name }}</h3>
+    <form class="account-form" method="post" action="/settings/identities/{{ identity.ID }}/rename">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+      <label>Name <input name="name" value="{{ identity.Name }}" maxlength="80" required /></label>
+      <button class="quiet-button" type="submit">Rename</button>
+    </form>
+    <div class="inline-actions">
+      <form method="post" action="/settings/identities/{{ identity.ID }}/rotate" data-confirm="Replace this identity's enrollment code? Existing devices stay connected.">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <button class="quiet-button" type="submit">Generate new code</button>
+      </form>
+      <form method="post" action="/settings/identities/{{ identity.ID }}/delete" data-confirm="Permanently delete this identity, its devices, and all of its usage history?">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <button class="danger-button" type="submit">Delete identity and history</button>
+      </form>
+    </div>
+    <div class="data-list">
+      {% for device in usage_devices %}{% if device.IdentityID == identity.ID %}
+      <article>
+        <strong>{{ device.Name }}</strong><small>Device {{ device.ID }}</small>
+        <span>Last sync: {{ device.LastSyncText|default:"never" }}{% if device.Revoked.Valid %} · Revoked{% endif %}</span>
+        {% if not device.Revoked.Valid %}
+        <form method="post" action="/settings/usage-devices/{{ device.ID }}/revoke" data-confirm="Stop this device uploading? Its recorded usage will remain.">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+          <button class="quiet-button" type="submit">Revoke device</button>
+        </form>
+        {% endif %}
+      </article>
+      {% endif %}{% endfor %}
+    </div>
+  </article>
+  {% empty %}<p class="subtle">No usage identities exist.</p>{% endfor %}
+  <form class="account-form" method="post" action="/settings/identities">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <label>Identity name <input name="name" maxlength="80" required placeholder="Tim" /></label>
+    <button class="primary-button" type="submit">Create identity and code</button>
+  </form>
+</section>

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/identity"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 )
 
@@ -77,6 +78,29 @@ func Record(ctx context.Context, database *store.Store, value gateway.Observatio
 			return nil
 		}
 		result.Inserted = true
+		var owner string
+		if value.ClientID != "" {
+			lookup := db.QueryRowContext(ctx, "SELECT identity_id FROM identity_proxy_keys WHERE key_id=?", value.ClientID).Scan(&owner)
+			if lookup != nil && !errors.Is(lookup, sql.ErrNoRows) {
+				return lookup
+			}
+		}
+		if owner != "" {
+			id := value.ResponseID
+			if id == "" {
+				id = value.RequestID
+			}
+			_, err := identity.Insert(ctx, db, owner, "", identity.Event{
+				ID: identity.EventID("proxy:" + id), Source: "proxy", TimestampMS: value.TerminalEventAtMS,
+				Model: model, ServiceTier: strings.ToLower(first(value.ResponseServiceTier, value.RequestServiceTier, "default")),
+				InputTokens: valueOrZero(value.InputTokens), CachedInputTokens: valueOrZero(value.CachedInputTokens),
+				OutputTokens: valueOrZero(value.OutputTokens), ReasoningTokens: valueOrZero(value.ReasoningTokens),
+				UsageKnown: value.InputTokens != nil && value.OutputTokens != nil,
+			})
+			if err != nil {
+				return err
+			}
+		}
 		if err := addResponse(ctx, db, RollingPeriod, model, activeMS, value, value.TerminalEventAtMS); err != nil {
 			return err
 		}
@@ -86,6 +110,15 @@ func Record(ctx context.Context, database *store.Store, value gateway.Observatio
 		return recordQuotaActivity(ctx, db, accountID, model, value.UpstreamStartedAtMS, value.TerminalEventAtMS)
 	})
 	return result, err
+}
+
+func first(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func Prune(ctx context.Context, database *store.Store, cutoff int64, limit int) error {

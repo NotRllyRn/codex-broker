@@ -27,7 +27,17 @@ func (s *Server) internalUsage(w http.ResponseWriter, r *http.Request) error {
 	}
 	s.usageRatesOnce.Do(func() { s.usageRates = usage.NewCatalog(s.App.Store) })
 	rates, pricing := s.usageRates.Read(r.Context())
-	summary, err := usage.ReadSummary(r.Context(), s.App.Store.DB, rates, account, days, time.Now())
+	var summary usage.Summary
+	var err error
+	if owner := r.URL.Query().Get("identity"); owner != "" {
+		device := r.URL.Query().Get("device")
+		if device == "" {
+			device = "all"
+		}
+		summary, err = usage.ReadIdentitySummary(r.Context(), s.App.Store.DB, rates, owner, device, days, time.Now())
+	} else {
+		summary, err = usage.ReadSummary(r.Context(), s.App.Store.DB, rates, account, days, time.Now())
+	}
 	if err != nil {
 		return err
 	}

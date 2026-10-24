@@ -12,6 +12,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/identity"
 	"github.com/flosch/pongo2/v6"
 )
 
@@ -95,7 +96,15 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	if cycle.NextPulseAtMS != nil {
 		cycleNextMS = *cycle.NextPulseAtMS
 	}
-	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "pool_usage": poolUsage(accounts), "next_available_reset": nextAvailableReset(accounts, time.Now()), "account_count": len(accounts), "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"AVAILABLE", "HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld, "cycle_spacing": compactDuration(int(cycle.SpacingMS / 1000)), "cycle_next_at": timestampView(cycle.NextPulseAtMS), "cycle_next_ms": cycleNextMS})
+	identities, err := identity.List(r.Context(), s.App.Store.DB)
+	if err != nil {
+		return err
+	}
+	devices, err := identity.Devices(r.Context(), s.App.Store.DB)
+	if err != nil {
+		return err
+	}
+	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"identities": identities, "usage_devices": devices, "root_path": s.App.Config.RootPath, "pool_usage": poolUsage(accounts), "next_available_reset": nextAvailableReset(accounts, time.Now()), "account_count": len(accounts), "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"AVAILABLE", "HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld, "cycle_spacing": compactDuration(int(cycle.SpacingMS / 1000)), "cycle_next_at": timestampView(cycle.NextPulseAtMS), "cycle_next_ms": cycleNextMS})
 }
 
 func (s *Server) accountNew(w http.ResponseWriter, r *http.Request) error {
@@ -340,7 +349,11 @@ func (s *Server) settingsContext(r *http.Request, issued any) (pongo2.Context, e
 	if err != nil {
 		return nil, err
 	}
-	return pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}, nil
+	context := pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}
+	if err := s.identityContext(r, context); err != nil {
+		return nil, err
+	}
+	return context, nil
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
