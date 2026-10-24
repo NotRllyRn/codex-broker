@@ -1,11 +1,13 @@
 package httpserver
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/flosch/pongo2/v6"
 )
@@ -105,5 +107,50 @@ func TestAuthExportRouteRemoved(t *testing.T) {
 	server.mux.ServeHTTP(response, httptest.NewRequest("POST", "/accounts/account/auth-export", nil))
 	if response.Code != 405 {
 		t.Fatalf("removed credential download returned %d", response.Code)
+	}
+}
+
+func TestDashboardAvailableFilter(t *testing.T) {
+	server, _ := proxyFixture(t, 3)
+	var err error
+	server.renderer, err = newRenderer("templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	_, err = server.App.Store.DB.Exec("INSERT INTO admin_sessions VALUES(?,?,?,?,?,?,?,?,?)", auth.Digest("dashboard-test"), auth.Digest("csrf"), now.UnixMilli(), now.UnixMilli(), now.Add(time.Hour).UnixMilli(), now.Add(time.Hour).UnixMilli(), nil, nil, auth.Digest("test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = server.App.Store.DB.Exec(`UPDATE usage_current SET short_used_percent_raw=100 WHERE account_id='account1'; UPDATE usage_current SET weekly_used_percent_raw=100 WHERE account_id='account2'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		query     string
+		want      int
+		available bool
+	}{
+		{"", 1, true}, {"?state_filter=", 3, false}, {"?state_filter=AVAILABLE", 1, true}, {"?state_filter=HEALTHY", 3, false}, {"?q=account1", 0, true},
+	} {
+		t.Run(tt.query, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/"+tt.query, nil)
+			request.AddCookie(&http.Cookie{Name: sessionCookie, Value: "dashboard-test"})
+			response := httptest.NewRecorder()
+			if err := server.dashboard(response, request); err != nil {
+				t.Fatal(err)
+			}
+			body := response.Body.String()
+			if got := strings.Count(body, `class="orbit-account state-`); got != tt.want {
+				t.Fatalf("got %d account cards, want %d", got, tt.want)
+			}
+			if !strings.Contains(body, "1 available") || strings.Count(body, "Next available reset:") != 2 {
+				t.Fatal("pool summary must remain visible regardless of filters")
+			}
+			if tt.available && !strings.Contains(body, `value="AVAILABLE"
+        selected`) {
+				t.Fatal("Available is not selected")
+			}
+		})
 	}
 }
