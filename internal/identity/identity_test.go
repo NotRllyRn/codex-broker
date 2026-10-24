@@ -1,125 +1,134 @@
 package identity
 
 import (
+	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/store"
+	"github.com/NotRllyRn/codex-broker/internal/usagereport"
 )
 
-func TestEnrollmentAndLedger(t *testing.T) {
+func report(output int) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{"period":"2026-09-01","agent":"all","inputTokens":10,"outputTokens":%d,"cacheReadTokens":20,"cacheCreationTokens":3,"totalTokens":%d,"totalCost":0.5,"agents":[{"agent":"any-future-agent","inputTokens":10,"outputTokens":%d}],"futureField":{"preserved":true}}`, output, 33+output, output))
+}
+func TestEnrollmentAndReports(t *testing.T) {
 	ctx := t.Context()
 	db, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	a, code, err := Create(ctx, db, "Tim")
+	owner, code, err := Create(ctx, db, "Tim")
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, other, err := Create(ctx, db, "Other")
-	if err != nil {
+	other, otherCode, err := Create(ctx, db, "Other")
+	if err != nil || otherCode == code {
 		t.Fatal(err)
-	}
-	if code == other {
-		t.Fatal("codes must be unique")
 	}
 	if _, _, err := Create(ctx, db, "tim"); err == nil {
-		t.Fatal("duplicate name accepted")
+		t.Fatal("duplicate name")
 	}
 	token := "cbu_" + core.RandomToken(32)
-	install := "0123456789abcdef0123456789abcdef"
-	if _, err := Enroll(ctx, db, "Tim", install, "Laptop", token); err == nil {
-		t.Fatal("name accepted as secret")
+	installation := "0123456789abcdef0123456789abcdef"
+	if _, err := Enroll(ctx, db, "Tim", installation, "Laptop", token); err == nil {
+		t.Fatal("name authorized enrollment")
 	}
-	d, err := Enroll(ctx, db, code, install, "Laptop", token)
-	if err != nil || d.IdentityID != a.ID {
-		t.Fatalf("device=%+v err=%v", d, err)
+	device, err := Enroll(ctx, db, code, installation, "Laptop", token)
+	if err != nil {
+		t.Fatal(err)
 	}
-	retry, err := Enroll(ctx, db, code, install, "Laptop", token)
-	if err != nil || retry.ID != d.ID {
-		t.Fatalf("retry=%+v err=%v", retry, err)
+	retry, err := Enroll(ctx, db, code, installation, "Laptop", token)
+	if err != nil || retry.ID != device.ID {
+		t.Fatal("enrollment retry", err)
 	}
-	if _, err := Enroll(ctx, db, code, install, "Stolen", "cbu_"+core.RandomToken(32)); err == nil {
-		t.Fatal("enrollment replaced device")
+	if _, err := Enroll(ctx, db, code, installation, "Stolen", "cbu_"+core.RandomToken(32)); err == nil {
+		t.Fatal("credential replaced")
 	}
 	if _, err := Authenticate(ctx, db.DB, code); err == nil {
-		t.Fatal("identity code authorized uploads")
+		t.Fatal("code authorized upload")
 	}
-	e := Event{ID: EventID("original-event"), Source: "codex", TimestampMS: time.Now().UnixMilli(), Model: "gpt-test", InputTokens: 100, CachedInputTokens: 80, OutputTokens: 20, ReasoningTokens: 5, UsageKnown: true}
-	if n, err := Ingest(ctx, db, token, []Event{e, e}); err != nil || n != 1 {
-		t.Fatalf("ingest=%d err=%v", n, err)
+	batch := ReportBatch{Version: 2, CCUsageVersion: usagereport.Version, Snapshots: []Snapshot{{Revision: 1, Report: report(5)}}}
+	ingest := func(want int) {
+		t.Helper()
+		n, err := IngestReports(ctx, db, token, batch)
+		if err != nil || n != want {
+			t.Fatalf("updated=%d want=%d err=%v", n, want, err)
+		}
 	}
-	secondToken := "cbu_" + core.RandomToken(32)
-	if _, err := Enroll(ctx, db, code, "1123456789abcdef0123456789abcdef", "Desktop", secondToken); err != nil {
+	ingest(1)
+	ingest(0)
+	batch.Snapshots[0] = Snapshot{Revision: 2, Report: report(8)}
+	ingest(1)
+	batch.Snapshots[0] = Snapshot{Revision: 1, Report: report(5)}
+	if _, err := IngestReports(ctx, db, token, batch); err == nil {
+		t.Fatal("stale client state accepted")
+	}
+	batch.Snapshots[0] = Snapshot{Revision: 2, Report: report(9)}
+	if _, err := IngestReports(ctx, db, token, batch); err == nil {
+		t.Fatal("revision conflict accepted")
+	}
+	batch.Snapshots[0] = Snapshot{Revision: 3, Report: report(4)}
+	if _, err := IngestReports(ctx, db, token, batch); err == nil {
+		t.Fatal("decrease accepted")
+	}
+	batch.Snapshots[0].AllowDecrease = true
+	ingest(1)
+	// Whole-batch atomicity, including repeated days in one batch.
+	batch.Snapshots = []Snapshot{{Revision: 4, Report: report(20)}, {Revision: 4, Report: report(21)}}
+	if _, err := IngestReports(ctx, db, token, batch); err == nil {
+		t.Fatal("conflict did not roll back")
+	}
+	var revision, count int
+	var payload string
+	if err := db.DB.QueryRow("SELECT revision,payload FROM usage_reports WHERE device_id=?", device.ID).Scan(&revision, &payload); err != nil || revision != 3 {
+		t.Fatal(revision, err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil || decoded["futureField"] == nil {
+		t.Fatal("unknown ccusage data lost")
+	}
+	second := "cbu_" + core.RandomToken(32)
+	if _, err := Enroll(ctx, db, code, "1123456789abcdef0123456789abcdef", "Desktop", second); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := Ingest(ctx, db, secondToken, []Event{e}); err != nil || n != 0 {
-		t.Fatalf("cross-device copy=%d err=%v", n, err)
-	}
-	copy := e
-	copy.TimestampMS -= 1000
-	if n, err := Ingest(ctx, db, secondToken, []Event{copy}); err != nil || n != 0 {
-		t.Fatalf("restamped copy=%d err=%v", n, err)
-	}
-	var stamp int64
-	var uploader string
-	if err := db.DB.QueryRow("SELECT timestamp_ms,device_id FROM identity_usage WHERE identity_id=?", a.ID).Scan(&stamp, &uploader); err != nil || stamp != copy.TimestampMS || uploader != d.ID {
-		t.Fatalf("copy changed ownership or earliest time: %d %s %v", stamp, uploader, err)
-	}
-	thirdToken := "cbu_" + core.RandomToken(32)
-	if _, err := Enroll(ctx, db, other, install, "Other laptop", thirdToken); err != nil {
+	batch.Snapshots = []Snapshot{{Revision: 1, Report: report(5)}}
+	if _, err := IngestReports(ctx, db, second, batch); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := Ingest(ctx, db, thirdToken, []Event{e}); err != nil || n != 1 {
-		t.Fatalf("other identity=%d err=%v", n, err)
+	if err := db.DB.QueryRow("SELECT count(*) FROM usage_reports").Scan(&count); err != nil || count != 2 {
+		t.Fatal("devices did not stay separate", err)
 	}
-	fresh := e
-	fresh.ID = EventID("new-event")
-	conflict := e
-	conflict.OutputTokens++
-	if _, err := Ingest(ctx, db, token, []Event{fresh, conflict}); err == nil {
-		t.Fatal("conflicting batch accepted")
+	third := "cbu_" + core.RandomToken(32)
+	if _, err := Enroll(ctx, db, otherCode, installation, "Other", third); err != nil {
+		t.Fatal(err)
 	}
-	var count int
-	if err := db.DB.QueryRow("SELECT count(*) FROM identity_usage WHERE identity_id=?", a.ID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("rollback count=%d err=%v", count, err)
+	if _, err := IngestReports(ctx, db, third, batch); err != nil {
+		t.Fatal(err)
 	}
-	newCode, err := Rotate(ctx, db, a.ID)
-	if err != nil || newCode == code {
-		t.Fatal("rotation failed", err)
+	rotated, err := Rotate(ctx, db, owner.ID)
+	if err != nil || rotated == code {
+		t.Fatal(err)
 	}
 	if _, err := Enroll(ctx, db, code, "2123456789abcdef0123456789abcdef", "New", "cbu_"+core.RandomToken(32)); err == nil {
 		t.Fatal("old code accepted")
 	}
-	if _, err := Ingest(ctx, db, token, []Event{}); err != nil {
-		t.Fatal("rotation disconnected enrolled device", err)
+	if _, err := IngestReports(ctx, db, token, ReportBatch{Version: 2, CCUsageVersion: usagereport.Version}); err != nil {
+		t.Fatal("rotation disconnected device", err)
 	}
-	if _, err := db.DB.Exec("UPDATE usage_devices SET revoked_at_ms=1 WHERE device_id=?", d.ID); err != nil {
+	if _, err := db.DB.Exec("UPDATE usage_devices SET revoked_at_ms=1 WHERE device_id=?", device.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Ingest(ctx, db, token, []Event{fresh}); err == nil {
-		t.Fatal("revoked device uploaded")
+	if _, err := IngestReports(ctx, db, token, batch); err == nil {
+		t.Fatal("revoked upload accepted")
 	}
-	if _, err := db.DB.Exec("DELETE FROM usage_identities WHERE identity_id=?", a.ID); err != nil {
+	if _, err := db.DB.Exec("DELETE FROM usage_identities WHERE identity_id=?", owner.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.DB.QueryRow("SELECT count(*) FROM identity_usage WHERE identity_id=?", b.ID).Scan(&count); err != nil || count != 1 {
-		t.Fatal("deletion affected other identity", err)
-	}
-}
-
-func TestEventValidation(t *testing.T) {
-	now := time.Now()
-	valid := Event{ID: EventID("valid"), Source: "pi", TimestampMS: now.UnixMilli(), Model: "model", InputTokens: 100, OutputTokens: 10, UsageKnown: true}
-	for _, change := range []func(*Event){func(e *Event) { e.InputTokens = -1 }, func(e *Event) { e.CachedInputTokens = 101 }, func(e *Event) { e.CacheWriteTokens = 101 }, func(e *Event) { e.ReasoningTokens = 11 }, func(e *Event) { e.Source = "proxy" }, func(e *Event) { e.TimestampMS = now.Add(48 * time.Hour).UnixMilli() }, func(e *Event) { e.ID = "invalid" }, func(e *Event) { e.UsageKnown = false }} {
-		e := valid
-		change(&e)
-		if err := e.Validate(now); err == nil {
-			t.Fatalf("invalid event accepted: %+v", e)
-		}
+	if err := db.DB.QueryRow("SELECT count(*) FROM usage_reports r JOIN usage_devices d USING(device_id) WHERE d.identity_id=?", other.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatal("identity isolation", err)
 	}
 }

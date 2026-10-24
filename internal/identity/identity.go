@@ -4,7 +4,6 @@ package identity
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -29,21 +28,6 @@ type Device struct {
 	LastSync     sql.NullInt64 `json:"-"`
 	LastSyncText string        `json:"-"`
 	Revoked      sql.NullInt64 `json:"-"`
-}
-
-// InputTokens includes both cache reads and writes. Reasoning is included in output.
-type Event struct {
-	ID                string `json:"id"`
-	Source            string `json:"source"`
-	TimestampMS       int64  `json:"timestamp_ms"`
-	Model             string `json:"model"`
-	ServiceTier       string `json:"service_tier"`
-	InputTokens       int64  `json:"input_tokens"`
-	CachedInputTokens int64  `json:"cached_input_tokens"`
-	CacheWriteTokens  int64  `json:"cache_write_tokens"`
-	OutputTokens      int64  `json:"output_tokens"`
-	ReasoningTokens   int64  `json:"reasoning_tokens"`
-	UsageKnown        bool   `json:"usage_known"`
 }
 
 func invalid(detail string) error { return core.NewError("INVALID_USAGE", detail, 422) }
@@ -176,96 +160,3 @@ func Authenticate(ctx context.Context, db store.Executor, token string) (Device,
 	}
 	return d, err
 }
-
-func (e Event) Validate(now time.Time) error {
-	if len(e.ID) != 64 {
-		return invalid("Event IDs must be SHA-256 hex digests")
-	}
-	if _, err := hex.DecodeString(e.ID); err != nil {
-		return invalid("Invalid event ID")
-	}
-	if e.Source != "codex" && e.Source != "pi" {
-		return invalid("Unsupported usage source")
-	}
-	if e.TimestampMS < 946684800000 || e.TimestampMS > now.Add(24*time.Hour).UnixMilli() {
-		return invalid("Invalid usage timestamp")
-	}
-	if len(e.Model) < 1 || len(e.Model) > 160 || len(e.ServiceTier) > 32 {
-		return invalid("Invalid model or service tier")
-	}
-	for _, v := range []int64{e.InputTokens, e.CachedInputTokens, e.CacheWriteTokens, e.OutputTokens, e.ReasoningTokens} {
-		if v < 0 || v > 1_000_000_000_000 {
-			return invalid("Invalid token count")
-		}
-	}
-	if e.CachedInputTokens > e.InputTokens || e.CacheWriteTokens > e.InputTokens-e.CachedInputTokens || e.ReasoningTokens > e.OutputTokens {
-		return invalid("Token subsets exceed their totals")
-	}
-	if !e.UsageKnown {
-		return invalid("Uploaded events must include token usage")
-	}
-	return nil
-}
-
-func Insert(ctx context.Context, tx store.Executor, owner, device string, e Event) (bool, error) {
-	var deviceID any
-	if device != "" {
-		deviceID = device
-	}
-	r, err := tx.ExecContext(ctx, `INSERT INTO identity_usage VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(identity_id,event_id) DO NOTHING`,
-		owner, e.ID, deviceID, e.Source, e.TimestampMS, e.Model, e.ServiceTier, e.InputTokens, e.CachedInputTokens, e.CacheWriteTokens, e.OutputTokens, e.ReasoningTokens, e.UsageKnown)
-	if err != nil {
-		return false, err
-	}
-	n, _ := r.RowsAffected()
-	if n == 1 {
-		return true, nil
-	}
-	var same bool
-	err = tx.QueryRowContext(ctx, `SELECT source=? AND model=? AND service_tier=? AND input_tokens=? AND cached_input_tokens=? AND cache_write_tokens=? AND output_tokens=? AND reasoning_tokens=? AND usage_known=?
-		FROM identity_usage WHERE identity_id=? AND event_id=?`, e.Source, e.Model, e.ServiceTier, e.InputTokens, e.CachedInputTokens, e.CacheWriteTokens, e.OutputTokens, e.ReasoningTokens, e.UsageKnown, owner, e.ID).Scan(&same)
-	if err == nil && !same {
-		return false, core.Conflict("USAGE_EVENT_CONFLICT", "An existing event has different usage; the batch was not saved")
-	}
-	if err == nil {
-		// Copied histories may be re-stamped. Keep the earliest observed time,
-		// without counting the provider event a second time.
-		_, err = tx.ExecContext(ctx, "UPDATE identity_usage SET timestamp_ms=min(timestamp_ms,?) WHERE identity_id=? AND event_id=?", e.TimestampMS, owner, e.ID)
-	}
-	return false, err
-}
-
-func Ingest(ctx context.Context, db *store.Store, token string, events []Event) (int, error) {
-	if len(events) > 500 {
-		return 0, invalid("Upload at most 500 events per batch")
-	}
-	for _, e := range events {
-		if err := e.Validate(time.Now()); err != nil {
-			return 0, err
-		}
-	}
-	inserted := 0
-	err := db.Write(ctx, func(tx store.Executor) error {
-		d, err := Authenticate(ctx, tx, token)
-		if err != nil {
-			return err
-		}
-		for _, e := range events {
-			added, err := Insert(ctx, tx, d.IdentityID, d.ID, e)
-			if err != nil {
-				return err
-			}
-			if added {
-				inserted++
-			}
-		}
-		_, err = tx.ExecContext(ctx, "UPDATE usage_devices SET last_sync_at_ms=? WHERE device_id=?", core.NowMS(), d.ID)
-		return err
-	})
-	if err != nil {
-		return 0, err
-	}
-	return inserted, nil
-}
-
-func EventID(value string) string { h := sha256.Sum256([]byte(value)); return hex.EncodeToString(h[:]) }

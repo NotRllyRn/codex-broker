@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 26 {
+		if version != 27 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -414,6 +414,7 @@ func TestRemoveExportsPreservesActiveCredential(t *testing.T) {
  INSERT INTO credential_bundles VALUES('active','a','ACTIVE',1,1,'primary',X'01',X'1234',X'5678','test',1,1,NULL);
  INSERT INTO credential_bundles VALUES('export','a','EXPORT',1,1,'primary',X'02',X'9999',X'8888','test',2,NULL,NULL);
  DROP TABLE client_key_labels;
+ DROP TABLE usage_reports;
  DROP TABLE identity_usage;
  DROP TABLE identity_proxy_keys;
  DROP TABLE usage_devices;
@@ -502,6 +503,52 @@ func TestKeyScopeMigrationPreservesExistingKeys(t *testing.T) {
 		}
 		if err := migrated.Close(); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func TestCCUsageMigrationPreservesLegacyIdentityData(t *testing.T) {
+	ctx := t.Context()
+	path := filepath.Join(t.TempDir(), "before-reports.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		version, _ := strconv.Atoi(strings.SplitN(entry.Name(), "_", 2)[0])
+		if version > 26 {
+			continue
+		}
+		script, _ := migrationFiles.ReadFile("migrations/" + entry.Name())
+		if _, err := db.Exec(string(script)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec("INSERT INTO schema_migrations VALUES(?,?,?,0)", version, entry.Name(), "fixture"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = db.Exec(`INSERT INTO usage_identities VALUES('owner','Tim',X'01',1);
+ INSERT INTO usage_devices(device_id,identity_id,installation_id,name,token_hash,created_at_ms) VALUES('device','owner','install','Laptop',X'02',1);
+ INSERT INTO identity_usage VALUES('owner','event','device','codex',1792497600000,'model','default',100,80,0,25,0,1);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var count int
+	for table, want := range map[string]int{"usage_identities": 1, "usage_devices": 1, "identity_usage": 1, "usage_reports": 0} {
+		if err := migrated.DB.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != want {
+			t.Fatal(table, count, err)
 		}
 	}
 }

@@ -39,7 +39,7 @@ func TestUsageEndpointRequiresAdminAndValidatesPeriod(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = identity.Ingest(t.Context(), s.App.Store, token, []identity.Event{{ID: identity.EventID("old"), Source: "codex", Model: "gpt-test", TimestampMS: now.AddDate(0, 0, -100).UnixMilli(), OutputTokens: 42, UsageKnown: true}})
+	_, err = identity.IngestReports(t.Context(), s.App.Store, token, identity.ReportBatch{Version: 2, CCUsageVersion: "20.0.43", Snapshots: []identity.Snapshot{{Revision: 1, Report: dailyReport(now.UTC().AddDate(0, 0, -100).Format(time.DateOnly), 42)}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestUsageEndpointRequiresAdminAndValidatesPeriod(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
 				t.Fatal(err)
 			}
-			if summary.Responses != test.responses || summary.Pricing.Status != "fresh" {
+			if summary.Responses+summary.Reports != test.responses || (summary.Pricing.Status != "fresh" && !summary.CCUsage) {
 				t.Fatalf("%s: %+v", test.query, summary)
 			}
 			if strings.Contains(test.query, "days=all&identity=") && test.responses == 1 && (summary.Output != 42 || len(summary.Daily) != 101) {

@@ -4,7 +4,6 @@ import (
 	"compress/gzip"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -95,43 +94,6 @@ func (s *Server) usageDeviceRevoke(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-func (s *Server) identityProxyKey(w http.ResponseWriter, r *http.Request) error {
-	if err := s.requireForm(r); err != nil {
-		return err
-	}
-	owner, key := r.Form.Get("identity_id"), r.PathValue("id")
-	err := s.App.Store.Write(r.Context(), func(tx store.Executor) error {
-		var exists bool
-		if err := tx.QueryRowContext(r.Context(), "SELECT EXISTS(SELECT 1 FROM client_api_keys WHERE key_id=? AND revoked_at_ms IS NULL)", key).Scan(&exists); err != nil {
-			return err
-		}
-		if !exists {
-			return core.NewError("CLIENT_KEY_NOT_FOUND", "Active client key not found", 404)
-		}
-		if owner != "" {
-			if err := tx.QueryRowContext(r.Context(), "SELECT EXISTS(SELECT 1 FROM usage_identities WHERE identity_id=?)", owner).Scan(&exists); err != nil {
-				return err
-			}
-			if !exists {
-				return core.NewError("IDENTITY_NOT_FOUND", "Identity not found", 404)
-			}
-		}
-		if _, err := tx.ExecContext(r.Context(), "DELETE FROM identity_proxy_keys WHERE key_id=?", key); err != nil {
-			return err
-		}
-		if owner != "" {
-			_, err := tx.ExecContext(r.Context(), "INSERT INTO identity_proxy_keys VALUES(?,?)", key, owner)
-			return err
-		}
-		return nil
-	})
-	if err != nil {
-		return err
-	}
-	s.redirect(w, r, "/settings")
-	return nil
-}
-
 func (s *Server) usageEnroll(w http.ResponseWriter, r *http.Request) error {
 	if !s.clientAuth.allow("usage-enroll:" + s.clientAddress(r)) {
 		return core.NewError("RATE_LIMITED", "Try enrolling again later", 429)
@@ -179,26 +141,18 @@ func (s *Server) usageBatch(w http.ResponseWriter, r *http.Request) error {
 	if len(data) > 2<<20 {
 		return core.NewError("USAGE_TOO_LARGE", "Usage batch exceeds 2 MiB", 413)
 	}
-	var body struct {
-		Version int              `json:"version"`
-		Events  []identity.Event `json:"events"`
+	var body identity.ReportBatch
+	if err := json.Unmarshal(data, &body); err != nil {
+		return core.NewError("INVALID_USAGE", "Invalid ccusage report batch", 422)
 	}
-	d := json.NewDecoder(strings.NewReader(string(data)))
-	d.DisallowUnknownFields()
-	if err := d.Decode(&body); err != nil {
-		return core.NewError("INVALID_USAGE", "Invalid usage batch", 422)
+	if body.Version != 2 {
+		return core.NewError("USAGE_VERSION", "Upgrade to the native ccusage sync client (protocol 2)", 422)
 	}
-	if err := d.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return core.NewError("INVALID_USAGE", "Invalid trailing usage data", 422)
-	}
-	if body.Version != 1 {
-		return core.NewError("USAGE_VERSION", "Unsupported usage protocol version", 422)
-	}
-	n, err := identity.Ingest(r.Context(), s.App.Store, token, body.Events)
+	n, err := identity.IngestReports(r.Context(), s.App.Store, token, body)
 	if err != nil {
 		return err
 	}
-	return writeJSON(w, 200, map[string]int{"accepted": len(body.Events), "inserted": n})
+	return writeJSON(w, 200, map[string]int{"accepted": len(body.Snapshots), "updated": n})
 }
 
 func (s *Server) identityContext(r *http.Request, c pongo2.Context) error {
@@ -210,22 +164,6 @@ func (s *Server) identityContext(r *http.Request, c pongo2.Context) error {
 	if err != nil {
 		return err
 	}
-	rows, err := s.App.Store.DB.QueryContext(r.Context(), "SELECT key_id,identity_id FROM identity_proxy_keys")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	assignments := map[string]string{}
-	for rows.Next() {
-		var key, owner string
-		if err := rows.Scan(&key, &owner); err != nil {
-			return err
-		}
-		assignments[key] = owner
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	c["identities"], c["usage_devices"], c["identity_assignments"] = items, devices, assignments
+	c["identities"], c["usage_devices"] = items, devices
 	return nil
 }

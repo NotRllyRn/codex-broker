@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"github.com/NotRllyRn/codex-broker/internal/usagereport"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type SpeedCost struct {
 }
 
 type Totals struct {
+	Reports               int64     `json:"reports"`
 	Responses             int64     `json:"responses"`
 	ProcessedTokens       int64     `json:"processed_tokens"`
 	CachedInput           int64     `json:"cached_input"`
@@ -40,6 +42,7 @@ type Day struct {
 }
 
 type Summary struct {
+	CCUsage bool `json:"ccusage"`
 	Totals
 	Daily        []Day         `json:"daily"`
 	Since        string        `json:"since"`
@@ -54,9 +57,59 @@ func ReadSummary(ctx context.Context, database *sql.DB, rates RateTable, account
 	return readSummary(ctx, database, rates, `SELECT d.*,a.public_token AS owner,'' AS device_id,0 AS cache_write_tokens FROM usage_daily d JOIN accounts a USING(account_id)`, account, "all", days, now)
 }
 
-// Identity events retain numerical history independently of proxy response retention.
-func ReadIdentitySummary(ctx context.Context, database *sql.DB, rates RateTable, identity, device string, days int, now time.Time) (Summary, error) {
-	return readSummary(ctx, database, rates, `SELECT strftime('%Y-%m-%d',timestamp_ms/1000,'unixepoch') AS day, identity_id AS owner,COALESCE(device_id,'proxy') AS device_id,model,service_tier,usage_known,1 AS responses,input_tokens-cached_input_tokens AS uncached_input_tokens,cached_input_tokens,output_tokens,cache_write_tokens FROM identity_usage`, identity, device, days, now)
+// Identity totals come exclusively from cumulative ccusage reports, never old events.
+func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, identity, device string, days int, now time.Time) (Summary, error) {
+	until := now.UTC().Format(time.DateOnly)
+	since := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
+	result := Summary{CCUsage: true, Until: until, Daily: []Day{}, Pricing: PricingStatus{Status: "ccusage"}}
+	rows, err := database.QueryContext(ctx, `SELECT r.day,r.payload FROM usage_reports r JOIN usage_devices d USING(device_id) WHERE (?='all' OR d.identity_id=?) AND (?='all' OR r.device_id=?) AND r.day<=? ORDER BY r.day`, identity, identity, device, device, until)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	byDay := map[string]*Totals{}
+	for rows.Next() {
+		var day string
+		var raw []byte
+		if err := rows.Scan(&day, &raw); err != nil {
+			return result, err
+		}
+		if result.HistorySince == "" {
+			result.HistorySince = day
+		}
+		if days != 0 && day < since {
+			continue
+		}
+		_, report, err := usagereport.Canonical(raw)
+		if err != nil {
+			return result, err
+		}
+		value := Totals{Reports: 1, ProcessedTokens: report.Total, UncachedInput: report.Input + report.CacheWrite, CachedInput: report.CacheRead, Output: report.Output, CostUSD: report.Cost}
+		if byDay[day] == nil {
+			byDay[day] = &Totals{}
+		}
+		byDay[day].add(value)
+		result.Totals.add(value)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	if days == 0 {
+		since = result.HistorySince
+		if since == "" {
+			since = until
+		}
+	}
+	result.Since = since
+	start, _ := time.Parse(time.DateOnly, since)
+	for date := start; date.Format(time.DateOnly) <= until; date = date.AddDate(0, 0, 1) {
+		day := Day{Day: date.Format(time.DateOnly)}
+		if value := byDay[day.Day]; value != nil {
+			day.Totals = *value
+		}
+		result.Daily = append(result.Daily, day)
+	}
+	return result, nil
 }
 
 func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source, owner, device string, days int, now time.Time) (Summary, error) {
@@ -136,6 +189,7 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 }
 
 func (t *Totals) add(v Totals) {
+	t.Reports += v.Reports
 	t.Responses += v.Responses
 	t.ProcessedTokens += v.ProcessedTokens
 	t.CachedInput += v.CachedInput

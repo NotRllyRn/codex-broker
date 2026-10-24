@@ -98,16 +98,6 @@
       >
       <span>{% if key.restricted %}Label-scoped access{% else %}All accounts{% endif %}</span>
       {% if not key.revoked_at_ms %}
-      <form class="account-form" method="post" action="/settings/client-keys/{{ key.key_id }}/identity">
-        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-        <label>Usage identity
-          <select name="identity_id">
-            <option value="">Unassigned</option>
-            {% for identity in identities %}<option value="{{ identity.ID }}"{% if identity_assignments[key.key_id] == identity.ID %} selected{% endif %}>{{ identity.Name }}</option>{% endfor %}
-          </select>
-        </label>
-        <button class="quiet-button" type="submit">Assign future proxy usage</button>
-      </form>
       <details>
         <summary>Edit account access</summary>
         <form class="account-form" method="post" action="/settings/client-keys/{{ key.key_id }}/scopes">

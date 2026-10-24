@@ -168,7 +168,6 @@ func (s *Server) routes() {
 	route("POST /settings/identities", s.identityCreate)
 	route("POST /settings/identities/{id}/{action}", s.identityChange)
 	route("POST /settings/usage-devices/{id}/revoke", s.usageDeviceRevoke)
-	route("POST /settings/client-keys/{id}/identity", s.identityProxyKey)
 	route("POST /settings/public-enrollment", s.publicEnabled)
 	route("POST /settings/labels", s.labelCreate)
 	route("POST /settings/labels/{id}/delete", s.labelDelete)
