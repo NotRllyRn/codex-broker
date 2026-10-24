@@ -95,16 +95,31 @@ this directory intact. Do not share it between devices or restore an older
 journal over a newer one. Credentials and state use private file permissions
 on Unix and the current user's profile directory on Windows.
 
-It installs hourly retries plus startup/login catch-up:
+It automatically selects a scheduler for hourly retries:
 
-- **Linux:** current-user systemd service/timer, with persistent missed runs.
-  A working user service manager is required. For operation while logged out,
+- **Linux:** prefers a working current-user systemd service/timer, with startup
+  and missed-run catch-up. If the user service manager is unavailable, it uses
+  the current user's crontab when a `cron`/`crond` daemon is running. Cron retries
+  on the hour and appends diagnostics to the installation's `sync.log`; missed
+  runs catch up at the next hourly sync, not immediately at startup. Existing
+  cron jobs are preserved, reinstalling does not duplicate entries, and uninstall
+  removes only this installation's entry. For systemd operation while logged out,
   enable lingering using your system's administration procedure.
 - **macOS:** LaunchAgent running at login and hourly during the user session.
   Diagnostics append to `~/.codex-broker-usage-native/sync.log`.
 - **Windows:** Task Scheduler, current-user logon and hourly triggers, with
   missed-run catch-up. No stored Windows password is required; the user must
   be logged in. No extra scripting runtime is used by the scheduled command.
+
+On Linux servers/containers with no user D-Bus session, the same install command
+now falls back to cron automatically. Merely having `systemctl` or `crontab`
+installed is not enough: the relevant service must be running. The installer does
+not install system packages or start privileged services. If neither scheduler
+is usable, start your distribution's cron service (for example,
+`sudo systemctl enable --now cron` on Debian with systemd), then rerun installation.
+For containers without an init system, arrange for cron to run under the
+container supervisor or use the host scheduler. Persist the installation's state
+directory across container recreation.
 
 Use `install --no-schedule` if your system has no supported scheduler. Schedule
 its installed `sync` command hourly using your own scheduler. An initial

@@ -26,3 +26,9 @@ Version `0.91.1` requires editing the saved `config.json`; reinstalling that ver
 ignores a new `--broker-url`. Version `0.92.1` and later honor
 explicit `--broker-url` and `--ca` overrides without resetting device history.
 Installation can remain in place after a failed first sync so offline retries work.
+
+Linux setup automatically prefers user systemd and falls back to a running cron
+service when no user service manager is available (including root server sessions).
+Existing cron jobs are preserved. If neither scheduler is running, start cron and
+rerun setup, or use `--no-schedule` with an external scheduler. Container state must
+be persisted across recreation. macOS uses launchd and Windows uses Task Scheduler.
