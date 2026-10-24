@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -140,6 +144,73 @@ func TestIdentitySettingsAndUploadBoundaries(t *testing.T) {
 	}
 	if w := form("/settings/identities/"+owner+"/rename", url.Values{"name": {"Tim renamed"}, "csrf_token": {session.CSRF}}, true); w.Code != 303 {
 		t.Fatal(w.Code)
+	}
+}
+
+// Exercise the actual downloadable client against Broker over verified HTTPS.
+func TestUsageSyncClientHTTPS(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is not installed")
+	}
+	s, _ := proxyFixture(t, 0)
+	i, code, err := identity.Create(t.Context(), s.App.Store, "HTTPS test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.App.Config.RootPath = "/broker"
+	server := httptest.NewTLSServer(s.rootPath(s.middleware(s.mux)))
+	defer server.Close()
+	root := t.TempDir()
+	logs := filepath.Join(root, "logs")
+	if err := os.Mkdir(logs, 0700); err != nil {
+		t.Fatal(err)
+	}
+	ca := filepath.Join(root, "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(logs, "session.jsonl")
+	data := `{"type":"session_meta","timestamp":"2026-09-01T00:00:00Z","payload":{"id":"https-session"}}
+{"type":"turn_context","timestamp":"2026-09-01T00:00:00Z","payload":{"model":"gpt-test"}}
+{"type":"token_usage_record","timestamp":"2026-09-01T00:00:01Z","payload":{"response_id":"https-response","usage":{"input_tokens":100,"cached_input_tokens":80,"output_tokens":7}}}
+`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Download the embedded helper, so packaging is tested as well as its source.
+	response, err := server.Client().Get(server.URL + "/broker/static/usage-sync.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := filepath.Join(root, "usage-sync.py")
+	content, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || response.StatusCode != 200 {
+		t.Fatal("helper download", err)
+	}
+	if err := os.WriteFile(helper, content, 0700); err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(root, "state")
+	command := exec.CommandContext(t.Context(), python, helper, "install", "--broker-url", server.URL+"/broker", "--ca", ca, "--name", "TLS laptop", "--state-dir", state, "--code-stdin", "--codex-mode", "direct", "--pi-mode", "off", "--codex-path", logs, "--no-schedule")
+	command.Stdin = strings.NewReader(code + "\n")
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("install: %v %s", err, output)
+	}
+	for range 2 {
+		command = exec.CommandContext(t.Context(), python, filepath.Join(state, "usage-sync.py"), "sync", "--state-dir", state)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("sync: %v %s", err, output)
+		}
+	}
+	var output, events int64
+	if err := s.App.Store.DB.QueryRow("SELECT sum(output_tokens),count(*) FROM identity_usage WHERE identity_id=?", i.ID).Scan(&output, &events); err != nil || output != 7 || events != 1 {
+		t.Fatalf("output=%d events=%d err=%v", output, events, err)
+	}
+	config, err := os.ReadFile(filepath.Join(state, "config.json"))
+	if err != nil || bytes.Contains(config, []byte(code)) {
+		t.Fatal("enrollment code retained after acknowledgement")
 	}
 }
 
