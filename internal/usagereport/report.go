@@ -27,6 +27,7 @@ type Row struct {
 	Total  int64   `json:"totalTokens"`
 	Cost   float64 `json:"totalCost"`
 	Agents []Agent `json:"agents"`
+	Models []Model `json:"modelBreakdowns"`
 }
 
 type Agent struct {
@@ -37,7 +38,8 @@ type Agent struct {
 
 type Model struct {
 	Tokens
-	Name string `json:"modelName"`
+	Name string   `json:"modelName"`
+	Cost *float64 `json:"cost"`
 }
 
 // Canonical preserves unknown ccusage fields while making whitespace/key order immaterial.
@@ -85,12 +87,27 @@ func Canonical(raw json.RawMessage) (json.RawMessage, Row, error) {
 			return nil, row, err
 		}
 		for _, model := range agent.Models {
-			if err := validTokens(model.Tokens); err != nil {
+			if err := validModel(model); err != nil {
 				return nil, row, err
 			}
 		}
 	}
+	for _, model := range row.Models {
+		if err := validModel(model); err != nil {
+			return nil, row, err
+		}
+	}
 	return data, row, nil
+}
+
+func validModel(model Model) error {
+	if err := validTokens(model.Tokens); err != nil {
+		return err
+	}
+	if model.Cost != nil && (math.IsNaN(*model.Cost) || math.IsInf(*model.Cost, 0) || *model.Cost < 0 || *model.Cost > 1e12) {
+		return errors.New("invalid model cost")
+	}
+	return nil
 }
 
 func validTokens(t Tokens) error {

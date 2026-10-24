@@ -55,3 +55,19 @@ func TestDecreaseChecksAgentsAndModelsNotPrices(t *testing.T) {
 		t.Fatal("model shrink hidden by larger daily total")
 	}
 }
+
+func TestModelDetailsPreservedAndValidated(t *testing.T) {
+	for _, cost := range []string{"0.01", "-1"} {
+		raw := strings.Replace(string(sample()), `"unknown":`, `"modelBreakdowns":[{"modelName":"example","inputTokens":10,"cost":`+cost+`}],"unknown":`, 1)
+		_, row, err := Canonical([]byte(raw))
+		if cost == "-1" {
+			if err == nil {
+				t.Fatal("negative model cost accepted")
+			}
+			continue
+		}
+		if err != nil || len(row.Models) != 1 || row.Models[0].Cost == nil || *row.Models[0].Cost != 0.01 {
+			t.Fatal("model cost lost", row.Models, err)
+		}
+	}
+}

@@ -3,8 +3,10 @@ package usage
 import (
 	"context"
 	"database/sql"
-	"github.com/NotRllyRn/codex-broker/internal/usagereport"
+	"sort"
 	"time"
+
+	"github.com/NotRllyRn/codex-broker/internal/usagereport"
 )
 
 type Cost struct {
@@ -41,8 +43,16 @@ type Day struct {
 	Totals
 }
 
+type ModelUsage struct {
+	Name            string  `json:"name"`
+	ProcessedTokens int64   `json:"processed_tokens"`
+	CostUSD         float64 `json:"cost_usd"`
+	CostKnown       bool    `json:"cost_known"`
+}
+
 type Summary struct {
-	CCUsage bool `json:"ccusage"`
+	Models  []ModelUsage `json:"models"`
+	CCUsage bool         `json:"ccusage"`
 	Totals
 	Daily        []Day         `json:"daily"`
 	Since        string        `json:"since"`
@@ -68,6 +78,7 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 	}
 	defer rows.Close()
 	byDay := map[string]*Totals{}
+	byModel := map[string]*ModelUsage{}
 	for rows.Next() {
 		var day string
 		var raw []byte
@@ -83,6 +94,20 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 		_, report, err := usagereport.Canonical(raw)
 		if err != nil {
 			return result, err
+		}
+		models := report.Models
+		if len(models) == 0 {
+			for _, agent := range report.Agents {
+				models = append(models, agent.Models...)
+			}
+		}
+		for _, model := range models {
+			known := model.Cost != nil
+			cost := 0.0
+			if known {
+				cost = *model.Cost
+			}
+			addModel(byModel, model.Name, model.Input+model.Output+model.CacheRead+model.CacheWrite, cost, known)
 		}
 		value := Totals{Reports: 1, ProcessedTokens: report.Total, UncachedInput: report.Input + report.CacheWrite, CachedInput: report.CacheRead, Output: report.Output, CostUSD: report.Cost}
 		if byDay[day] == nil {
@@ -109,6 +134,7 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 		}
 		result.Daily = append(result.Daily, day)
 	}
+	result.Models = sortedModels(byModel)
 	return result, nil
 }
 
@@ -140,6 +166,7 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 	}
 	defer rows.Close()
 	byDay := map[string]*Totals{}
+	byModel := map[string]*ModelUsage{}
 	for rows.Next() {
 		var day, model, tier string
 		var known bool
@@ -169,6 +196,7 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 			base := float64(value.UncachedInput)*standard.Input + float64(value.CachedInput)*standard.Cached + float64(value.Output)*standard.Output
 			value.Speed.Premium = value.CostUSD - base
 		}
+		addModel(byModel, model, value.ProcessedTokens, value.CostUSD, known && priced && cacheWrite == 0)
 		if byDay[day] == nil {
 			byDay[day] = &Totals{}
 		}
@@ -185,6 +213,7 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 		}
 		result.Daily = append(result.Daily, day)
 	}
+	result.Models = sortedModels(byModel)
 	return result, nil
 }
 
@@ -207,4 +236,32 @@ func (t *Totals) add(v Totals) {
 	t.Speed.Fast += v.Speed.Fast
 	t.Speed.Ultrafast += v.Speed.Ultrafast
 	t.Speed.Premium += v.Speed.Premium
+}
+
+func addModel(models map[string]*ModelUsage, name string, tokens int64, cost float64, known bool) {
+	if name == "" {
+		name = "Unknown model"
+	}
+	model := models[name]
+	if model == nil {
+		model = &ModelUsage{Name: name, CostKnown: true}
+		models[name] = model
+	}
+	model.ProcessedTokens += tokens
+	model.CostUSD += cost
+	model.CostKnown = model.CostKnown && known
+}
+
+func sortedModels(models map[string]*ModelUsage) []ModelUsage {
+	result := make([]ModelUsage, 0, len(models))
+	for _, model := range models {
+		result = append(result, *model)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].CostUSD != result[j].CostUSD {
+			return result[i].CostUSD > result[j].CostUSD
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
 }
