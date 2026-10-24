@@ -53,7 +53,12 @@ root?.querySelector("[data-copy]")?.addEventListener("click", async (event) => {
 
 async function start() {
 	try {
-		const response = await fetch("/start", { method: "POST", cache: "no-store" });
+		const params = new URLSearchParams();
+		for (const value of new URLSearchParams(location.search).getAll("labels"))
+			params.append("labels", value);
+		const label = decodeURIComponent(location.pathname.replace(/^\/|\/$/g, ""));
+		if (label) params.append("labels", label);
+		const response = await fetch(`/start?${params}`, { method: "POST", cache: "no-store" });
 		if (response.ok) poll();
 		else show(error);
 	} catch {

@@ -32,6 +32,7 @@ jobs:
       - run: GOOS=darwin GOARCH=arm64 go build -o /tmp/codex-broker-adapter-arm64 ./cmd/codex-broker-adapter
       - run: sh -n scripts/bootstrap.sh scripts/install-hermes-integration.sh scripts/install-macos-adapter.sh
       - run: node --check internal/webassets/static/app.js
+      - run: npm run test:enrollment
       - run: npm install --prefix packages/pi-extension
       - run: npm test --prefix packages/pi-extension
       - run: npm run check --prefix packages/pi-extension

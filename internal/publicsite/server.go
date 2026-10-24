@@ -182,6 +182,10 @@ func (s *Server) call(ctx context.Context, path string, body any, result any) er
 	return json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(result)
 }
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+	if strings.Contains(strings.Trim(r.URL.Path, "/"), "/") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
 	if clientCookie(r) == "" {
 		token := make([]byte, 24)
 		_, _ = rand.Read(token)
@@ -257,7 +261,11 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 		LoginAttemptID   string `json:"login_attempt_id"`
 		InteractionNonce string `json:"interaction_nonce"`
 	}
-	if s.call(r.Context(), "/api/private/v1/public-enrollments", map[string]string{"session_token": session}, &started) != nil {
+	var labels []string
+	for _, value := range r.URL.Query()["labels"] {
+		labels = append(labels, strings.Split(value, ",")...)
+	}
+	if s.call(r.Context(), "/api/private/v1/public-enrollments", map[string]any{"session_token": session, "labels": labels}, &started) != nil {
 		writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE"})
 		return
 	}

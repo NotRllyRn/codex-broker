@@ -8,7 +8,7 @@ The public process starts with the default Compose stack. Administrators enable 
 
 The public process exposes only:
 
-- `GET /` — static enrollment instructions;
+- `GET /` or `GET /{label}/` — enrollment instructions;
 - `POST /start` — start one enrollment;
 - `GET /status` — poll the caller's opaque enrollment cookie;
 - `GET /health/live` — process liveness.
@@ -60,6 +60,21 @@ If a reverse proxy or CDN fronts the public port, terminate or re-encrypt TLS sa
 Sign in to the private administrator dashboard, open **Settings**, and use the **Public enrollment** control. The state is persisted in SQLite and takes effect immediately without restarting either process.
 
 Disabling does not stop the isolated container because its liveness endpoint remains available for supervision. It makes all visitor routes return an empty `404` and causes the broker to reject new starts. In-progress login workers may finish safely, but no new public flow can begin.
+
+## Enrollment labels
+
+Create labels in **Settings → Labels** before sharing tagged signup links:
+
+- `https://codex.example.com/cindy/` assigns the existing `cindy` label.
+- `https://codex.example.com/?labels=cindy,team` assigns both existing labels.
+- `https://codex.example.com/cindy/?labels=team` combines the path and query labels.
+- Repeated query parameters (`?labels=cindy&labels=team`) also work. URL-encode spaces and other special characters in label names; use the query form for names containing `/` or reserved routes such as `status`.
+
+Matching ignores case, trims whitespace, and deduplicates names. Unknown labels are ignored and never created by enrollment; signup still works without a matching label. Links support up to 20 distinct names of at most 40 characters each. An existing enrollment cookie resumes its original signup; visiting another link does not retag that enrollment.
+
+Labels created in Settings or through administrator account edits share the existing label table. Unused labels persist until explicitly deleted. Deleting a label removes it from every account, including pending enrollments. Labels referenced by client key access rules must be removed from those rules before deletion; this prevents deletion from silently changing access permissions.
+
+Implementation uses the existing public start endpoint and account creation transaction: the page passes link labels to the public process, the private broker attaches only matching label rows, and the existing foreign key cascade removes account assignments on deletion. No new tables, migration, or public label-list endpoint are needed.
 
 ## Configuration
 

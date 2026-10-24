@@ -336,7 +336,8 @@ func (s *Server) enrollmentStart(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var body struct {
-		Session string `json:"session_token"`
+		Session string   `json:"session_token"`
+		Labels  []string `json:"labels"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		return err
@@ -344,7 +345,7 @@ func (s *Server) enrollmentStart(w http.ResponseWriter, r *http.Request) error {
 	if len(body.Session) < 32 || len(body.Session) > 200 {
 		return core.NewError("VALIDATION_ERROR", "The request body is invalid", 422)
 	}
-	value, err := s.App.Service.StartPublicEnrollment(r.Context(), body.Session)
+	value, err := s.App.Service.StartPublicEnrollment(r.Context(), body.Session, body.Labels...)
 	if err != nil {
 		return err
 	}

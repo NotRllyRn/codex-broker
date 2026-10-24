@@ -136,7 +136,12 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 				if err = s.SetPublicEnrollmentOpen(ctx, true); err != nil {
 					t.Fatal(err)
 				}
-				started, err = s.StartPublicEnrollment(ctx, "session")
+				for _, name := range []string{"Cindy", "Team"} {
+					if err = s.CreateLabel(ctx, name); err != nil {
+						t.Fatal(err)
+					}
+				}
+				started, err = s.StartPublicEnrollment(ctx, "session", "cindy", "CINDY", "Team", "hahhaha")
 			} else {
 				var created map[string]any
 				created, err = s.CreateAccount(ctx, "Owner", nil, "workspace", method)
@@ -151,6 +156,19 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 			}
 			if err = s.Store.DB.QueryRow("SELECT a.account_id,a.public_token FROM accounts a JOIN login_attempts l USING(account_id) WHERE l.login_attempt_id=?", started["login_attempt_id"]).Scan(&id, &public); err != nil {
 				t.Fatal(err)
+			}
+			if method == "PUBLIC" {
+				labels, err := s.labels(ctx, id)
+				if err != nil || strings.Join(labels, ",") != "Cindy,Team" {
+					t.Fatalf("enrollment labels=%v %v", labels, err)
+				}
+				var teamID string
+				if err := s.Store.DB.QueryRow("SELECT label_id FROM labels WHERE name='Team'").Scan(&teamID); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.DeleteLabel(ctx, teamID); err != nil {
+					t.Fatal(err)
+				}
 			}
 			// Keep profile polling out of this test; no upstream networking is needed.
 			if _, err = s.Store.DB.Exec("INSERT INTO account_profiles(account_id,last_attempt_at_ms) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET last_attempt_at_ms=excluded.last_attempt_at_ms", id, time.Now().UnixMilli()); err != nil {
@@ -195,6 +213,14 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 				t.Fatalf("lease=%#v, error=%v", lease, err)
 			}
 			if method == "PUBLIC" {
+				labels, err := s.labels(ctx, id)
+				if err != nil || strings.Join(labels, ",") != "Cindy" {
+					t.Fatalf("completed enrollment labels=%v %v", labels, err)
+				}
+				var unknown int
+				if err := s.Store.DB.QueryRow("SELECT count(*) FROM labels WHERE lower(name)='hahhaha'").Scan(&unknown); err != nil || unknown != 0 {
+					t.Fatalf("unknown label created: %d %v", unknown, err)
+				}
 				status, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "session", started["interaction_nonce"])
 				if err != nil || status["state"] != "COMPLETED" || status["email"] != "owner@example.com" || account.DisplayName != "owner@example.com" {
 					t.Fatalf("public enrollment=%v, error=%v", status, err)

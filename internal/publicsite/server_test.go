@@ -2,6 +2,7 @@ package publicsite
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -102,5 +103,50 @@ func TestEnrollmentPageExplainsPrivacyAndUsage(t *testing.T) {
 	}
 	if strings.Contains(body, "Only continue if you trust its operator") {
 		t.Fatal("old trust warning is still present")
+	}
+}
+
+func TestEnrollmentLinksForwardLabels(t *testing.T) {
+	var received struct {
+		Session string   `json:"session_token"`
+		Labels  []string `json:"labels"`
+	}
+	enabled := true
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/availability") {
+			_ = json.NewEncoder(w).Encode(map[string]bool{"enabled": enabled})
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Error(err)
+		}
+		value := strings.Repeat("a", 32)
+		_ = json.NewEncoder(w).Encode(map[string]string{"enrollment_id": value, "login_attempt_id": value, "interaction_nonce": value})
+	}))
+	defer broker.Close()
+	handler, err := New(config.Config{PublicEnrollmentBrokerURL: broker.URL, PublicEnrollmentKey: strings.Repeat("k", 32), PublicEnrollmentAttemptsPerHour: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/cindy/", "/cindy", "/hahhaha/", "/?labels=cindy,team"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "data-enrollment") {
+			t.Fatalf("%s = %d", path, w.Code)
+		}
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("POST", "/start?labels=cindy,team&labels=hahhaha", nil))
+	if w.Code != 200 || len(received.Session) < 32 || strings.Join(received.Labels, ",") != "cindy,team,hahhaha" {
+		t.Fatalf("start=%d body=%+v", w.Code, received)
+	}
+	enabled = false
+	for _, path := range []string{"/cindy/", "/?labels=cindy"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if w.Code != 404 || w.Body.Len() != 0 {
+			t.Fatalf("disabled %s = %d %s", path, w.Code, w.Body.String())
+		}
 	}
 }

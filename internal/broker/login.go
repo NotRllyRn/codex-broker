@@ -623,7 +623,7 @@ func (s *Service) reservePublicIdentity(ctx context.Context, account Account, at
 	})
 }
 
-func (s *Service) StartPublicEnrollment(ctx context.Context, session string) (map[string]string, error) {
+func (s *Service) StartPublicEnrollment(ctx context.Context, session string, labels ...string) (map[string]string, error) {
 	s.publicEnrollment.Lock()
 	defer s.publicEnrollment.Unlock()
 	open, err := s.PublicEnrollmentOpen(ctx)
@@ -642,7 +642,7 @@ func (s *Service) StartPublicEnrollment(ctx context.Context, session string) (ma
 		return nil, core.NewError("PUBLIC_ENROLLMENT_BUSY", "All sign-in slots are busy; try again later", 503)
 	}
 	enrollment := core.NewID()
-	account, err := s.CreateAccount(ctx, "Pending sign-in "+core.RandomToken(6), nil, "", "CHATGPT_DEVICE_CODE")
+	account, err := s.createAccount(ctx, "Pending sign-in "+core.RandomToken(6), labels, "", "CHATGPT_DEVICE_CODE", true)
 	if err != nil {
 		return nil, err
 	}
