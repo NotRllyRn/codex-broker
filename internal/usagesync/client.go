@@ -455,7 +455,7 @@ func Run(ctx context.Context, args []string, input *os.File, output io.Writer) e
 		}
 		if !*noSchedule {
 			if err := schedule(*directory, false); err != nil {
-				return err
+				return fmt.Errorf("installed, but background scheduling failed: %w; fix the scheduler and rerun install, or use --no-schedule with an external scheduler", err)
 			}
 		}
 	} else if err != nil {

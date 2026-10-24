@@ -125,33 +125,8 @@ func schedule(directory string, remove bool) error {
 		defer os.Remove(path)
 		return run("schtasks", "/Create", "/TN", name, "/XML", path, "/F")
 	case "linux":
-		units := filepath.Join(home, ".config", "systemd", "user")
-		if remove {
-			if err := run("systemctl", "--user", "disable", "--now", name+".timer"); err != nil {
-				return err
-			}
-			if err := removeIfExists(filepath.Join(units, name+".service")); err != nil {
-				return err
-			}
-			if err := removeIfExists(filepath.Join(units, name+".timer")); err != nil {
-				return err
-			}
-			return run("systemctl", "--user", "daemon-reload")
-		}
-		if err := os.MkdirAll(units, 0700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(units, name+".service"), []byte(scheduleContent(directory, "linux", "")), 0600); err != nil {
-			return err
-		}
-		timer := "[Unit]\nDescription=Upload ccusage hourly\n[Timer]\nOnStartupSec=2min\nOnCalendar=hourly\nPersistent=true\nRandomizedDelaySec=120\n[Install]\nWantedBy=timers.target\n"
-		if err := os.WriteFile(filepath.Join(units, name+".timer"), []byte(timer), 0600); err != nil {
-			return err
-		}
-		if err := run("systemctl", "--user", "daemon-reload"); err != nil {
-			return err
-		}
-		return run("systemctl", "--user", "enable", "--now", name+".timer")
+		return scheduleLinux(home, directory, remove, schedulerCommand, cronRunning)
+
 	}
 	return errors.New("unsupported scheduler; install with --no-schedule and schedule the sync command yourself")
 }
