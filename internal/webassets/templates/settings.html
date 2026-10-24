@@ -51,7 +51,7 @@
 </section>
 <section class="detail-section">
   <h2>Labels</h2>
-  <p class="subtle">Enrollment links such as /cindy/ or /?labels=cindy,team apply existing labels only. Deleting a label removes it from all accounts. Remove any client key access rules using it before deleting.</p>
+  <p class="subtle">Enrollment links such as /label/ or /?labels=label,another-label apply existing labels only. Deleting a label removes it from all accounts. Remove any client key access rules using it before deleting.</p>
   {% if labels %}
   <div class="data-list">
     {% for label in labels %}
@@ -68,7 +68,7 @@
   <form class="account-form" method="post" action="/settings/labels">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
     <label for="label_name">Label name</label>
-    <input id="label_name" name="name" maxlength="40" required placeholder="cindy" />
+    <input id="label_name" name="name" maxlength="40" required placeholder="label" />
     <button class="primary-button" type="submit">Create label</button>
   </form>
 </section>

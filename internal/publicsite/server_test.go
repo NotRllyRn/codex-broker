@@ -129,7 +129,7 @@ func TestEnrollmentLinksForwardLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/", "/cindy/", "/cindy", "/hahhaha/", "/?labels=cindy,team"} {
+	for _, path := range []string{"/", "/label/", "/label", "/unknown-label/", "/?labels=label,another-label"} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 200 || !strings.Contains(w.Body.String(), "data-enrollment") {
@@ -137,12 +137,12 @@ func TestEnrollmentLinksForwardLabels(t *testing.T) {
 		}
 	}
 	w := httptest.NewRecorder()
-	handler.ServeHTTP(w, httptest.NewRequest("POST", "/start?labels=cindy,team&labels=hahhaha", nil))
-	if w.Code != 200 || len(received.Session) < 32 || strings.Join(received.Labels, ",") != "cindy,team,hahhaha" {
+	handler.ServeHTTP(w, httptest.NewRequest("POST", "/start?labels=label,another-label&labels=unknown-label", nil))
+	if w.Code != 200 || len(received.Session) < 32 || strings.Join(received.Labels, ",") != "label,another-label,unknown-label" {
 		t.Fatalf("start=%d body=%+v", w.Code, received)
 	}
 	enabled = false
-	for _, path := range []string{"/cindy/", "/?labels=cindy"} {
+	for _, path := range []string{"/label/", "/?labels=label"} {
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Code != 404 || w.Body.Len() != 0 {

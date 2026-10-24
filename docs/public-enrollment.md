@@ -65,10 +65,10 @@ Disabling does not stop the isolated container because its liveness endpoint rem
 
 Create labels in **Settings → Labels** before sharing tagged signup links:
 
-- `https://codex.example.com/cindy/` assigns the existing `cindy` label.
-- `https://codex.example.com/?labels=cindy,team` assigns both existing labels.
-- `https://codex.example.com/cindy/?labels=team` combines the path and query labels.
-- Repeated query parameters (`?labels=cindy&labels=team`) also work. URL-encode spaces and other special characters in label names; use the query form for names containing `/` or reserved routes such as `status`.
+- `https://codex.example.com/label/` assigns the existing `label` label.
+- `https://codex.example.com/?labels=label,another-label` assigns both existing labels.
+- `https://codex.example.com/label/?labels=another-label` combines the path and query labels.
+- Repeated query parameters (`?labels=label&labels=another-label`) also work. URL-encode spaces and other special characters in label names; use the query form for names containing `/` or reserved routes such as `status`.
 
 Matching ignores case, trims whitespace, and deduplicates names. Unknown labels are ignored and never created by enrollment; signup still works without a matching label. Links support up to 20 distinct names of at most 40 characters each. An existing enrollment cookie resumes its original signup; visiting another link does not retag that enrollment.
 

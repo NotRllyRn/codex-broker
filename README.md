@@ -155,7 +155,7 @@ The broker preserves Codex Responses events and prefixes each streamed final
 answer with the selected account and cached remaining quota:
 
 ```text
-🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h
+🔨 Account · 5h 70% 4h36m · 7d 95% 3d17h
 ```
 
 Transparent account retries and failovers add `· ↻ retry` or `· ↻ failover`.

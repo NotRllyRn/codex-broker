@@ -10,7 +10,7 @@ func TestLabelLifecycle(t *testing.T) {
 	r, account := quotaFixture(t)
 	ctx := t.Context()
 	keys := auth.NewClientKeys(r.Store)
-	for _, name := range []string{" Cindy ", "cindy", "Team"} {
+	for _, name := range []string{" Label ", "label", "Another-label"} {
 		if err := r.Service.CreateLabel(ctx, name); err != nil {
 			t.Fatal(err)
 		}
@@ -19,7 +19,7 @@ func TestLabelLifecycle(t *testing.T) {
 	if err != nil || len(labels) != 2 {
 		t.Fatalf("labels=%+v err=%v", labels, err)
 	}
-	if err := r.Service.SetLabels(ctx, account.PublicID, []string{"Cindy"}); err != nil {
+	if err := r.Service.SetLabels(ctx, account.PublicID, []string{"Label"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Service.SetLabels(ctx, account.PublicID, nil); err != nil {
@@ -29,10 +29,10 @@ func TestLabelLifecycle(t *testing.T) {
 	if err != nil || len(labels) != 2 {
 		t.Fatalf("unused labels lost: %+v %v", labels, err)
 	}
-	if err := r.Service.SetLabels(ctx, account.PublicID, []string{"Cindy"}); err != nil {
+	if err := r.Service.SetLabels(ctx, account.PublicID, []string{"Label"}); err != nil {
 		t.Fatal(err)
 	}
-	id := labels[0].ID
+	id := labels[1].ID
 	if err := keys.SetScopes(ctx, "one", []auth.LabelScope{{ID: id, Mode: "allow"}}); err != nil {
 		t.Fatal(err)
 	}

@@ -102,18 +102,18 @@ func TestAdminCreatesAndEditsKeyScopes(t *testing.T) {
 		t.Fatalf("cleared ids=%v err=%v", ids, err)
 	}
 	// Label management uses the same administrator and CSRF boundary.
-	labelForm := url.Values{"name": {"Cindy"}, "csrf_token": {session.CSRF}}
+	labelForm := url.Values{"name": {"Label"}, "csrf_token": {session.CSRF}}
 	if got := request("POST", "/settings/labels", labelForm, false); got.Code != 401 {
 		t.Fatalf("label session=%d", got.Code)
 	}
-	if got := request("POST", "/settings/labels", url.Values{"name": {"Cindy"}}, true); got.Code != 403 {
+	if got := request("POST", "/settings/labels", url.Values{"name": {"Label"}}, true); got.Code != 403 {
 		t.Fatalf("label CSRF=%d", got.Code)
 	}
 	if got := request("POST", "/settings/labels", labelForm, true); got.Code != 303 {
 		t.Fatalf("create label=%d %s", got.Code, got.Body.String())
 	}
 	page = request("GET", "/settings", nil, true)
-	if page.Code != 200 || !strings.Contains(page.Body.String(), "<strong>Cindy</strong>") {
+	if page.Code != 200 || !strings.Contains(page.Body.String(), "<strong>Label</strong>") {
 		t.Fatalf("label manager=%d %s", page.Code, page.Body.String())
 	}
 	managedLabels, err := s.App.ClientKeys.Labels(ctx)

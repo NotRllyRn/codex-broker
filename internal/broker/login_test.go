@@ -136,12 +136,12 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 				if err = s.SetPublicEnrollmentOpen(ctx, true); err != nil {
 					t.Fatal(err)
 				}
-				for _, name := range []string{"Cindy", "Team"} {
+				for _, name := range []string{"Label", "Another-label"} {
 					if err = s.CreateLabel(ctx, name); err != nil {
 						t.Fatal(err)
 					}
 				}
-				started, err = s.StartPublicEnrollment(ctx, "session", "cindy", "CINDY", "Team", "hahhaha")
+				started, err = s.StartPublicEnrollment(ctx, "session", "label", "LABEL", "Another-label", "unknown-label")
 			} else {
 				var created map[string]any
 				created, err = s.CreateAccount(ctx, "Owner", nil, "workspace", method)
@@ -159,14 +159,14 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 			}
 			if method == "PUBLIC" {
 				labels, err := s.labels(ctx, id)
-				if err != nil || strings.Join(labels, ",") != "Cindy,Team" {
+				if err != nil || strings.Join(labels, ",") != "Another-label,Label" {
 					t.Fatalf("enrollment labels=%v %v", labels, err)
 				}
-				var teamID string
-				if err := s.Store.DB.QueryRow("SELECT label_id FROM labels WHERE name='Team'").Scan(&teamID); err != nil {
+				var otherLabelID string
+				if err := s.Store.DB.QueryRow("SELECT label_id FROM labels WHERE name='Another-label'").Scan(&otherLabelID); err != nil {
 					t.Fatal(err)
 				}
-				if err := s.DeleteLabel(ctx, teamID); err != nil {
+				if err := s.DeleteLabel(ctx, otherLabelID); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -214,11 +214,11 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 			}
 			if method == "PUBLIC" {
 				labels, err := s.labels(ctx, id)
-				if err != nil || strings.Join(labels, ",") != "Cindy" {
+				if err != nil || strings.Join(labels, ",") != "Label" {
 					t.Fatalf("completed enrollment labels=%v %v", labels, err)
 				}
 				var unknown int
-				if err := s.Store.DB.QueryRow("SELECT count(*) FROM labels WHERE lower(name)='hahhaha'").Scan(&unknown); err != nil || unknown != 0 {
+				if err := s.Store.DB.QueryRow("SELECT count(*) FROM labels WHERE lower(name)='unknown-label'").Scan(&unknown); err != nil || unknown != 0 {
 					t.Fatalf("unknown label created: %d %v", unknown, err)
 				}
 				status, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "session", started["interaction_nonce"])

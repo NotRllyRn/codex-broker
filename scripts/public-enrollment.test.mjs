@@ -7,11 +7,11 @@ const source = readFileSync(new URL("../internal/webassets/public_static/enroll.
 
 for (const [path, labels] of [
   ["/", []],
-  ["/cindy/", ["cindy"]],
-  ["/cindy", ["cindy"]],
-  ["/Cindy%20Team/", ["Cindy Team"]],
-  ["/?labels=cindy,team", ["cindy,team"]],
-  ["/cindy/?labels=team&labels=other&unrelated=ignored", ["team", "other", "cindy"]],
+  ["/label/", ["label"]],
+  ["/label", ["label"]],
+  ["/Label%20Another-label/", ["Label Another-label"]],
+  ["/?labels=label,another-label", ["label,another-label"]],
+  ["/label/?labels=another-label&labels=other&unrelated=ignored", ["another-label", "other", "label"]],
 ]) {
   test(`enrollment link ${path}`, () => {
     const location = new URL(path, "https://enroll.example.test");

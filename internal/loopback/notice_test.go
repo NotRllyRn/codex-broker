@@ -132,15 +132,15 @@ func TestAccountNoticeUsesPublicFallback(t *testing.T) {
 func TestAccountNoticeFormatAndResetTimes(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 	short, weekly := int64(70), int64(95)
-	selected := lease{AccountLabel: "Arina", ShortRemainingPercent: &short, WeeklyRemainingPercent: &weekly,
+	selected := lease{AccountLabel: "Account", ShortRemainingPercent: &short, WeeklyRemainingPercent: &weekly,
 		ShortResetsAt:  now.Add(4*time.Hour + 36*time.Minute).Format(time.RFC3339),
 		WeeklyResetsAt: now.Add(89 * time.Hour).Format(time.RFC3339)}
-	if text := accountNoticeAt(selected, now); text != "🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h\n\n" {
+	if text := accountNoticeAt(selected, now); text != "🔨 Account · 5h 70% 4h36m · 7d 95% 3d17h\n\n" {
 		t.Fatalf("notice = %q", text)
 	}
 	selected.ShortResetsAt = now.Add(-time.Minute).Format(time.RFC3339)
 	selected.WeeklyResetsAt = "invalid"
-	if text := accountNoticeAt(selected, now); text != "🔨 Arina · 5h 70% 0m · 7d 95% —\n\n" {
+	if text := accountNoticeAt(selected, now); text != "🔨 Account · 5h 70% 0m · 7d 95% —\n\n" {
 		t.Fatalf("notice = %q", text)
 	}
 }

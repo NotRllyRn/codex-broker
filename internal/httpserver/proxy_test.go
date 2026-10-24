@@ -247,7 +247,7 @@ func TestProxyCodexRoutes(t *testing.T) {
 func TestProxyResponsesStatusNotice(t *testing.T) {
 	s, key := proxyFixture(t, 1)
 	now := time.Now()
-	_, err := s.App.Store.DB.Exec(`UPDATE accounts SET display_name='Arina' WHERE account_id='account0'; UPDATE usage_current SET short_used_percent_raw=30,short_resets_at_s=?,weekly_used_percent_raw=5,weekly_resets_at_s=? WHERE account_id='account0'`, now.Add(4*time.Hour+36*time.Minute).Unix(), now.Add(89*time.Hour).Unix())
+	_, err := s.App.Store.DB.Exec(`UPDATE accounts SET display_name='Account' WHERE account_id='account0'; UPDATE usage_current SET short_used_percent_raw=30,short_resets_at_s=?,weekly_used_percent_raw=5,weekly_resets_at_s=? WHERE account_id='account0'`, now.Add(4*time.Hour+36*time.Minute).Unix(), now.Add(89*time.Hour).Unix())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestProxyResponsesStatusNotice(t *testing.T) {
 	})
 	request := `{"model":"test","input":[{"role":"assistant","content":"🔨 Previous · 5h 1% 1m · 7d 2% 2m\n\nOld answer"},{"role":"user","content":"next"}]}`
 	got := proxyRequest(s, key.Token, "/v1/responses", request)
-	if got.Code != 200 || !strings.Contains(got.Body.String(), "🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h") || !strings.Contains(got.Body.String(), "Hello") {
+	if got.Code != 200 || !strings.Contains(got.Body.String(), "🔨 Account · 5h 70% 4h36m · 7d 95% 3d17h") || !strings.Contains(got.Body.String(), "Hello") {
 		t.Fatalf("response=%d %s", got.Code, got.Body.String())
 	}
 	if got.Header().Get("Content-Type") != "text/event-stream" {

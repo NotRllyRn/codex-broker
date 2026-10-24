@@ -90,7 +90,7 @@ The adapter prefixes the actual final answer with the selected account and
 remaining quota, for example:
 
 ```text
-🔨 Arina · 5h 70% 4h36m · 7d 95% 3d17h
+🔨 Account · 5h 70% 4h36m · 7d 95% 3d17h
 ```
 
 It uses the successful account after any pre-output failover. Unknown quota
