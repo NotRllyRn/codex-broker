@@ -152,12 +152,22 @@
         <div><dt>Cached input</dt><dd data-usage-total="cached_input">—</dd></div>
         <div><dt>Uncached input</dt><dd data-usage-total="uncached_input">—</dd></div>
         <div><dt>Output</dt><dd data-usage-total="output">—</dd></div>
-        <div data-usage-cache-savings><dt>Cache savings</dt><dd data-usage-total="cache_savings_usd">—</dd></div>
+        <div><dt>Cached input share</dt><dd data-usage-cache-rate>—</dd></div>
+        <div data-usage-cache-savings><dt>Estimated cache savings</dt><dd data-usage-total="cache_savings_usd">—</dd></div>
       </dl>
       <div class="usage-costs" data-usage-costs>
         <section><h3>Cost by type</h3><div class="usage-share-bar" data-usage-type-bar aria-hidden="true"></div><div class="usage-legend" data-usage-type-legend></div></section>
         <section><header><h3>Cost by speed</h3><span>Premium <strong data-usage-premium>—</strong></span></header><div class="usage-share-bar" data-usage-speed-bar aria-hidden="true"></div><div class="usage-legend" data-usage-speed-legend></div></section>
       </div>
+      <section class="usage-models" aria-labelledby="usage-models-title">
+        <header><h3 id="usage-models-title">Usage by model</h3><span data-usage-model-caption></span></header>
+        <div class="usage-model-scroll">
+          <table><thead><tr><th scope="col">#</th><th scope="col">Model</th><th scope="col">Cost</th><th scope="col" data-usage-model-share>Cost share</th><th scope="col">Tokens</th></tr></thead><tbody id="usage-model-rows" data-usage-model-rows></tbody></table>
+        </div>
+        <p class="subtle" data-usage-model-empty hidden>No model breakdown was recorded for this selection.</p>
+        <button type="button" class="quiet-button" data-usage-model-more aria-expanded="false" aria-controls="usage-model-rows" hidden>Show more</button>
+        <p class="subtle usage-model-note">Model names are kept as reported. Shares use the overall selected total; model details may omit some tokens or costs.</p>
+      </section>
       <p class="usage-coverage" data-usage-coverage></p>
     </div>
   </section>

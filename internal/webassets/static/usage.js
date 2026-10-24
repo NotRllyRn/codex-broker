@@ -2,6 +2,16 @@ const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumF
 const usd = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 const dateLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 
+export function cachedInputShare(data) {
+	const input = data.cached_input + data.uncached_input;
+	return input > 0 ? data.cached_input / input : null;
+}
+
+export function rankedModels(models, metric) {
+	const value = (model) => metric === "cost" ? (model.cost_known ? model.cost_usd : -1) : model.processed_tokens;
+	return [...models].sort((a, b) => value(b) - value(a) || a.name.localeCompare(b.name));
+}
+
 export function initUsageDashboard(panel, appPath) {
 	if (panel.hidden) return () => {};
 	const find = (name) => panel.querySelector(`[data-usage-${name}]`);
@@ -9,7 +19,7 @@ export function initUsageDashboard(panel, appPath) {
 	const status = find("status");
 	const period = find("days");
 	const identity = find("identity"), device = find("device");
-	let account = "all", metric = "cost", data, controller;
+	let account = "all", metric = "cost", data, controller, expandedModels = false;
 
 	function renderChart() {
 		const cost = metric === "cost";
@@ -86,29 +96,67 @@ export function initUsageDashboard(panel, appPath) {
 		}
 	}
 
+	function renderModels() {
+		const models = rankedModels(data.models || [], metric);
+		const cost = metric === "cost", total = cost ? data.cost_usd : data.processed_tokens;
+		const rows = expandedModels ? models : models.slice(0, 5);
+		find("model-share").textContent = cost ? "Cost share" : "Token share";
+		find("model-caption").textContent = models.length ? `${rows.length} of ${models.length} models · ranked by ${cost ? "cost" : "tokens"}` : "";
+		find("model-empty").hidden = models.length > 0;
+		find("model-rows").replaceChildren(...rows.map((model, index) => {
+			const row = document.createElement("tr");
+			const value = cost ? model.cost_usd : model.processed_tokens;
+			const share = total > 0 && (!cost || model.cost_known) ? value / total : null;
+			const cells = [String(index + 1), model.name, model.cost_known ? usd.format(model.cost_usd) : "—", share === null ? "—" : share > 0 && share < 0.001 ? "<0.1%" : `${(share * 100).toFixed(1)}%`, compact.format(model.processed_tokens)];
+			for (const [position, text] of cells.entries()) {
+				const cell = document.createElement(position === 1 ? "th" : "td");
+				cell.textContent = text;
+				if (position === 1) {
+					cell.scope = "row";
+					const bar = document.createElement("span");
+					bar.className = "usage-model-bar";
+					bar.setAttribute("aria-hidden", "true");
+					bar.style.width = `${Math.min(100, Math.max(0, (share || 0) * 100))}%`;
+					cell.append(bar);
+				}
+				row.append(cell);
+			}
+			return row;
+		}));
+		const more = find("model-more");
+		more.hidden = models.length <= 5;
+		more.textContent = expandedModels ? "Show less" : `Show more (${models.length - 5})`;
+		more.setAttribute("aria-expanded", String(expandedModels));
+	}
+
 	function render() {
 		for (const node of panel.querySelectorAll("[data-usage-total]")) {
 			const key = node.dataset.usageTotal;
 			node.textContent = key === "cache_savings_usd" ? costValue(data[key]) : compact.format(data[key]);
 		}
 		const category = data.category, speed = data.speed;
- const costDetails=find("costs"),savings=find("cache-savings");
- if(costDetails) costDetails.hidden=Boolean(data.ccusage);
- if(savings) savings.hidden=Boolean(data.ccusage);
+		find("costs").hidden = Boolean(data.ccusage);
+		const savings = find("cache-savings");
+		savings.querySelector("dd").textContent = data.ccusage ? "—" : costValue(data.cache_savings_usd);
+		savings.title = data.ccusage ? "ccusage does not report dollar cache savings or the pricing detail needed to derive them reliably." : "Estimated cost avoided by reading cached input at the cached rate.";
+		const cacheRate = cachedInputShare(data);
+		find("cache-rate").textContent = cacheRate === null ? "—" : `${(cacheRate * 100).toFixed(1)}%`;
+		find("cache-rate").title = "Cached input / (cached + uncached input, including cache writes). This is a token share, not a dollar savings rate.";
 		renderBar("type", [["Input", category.input, "var(--usage-input)"], ["Cache read", category.cache_read, "var(--usage-cache)"], ["Output", category.output, "var(--ink)"], ["Other", category.other, "var(--line-strong)"]]);
 		renderBar("speed", [["Standard", speed.standard, "var(--usage-cache)"], ["Fast", speed.fast, "var(--usage-input)"], ...(speed.ultrafast > 0 ? [["Ultrafast", speed.ultrafast, "var(--ink)"]] : [])]);
 		find("premium").textContent = costValue(speed.premium);
-		const notices = [identity?.value ? "All usage reported by ccusage, including HTTP proxy requests. Repeated uploads replace daily device totals. Costs come from the pinned ccusage version; response counts, cache savings and speed/type cost splits are not available." : "Recorded proxy traffic only; direct leases and historical profile tokens are excluded."];
+		const notices = [identity?.value ? "All usage reported by ccusage, including HTTP proxy requests. Repeated uploads replace daily device totals. Costs come from the pinned ccusage version; dollar cache savings, response counts and speed/type cost splits are not supplied. Cached input share measures token reuse, not money saved." : "Recorded proxy traffic only; direct leases and historical profile tokens are excluded."];
 		if (data.history_since) notices.push(`Daily history available from ${data.history_since}.`);
 		if (data.unpriced_responses) notices.push(`${data.unpriced_responses.toLocaleString()} responses have no model/tier price and are excluded from costs.`);
 		if (data.missing_usage_responses) notices.push(`${data.missing_usage_responses.toLocaleString()} responses have incomplete token usage and are excluded from costs.`);
 		if (data.ccusage) notices.push("ccusage costs are API estimates, not subscription charges.");
- else if (data.pricing.status === "unavailable") notices.push("Model pricing is unavailable; unknown costs are shown as —.");
+		else if (data.pricing.status === "unavailable") notices.push("Model pricing is unavailable; unknown costs are shown as —.");
 		else notices.push(`LiteLLM ${data.pricing.status === "cached" ? "cached " : ""}list rates from ${new Date(data.pricing.fetched_at).toLocaleDateString()}.`);
 		find("coverage").textContent = notices.join(" ");
 		status.textContent = (data.responses || data.reports) ? "" : "No recorded usage in this period. Set up identities and devices in Settings to collect client usage.";
 		content.hidden = false;
 		renderChart();
+		renderModels();
 	}
 
 	async function load(nextAccount = account) {
@@ -137,8 +185,9 @@ export function initUsageDashboard(panel, appPath) {
 	for (const button of panel.querySelectorAll("[data-usage-metric]")) button.addEventListener("click", () => {
 		metric = button.dataset.usageMetric;
 		for (const option of panel.querySelectorAll("[data-usage-metric]")) option.setAttribute("aria-pressed", String(option === button));
-		if (data) renderChart();
+		if (data) { renderChart(); renderModels(); }
 	});
+	find("model-more").addEventListener("click", () => { expandedModels = !expandedModels; renderModels(); });
 	period.addEventListener("change", () => load());
 	identity?.addEventListener("change", () => {
 		device.value = "all";
