@@ -95,7 +95,7 @@ func TestPollDuringGraceDoesNotLosePendingReset(t *testing.T) {
 	// An earlier read starts during grace, finishes after grace, and reports
 	// the next window. It must not satisfy the delayed fresh read.
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(300), "resetsAt": reset + 18000}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": reset + 600}}
-	if err := service.commitUsage(context.Background(), account, "early", raw, 2*time.Minute, "test", nil, false); err != nil {
+	if err := service.commitUsage(context.Background(), account, "early", raw, 2*time.Minute, "test", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	claimResets(t, service, (reset+60)*1000, 0)
@@ -117,7 +117,7 @@ func TestFreshPollAfterGraceSatisfiesResetRefresh(t *testing.T) {
 	setResetTimes(t, service, reset, reset+18000)
 	claimResets(t, service, (reset+60)*1000, 0)
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(300), "resetsAt": reset}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": reset + 18000}}
-	if err := service.commitUsage(context.Background(), account, "hourly", raw, 0, "test", nil, false); err != nil {
+	if err := service.commitUsage(context.Background(), account, "hourly", raw, 0, "test", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	claimResets(t, service, time.Now().UnixMilli(), 0)

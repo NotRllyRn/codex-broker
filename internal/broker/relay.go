@@ -194,10 +194,11 @@ func (r Router) ReportRelayFailure(ctx context.Context, keyID, publicID, kind st
 			return r.blockQuota(ctx, account, now)
 		}
 		if kind == "auth" {
-			if _, leaseErr := r.Service.Lease(ctx, account, now, true); leaseErr == nil {
+			_, leaseErr := r.Service.Lease(ctx, account, now, true)
+			if leaseErr == nil {
 				return nil
 			}
-			_ = r.markAuth(ctx, account.ID, now)
+			_ = r.markLeaseAuthFailure(ctx, account.ID, leaseErr, now)
 		}
 		return r.exclude(ctx, keyID, account, kind, now)
 	}

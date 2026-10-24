@@ -260,7 +260,7 @@ if (document.querySelector(".topbar")) {
 }
 
 const operation = document.querySelector("[data-operation]");
-if (operation) {
+if (operation && !["SUCCEEDED", "FAILED", "CANCELLED", "AMBIGUOUS"].includes(operation.dataset.state)) {
 	const id = operation.dataset.operation;
 	const poll = async () => {
 		const response = await fetch(appPath(`/api/internal/v1/operations/${id}`), {

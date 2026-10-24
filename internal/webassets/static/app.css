@@ -1129,6 +1129,17 @@ textarea {
 	font-size: 2rem;
 	letter-spacing: -0.04em;
 }
+.operation-view pre {
+ white-space: pre-wrap;
+ overflow-wrap: anywhere;
+ padding: 1rem;
+ background: var(--surface);
+ border: 1px solid var(--line);
+}
+.operation-view dd {
+ overflow-wrap: anywhere;
+ min-width: 0;
+}
 .form-error {
 	border-left: 3px solid var(--bad);
 	background: color-mix(in srgb, var(--bad) 8%, var(--surface));

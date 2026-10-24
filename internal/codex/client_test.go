@@ -30,6 +30,27 @@ func TestFakeAppServerProcess(t *testing.T) {
 		case "account/read":
 			_ = encoder.Encode(map[string]any{"method": "test/notification", "params": map[string]any{"ok": true}})
 			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"account": map[string]any{"type": "chatgpt", "email": "owner@example.com"}}})
+		case "model/list":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"data": []any{
+				map[string]any{"model": "alpha", "inputModalities": []string{"text"}, "supportedReasoningEfforts": []any{map[string]string{"reasoningEffort": "low"}}},
+				map[string]any{"model": "test-mini", "inputModalities": []string{"text"}, "supportedReasoningEfforts": []any{map[string]string{"reasoningEffort": "low"}, map[string]string{"reasoningEffort": "minimal"}}},
+			}}})
+		case "thread/start":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"thread": map[string]string{"id": "thread"}}})
+		case "turn/start":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"turn": map[string]string{"id": "turn"}}})
+			_ = encoder.Encode(map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "other-thread", "turnId": "turn", "item": map[string]string{"type": "agentMessage", "text": "unrelated"}}})
+			status := os.Getenv("CODEX_FAKE_PULSE_STATUS")
+			if status == "" {
+				status = "completed"
+			}
+			item := map[string]string{"type": "agentMessage", "text": "OK"}
+			if os.Getenv("CODEX_FAKE_PULSE_ITEMS_ONLY") != "1" {
+				_ = encoder.Encode(map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "thread", "turnId": "turn", "item": item}})
+			}
+			_ = encoder.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"turn": map[string]any{"id": "turn", "status": status, "items": []any{item}, "error": map[string]string{"message": os.Getenv("CODEX_FAKE_PULSE_ERROR")}}}})
+		case "account/rateLimits/read":
+			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"rateLimits": map[string]any{"primary": map[string]any{"usedPercent": 1}}}})
 		case "auth/test":
 			_ = encoder.Encode(map[string]any{"id": id, "error": map[string]any{"message": "authentication required"}})
 		}

@@ -238,7 +238,7 @@ func (s *Service) Refresh(ctx context.Context, public, trigger string) (string, 
 	if err != nil {
 		return "", err
 	}
-	if account.AuthState != "VERIFIED" || account.WorkerState != "STOPPED" {
+	if (account.AuthState != "VERIFIED" && !(trigger == "USER" && account.AuthState == "AUTH_REQUIRED")) || account.WorkerState != "STOPPED" {
 		return "", core.NewError("USAGE_REFRESH_NOT_ELIGIBLE", "Credential recovery or reauthentication is required before usage refresh", 409)
 	}
 	operation, created := "", false
@@ -258,14 +258,14 @@ func (s *Service) Refresh(ctx context.Context, public, trigger string) (string, 
 		return "", err
 	}
 	if created {
-		if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, operation) }) {
+		if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, operation, trigger == "USER") }) {
 			_ = s.FailOperation(context.Background(), operation, "SERVICE_STOPPING", "Service is stopping")
 		}
 	}
 	return operation, nil
 }
 
-func (s *Service) runRefresh(ctx context.Context, account Account, operation string) {
+func (s *Service) runRefresh(ctx context.Context, account Account, operation string, manual bool) {
 	start := time.Now()
 	_ = s.OperationState(ctx, operation, "RUNNING", "READING_USAGE", "Reading complete rate limits")
 	select {
@@ -275,6 +275,15 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 		return
 	}
 	raw, err := s.managed(ctx, account, func(callCtx context.Context, runtime *codex.Runtime) (map[string]any, error) {
+		if manual {
+			identity, err := runtime.Adapter.Account(callCtx, false)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := verifyIdentity(account, identity); err != nil {
+				return nil, err
+			}
+		}
 		return runtime.Adapter.RateLimits(callCtx)
 	})
 	if err != nil {
@@ -282,7 +291,7 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 		s.refreshProfile(ctx, account)
 		return
 	}
-	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil, false); err != nil {
+	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil, false, manual); err != nil {
 		return
 	}
 	s.refreshProfile(ctx, account)
@@ -377,7 +386,7 @@ func pointerAnyFloat(value *float64) any {
 	return *value
 }
 
-func (s *Service) commitUsage(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64, cycleRelease bool) error {
+func (s *Service) commitUsage(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64, cycleRelease, authVerified bool) error {
 	usage := NormalizeUsage(raw)
 	now := core.NowMS()
 	snapshot := core.NewID()
@@ -423,7 +432,7 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		if err := scheduleUsageResets(ctx, db, account.ID, now); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, "UPDATE account_state SET usage_state='FRESH',overall_state=CASE WHEN auth_state='VERIFIED' THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", now, account.ID); err != nil {
+		if _, err := db.ExecContext(ctx, `UPDATE account_state SET usage_state='FRESH',auth_state=CASE WHEN ? THEN 'VERIFIED' ELSE auth_state END,last_auth_verified_at_ms=CASE WHEN ? THEN ? ELSE last_auth_verified_at_ms END,overall_state=CASE WHEN (SELECT enabled FROM accounts WHERE account_id=account_state.account_id)=0 THEN 'DISABLED' WHEN auth_state='VERIFIED' OR ? THEN 'HEALTHY' ELSE overall_state END,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?`, authVerified, authVerified, now, authVerified, now, account.ID); err != nil {
 			return err
 		}
 		if pulseNext != nil {
@@ -444,6 +453,9 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 		return err
 	})
 	if err == nil {
+		if authVerified {
+			_ = s.ResolveIncident(ctx, account.ID, "authentication_failed")
+		}
 		s.Events.Publish("account.updated", map[string]any{"resource_id": account.PublicID, "state": "FRESH"})
 	}
 	return err
@@ -535,12 +547,12 @@ func (s *Service) Pulse(ctx context.Context, public string) (string, error) {
 			return err
 		}
 		var eligible bool
-		err = db.QueryRowContext(ctx, `SELECT a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?),u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, now, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
+		err = db.QueryRowContext(ctx, `SELECT a.deleted_at_ms IS NULL AND s.auth_state IN('VERIFIED','AUTH_REQUIRED') AND s.worker_state='STOPPED' AND EXISTS (SELECT 1 FROM credential_bundles b WHERE b.account_id=a.account_id AND b.state='ACTIVE') AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?),u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, now, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
 		if err != nil {
 			return err
 		}
 		if !eligible || exhausted(account, now) {
-			return core.NewError("WINDOW_PULSE_NOT_ELIGIBLE", "Pulse requires an enabled, verified account with available usage and no credential recovery", 409)
+			return core.NewError("WINDOW_PULSE_NOT_ELIGIBLE", "Pulse requires stored credentials, available usage, and an idle account without credential quarantine", 409)
 		}
 		var busy bool
 		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM operations WHERE account_id=? AND state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))", account.ID).Scan(&busy); err != nil {
@@ -559,7 +571,7 @@ func (s *Service) Pulse(ctx context.Context, public string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if created && !s.runAsync(func() { s.runPulse(s.workerCtx, public, operation) }) {
+	if created && !s.runAsync(func() { s.runPulse(s.workerCtx, public, operation, true) }) {
 		_ = s.FailOperation(context.Background(), operation, "SERVICE_STOPPING", "Service is stopping")
 	}
 	return operation, nil
@@ -574,7 +586,7 @@ func (s *Service) QueuePulses(ctx context.Context) error {
 	if err != nil || operation == "" {
 		return err
 	}
-	if !s.runAsync(func() { s.runPulse(s.workerCtx, public, operation) }) {
+	if !s.runAsync(func() { s.runPulse(s.workerCtx, public, operation, false) }) {
 		_ = s.FailOperation(context.Background(), operation, "SERVICE_STOPPING", "Service is stopping")
 	}
 	return nil
@@ -607,7 +619,7 @@ func (s *Service) claimCyclePulse(ctx context.Context, now int64) (public, opera
 	return
 }
 
-func (s *Service) runPulse(ctx context.Context, public, operation string) {
+func (s *Service) runPulse(ctx context.Context, public, operation string, manual bool) {
 	account, err := s.account(ctx, public)
 	if err != nil {
 		_ = s.FailOperation(ctx, operation, "WINDOW_PULSE_FAILED", "Account unavailable")
@@ -621,9 +633,32 @@ func (s *Service) runPulse(ctx context.Context, public, operation string) {
 		return
 	}
 	started := time.Now()
+	var pulse codex.PulseResult
 	raw, err := s.managed(ctx, account, func(callCtx context.Context, runtime *codex.Runtime) (map[string]any, error) {
-		return runtime.Adapter.PulseWindows(callCtx)
+		if manual {
+			identity, err := runtime.Adapter.Account(callCtx, false)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := verifyIdentity(account, identity); err != nil {
+				return nil, err
+			}
+		}
+		var pulseErr error
+		pulse, pulseErr = runtime.Adapter.PulseWindows(callCtx)
+		return pulse.Usage, pulseErr
 	})
+	details, _ := json.Marshal(struct {
+		codex.PulseResult
+		CodexVersion string `json:"codex_version"`
+	}{pulse, s.Config.CodexVersion})
+	saveErr := s.Store.Write(context.WithoutCancel(ctx), func(db store.Executor) error {
+		_, err := db.ExecContext(context.WithoutCancel(ctx), "UPDATE operations SET result_json=?,state_version=state_version+1 WHERE operation_id=?", string(details), operation)
+		return err
+	})
+	if err == nil {
+		err = saveErr
+	}
 	if err != nil {
 		code := "WINDOW_PULSE_FAILED"
 		var typed *core.Error
@@ -647,7 +682,7 @@ func (s *Service) runPulse(ctx context.Context, public, operation string) {
 		return
 	}
 	next := *usage.Weekly.ResetsAtS * 1000
-	_ = s.commitUsage(ctx, account, operation, raw, time.Since(started), "Weekly cycle started", &next, true)
+	_ = s.commitUsage(ctx, account, operation, raw, time.Since(started), "Weekly cycle started", &next, true, manual)
 }
 
 func (s *Service) OpenIncident(ctx context.Context, accountID, kind, severity, summary string) error {

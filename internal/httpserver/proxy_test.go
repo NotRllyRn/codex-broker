@@ -150,6 +150,14 @@ func TestProxyFakeAppServer(t *testing.T) {
 			continue
 		}
 		result := map[string]any{}
+		content, _ := os.ReadFile(filepath.Join(home, "auth.json"))
+		var fixture map[string]any
+		_ = json.Unmarshal(content, &fixture)
+		failure, _ := fixture["test_failure"].(string)
+		if failure != "" && (request["method"] == "account/read" || request["method"] == "account/rateLimits/read") {
+			_ = encoder.Encode(map[string]any{"id": id, "error": map[string]any{"message": failure}})
+			continue
+		}
 		if request["method"] == "account/read" {
 			writeProxyAuth(t, home, "refreshed")
 			result["account"] = map[string]string{"type": "chatgpt", "email": "test@example.com"}
@@ -166,6 +174,7 @@ func TestProxyFakeAppServer(t *testing.T) {
 		}
 		_ = encoder.Encode(map[string]any{"id": id, "result": result})
 		if request["method"] == "turn/start" {
+			_ = encoder.Encode(map[string]any{"method": "item/completed", "params": map[string]any{"threadId": "thread", "turnId": "turn", "item": map[string]string{"type": "agentMessage", "text": "OK"}}})
 			_ = encoder.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"turn": map[string]string{"id": "turn", "status": "completed"}}})
 		}
 	}
@@ -1010,16 +1019,16 @@ func TestManualPulseStartsRotation(t *testing.T) {
 }
 
 func TestManualPulseEligibilityAndDeduplication(t *testing.T) {
-	for _, scenario := range []string{"disabled", "auth required", "worker busy", "depleted", "operation busy", "already pulsing"} {
+	for _, scenario := range []string{"worker busy", "quarantined", "missing credential", "depleted", "operation busy", "already pulsing"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, _ := proxyFixture(t, 1)
 			statement := map[string]string{
-				"disabled":        `UPDATE accounts SET enabled=0`,
-				"auth required":   `UPDATE account_state SET auth_state='AUTH_REQUIRED'`,
-				"worker busy":     `UPDATE account_state SET worker_state='CREDENTIAL_IN_USE'`,
-				"depleted":        `UPDATE usage_current SET short_used_percent_raw=100`,
-				"operation busy":  `INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('existing','account0','usage.refresh','USER','QUEUED',1,1)`,
-				"already pulsing": `INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('existing','account0','window.pulse','USER','RUNNING',1,1)`,
+				"quarantined":        `UPDATE account_state SET auth_state='AUTH_REQUIRED',worker_state='CREDENTIAL_QUARANTINED'`,
+				"missing credential": `DELETE FROM credential_bundles`,
+				"worker busy":        `UPDATE account_state SET worker_state='CREDENTIAL_IN_USE'`,
+				"depleted":           `UPDATE usage_current SET short_used_percent_raw=100`,
+				"operation busy":     `INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('existing','account0','usage.refresh','USER','QUEUED',1,1)`,
+				"already pulsing":    `INSERT INTO operations(operation_id,account_id,kind,trigger,state,created_at_ms,state_version) VALUES('existing','account0','window.pulse','USER','RUNNING',1,1)`,
 			}[scenario]
 			if _, err := s.App.Store.DB.Exec(statement); err != nil {
 				t.Fatal(err)

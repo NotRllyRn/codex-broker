@@ -56,6 +56,7 @@ Codex Broker{% endblock %} {% block content %}
     <p>Reset: {{ detail.usage.weekly_resets_at_s|default_if_none:"unknown" }}</p>
   </article>
 </section>
+<p class="subtle">Manual pulses and usage refreshes can retry stored credentials when sign-in is required. Disabled accounts stay excluded from traffic. Quarantined credentials require repair below.</p>
 <section class="action-row">
   <form method="post" action="/accounts/{{ detail.account.public_token }}/pulse">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
@@ -69,7 +70,7 @@ Codex Broker{% endblock %} {% block content %}
       class="quiet-button"
       type="submit"
     >
-      Refresh usage
+      {% if detail.account.auth_state == "AUTH_REQUIRED" %}Retry auth and refresh usage{% else %}Refresh usage{% endif %}
     </button>
   </form>
   <form

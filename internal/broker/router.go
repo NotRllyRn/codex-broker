@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"math"
 	"math/rand/v2"
 	"sort"
@@ -43,14 +44,15 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 			}
 		}
 		if request.FailureKind == "auth" && !quotaBlocked(*failed, now) && (!r.Service.Config.WindowPulseEnabled || failed.CycleState == "IN_CYCLE") {
-			if lease, error := r.Service.Lease(ctx, *failed, now, true); error == nil {
+			lease, leaseErr := r.Service.Lease(ctx, *failed, now, true)
+			if leaseErr == nil {
 				if err := r.markRouted(ctx, *failed, now); err != nil {
 					return nil, nil, err
 				}
 				result := routeLease(*failed, lease, now)
 				return &result, nil, nil
 			}
-			_ = r.markAuth(ctx, failed.ID, now)
+			_ = r.markLeaseAuthFailure(ctx, failed.ID, leaseErr, now)
 		}
 		if request.FailureKind != "quota" {
 			if err := r.exclude(ctx, keyID, *failed, request.FailureKind, now); err != nil {
@@ -302,4 +304,13 @@ func (r Router) markAuth(ctx context.Context, accountID string, now int64) error
 		_, err := db.ExecContext(ctx, "UPDATE account_state SET auth_state='AUTH_REQUIRED',overall_state='ACTION_REQUIRED',last_error_code='CODEX_AUTH_REQUIRED',last_error_summary='Client request authentication failed',updated_at_ms=?,state_version=state_version+1 WHERE account_id=?", now, accountID)
 		return err
 	})
+}
+
+// Temporary runtime, storage, and transport failures do not prove invalid auth.
+func (r Router) markLeaseAuthFailure(ctx context.Context, accountID string, failure error, now int64) error {
+	var typed *core.Error
+	if errors.As(failure, &typed) && typed.Code == "CODEX_AUTH_REQUIRED" {
+		return r.markAuth(ctx, accountID, now)
+	}
+	return nil
 }

@@ -107,7 +107,7 @@ func (s *Service) resetUsageLoop(ctx context.Context) {
 					_ = s.FailOperation(ctx, refresh.operation, "USAGE_REFRESH_FAILED", "Account unavailable")
 					continue
 				}
-				if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, refresh.operation) }) {
+				if !s.runAsync(func() { s.runRefresh(s.workerCtx, account, refresh.operation, false) }) {
 					_ = s.FailOperation(context.Background(), refresh.operation, "SERVICE_STOPPING", "Service is stopping")
 				}
 			}
