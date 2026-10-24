@@ -67,7 +67,7 @@ func TestNativeUsageSyncHTTPS(t *testing.T) {
 	if err := os.MkdirAll(logs, 0700); err != nil {
 		t.Fatal(err)
 	}
-	pi := `{"type":"message","id":"event1","timestamp":"2026-09-01T00:00:00Z","message":{"role":"assistant","model":"gpt-5","provider":"openai","usage":{"input":10,"cacheRead":20,"output":7}}}` + "\n"
+	pi := `{"type":"message","id":"event1","timestamp":"2026-09-01T00:00:00Z","message":{"role":"assistant","model":"gpt-5","provider":"custom-provider","usage":{"input":10,"cacheRead":20,"output":7}}}` + "\n"
 	if err := os.WriteFile(filepath.Join(logs, "session.jsonl"), []byte(pi), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -120,6 +120,11 @@ func TestNativeUsageSyncHTTPS(t *testing.T) {
 	}
 	if modelTokens != summary.ProcessedTokens || math.Abs(modelCost-summary.CostUSD) > 1e-9 {
 		t.Fatal("model breakdown does not match uploaded totals", summary.Models)
+	}
+	// Pi's serving provider does not determine its model family.
+	filtered, err := usage.ReadIdentitySummary(t.Context(), s.App.Store.DB, nil, owner.ID, "all", 0, time.Now(), usage.Filter{Provider: "openai"})
+	if err != nil || filtered.ProcessedTokens != 37 || filtered.CachedInput != 20 || filtered.Output != 7 || len(filtered.Models) != 1 || filtered.Models[0].Name != "[pi] gpt-5" {
+		t.Fatalf("Pi OpenAI model missing: %+v, err=%v", filtered, err)
 	}
 	config, err := os.ReadFile(filepath.Join(state, "config.json"))
 	if err != nil || bytes.Contains(config, []byte(code)) {

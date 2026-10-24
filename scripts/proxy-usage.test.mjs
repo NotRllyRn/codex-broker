@@ -85,6 +85,7 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	const panel = { hidden: false, querySelector: find, querySelectorAll: () => [], setAttribute() {} };
 	const identity = find("[data-usage-identity]"), device = find("[data-usage-device]");
 	find("[data-usage-days]").value = "all";
+ identity.value = "all";
 	device.value = "all";
  find("[data-usage-provider]").value = "openai";
  find("[data-usage-model]").value = "all";
@@ -101,7 +102,7 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	runInNewContext(script.replaceAll("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
 	const load = context.initialize(panel, (path) => "/broker" + path);
 	await load("account1");
-	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all&provider=openai&model=all");
+	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all&provider=openai&model=all&identity=all&device=all");
 	identity.value = "example";
 	identity.listeners.change();
 	await new Promise(setImmediate);

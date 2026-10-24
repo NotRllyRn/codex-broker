@@ -125,9 +125,9 @@
     <header class="usage-heading">
       <div><h3 id="usage-title">Usage</h3><p>Recorded usage · API estimate · UTC days</p></div>
       <div class="usage-controls">
-        <label><select data-usage-identity aria-label="Usage identity"><option value="">Broker proxy · selected account</option><option value="all">All identities</option>{% for identity in identities %}<option value="{{ identity.ID }}">{{ identity.Name }}</option>{% endfor %}</select></label>
-        <label><select data-usage-device aria-label="Usage device" disabled><option value="all">All devices</option>{% for device in usage_devices %}<option value="{{ device.ID }}" data-identity="{{ device.IdentityID }}">{{ device.Name }} · {{ device.ID|slice:":8" }}</option>{% endfor %}</select></label>
-        <label><select data-usage-provider aria-label="Model provider (inferred from model name)"><option value="all">All providers</option><option value="openai" selected>OpenAI / Codex models</option><option value="anthropic">Anthropic models</option><option value="google">Google models</option><option value="other">Other / unknown models</option></select></label>
+        <label><select data-usage-identity aria-label="Usage source"><option value="all" selected>Client usage · all identities</option><option value="">Broker proxy · selected account</option>{% for identity in identities %}<option value="{{ identity.ID }}">{{ identity.Name }}</option>{% endfor %}</select></label>
+        <label><select data-usage-device aria-label="Usage device"><option value="all">All devices</option>{% for device in usage_devices %}<option value="{{ device.ID }}" data-identity="{{ device.IdentityID }}">{{ device.Name }} · {{ device.ID|slice:":8" }}</option>{% endfor %}</select></label>
+        <label><select data-usage-provider aria-label="Model family (across all providers and agents)"><option value="all">All model families</option><option value="openai" selected>OpenAI / Codex models</option><option value="anthropic">Anthropic models</option><option value="google">Google models</option><option value="other">Other / unknown models</option></select></label>
         <label><select data-usage-model aria-label="Usage model"><option value="all">All models</option></select></label>
         <div class="usage-toggle" role="group" aria-label="Usage metric">
           <button type="button" data-usage-metric="cost" aria-pressed="true">Cost</button>

@@ -21,3 +21,11 @@ test('models rank by selected metric without mutating data or treating missing c
   assert.equal(rankedModels(models, 'tokens')[0].name, 'Unknown price');
   assert.equal(models[0].name, 'Unknown price');
 });
+
+test('usage defaults to all client identities and model families are independent of agents', () => {
+  const template = readFileSync(new URL('../internal/webassets/templates/dashboard.html', import.meta.url), 'utf8');
+  assert.match(template, /data-usage-identity[^>]*><option value="all" selected>Client usage/);
+  assert.match(template, /data-usage-provider[^>]*aria-label="Model family \(across all providers and agents\)"/);
+  assert.match(template, /value="openai" selected>OpenAI \/ Codex models/);
+  assert.doesNotMatch(template, /data-usage-device[^>]*disabled/);
+});
