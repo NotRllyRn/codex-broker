@@ -674,9 +674,9 @@ func (s *Service) StartPublicEnrollment(ctx context.Context, session string, lab
 
 func (s *Service) PublicEnrollmentStatus(ctx context.Context, enrollment, attempt, session, nonce string) (map[string]any, error) {
 	var state, loginState string
-	var email sql.NullString
+	var email, errorCode sql.NullString
 	var sessionHash, nonceHash []byte
-	err := s.Store.DB.QueryRowContext(ctx, "SELECT p.state,l.state,p.observed_email,p.session_hash,l.interaction_nonce_hash FROM public_enrollments p JOIN login_attempts l USING(login_attempt_id) WHERE p.enrollment_id=? AND p.login_attempt_id=?", enrollment, attempt).Scan(&state, &loginState, &email, &sessionHash, &nonceHash)
+	err := s.Store.DB.QueryRowContext(ctx, "SELECT p.state,l.state,p.observed_email,p.session_hash,l.interaction_nonce_hash,l.error_code FROM public_enrollments p JOIN login_attempts l USING(login_attempt_id) WHERE p.enrollment_id=? AND p.login_attempt_id=?", enrollment, attempt).Scan(&state, &loginState, &email, &sessionHash, &nonceHash, &errorCode)
 	if err != nil || !sameDigest(sessionHash, auth.Digest(session)) || !sameDigest(nonceHash, auth.Digest(nonce)) {
 		return nil, core.NewError("PUBLIC_ENROLLMENT_NOT_FOUND", "Sign-in not found", 404)
 	}
@@ -684,6 +684,9 @@ func (s *Service) PublicEnrollmentStatus(ctx context.Context, enrollment, attemp
 		return map[string]any{"state": "COMPLETED", "email": nullValue(email)}, nil
 	}
 	if state == "FAILED" || strings.HasPrefix(loginState, "FAILED") || loginState == "RESTART_REQUIRED" || loginState == "CANCELLED" || loginState == "EXPIRED" || loginState == "SUPERSEDED" {
+		if errorCode.String == "PUBLIC_ACCOUNT_EXISTS" {
+			return map[string]any{"state": "FAILED", "error_code": errorCode.String}, nil
+		}
 		return map[string]any{"state": "FAILED"}, nil
 	}
 	interaction, err := s.Interaction(attempt, session, nonce)

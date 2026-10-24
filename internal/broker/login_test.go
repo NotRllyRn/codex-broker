@@ -316,3 +316,26 @@ func TestLoginFailurePreservesExistingCredential(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicEnrollmentDuplicateStatus(t *testing.T) {
+	ctx := context.Background()
+	s, marker := loginFixture(t, "success")
+	if _, err := s.CreateAccount(ctx, "owner@example.com", nil, "", "CHATGPT_DEVICE_CODE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetPublicEnrollmentOpen(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	started, err := s.StartPublicEnrollment(ctx, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(marker, []byte("approve"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitLoginState(t, s, started["login_attempt_id"], "FAILED_RETRYABLE")
+	status, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "session", started["interaction_nonce"])
+	if err != nil || status["state"] != "FAILED" || status["error_code"] != "PUBLIC_ACCOUNT_EXISTS" {
+		t.Fatalf("status=%v error=%v", status, err)
+	}
+}

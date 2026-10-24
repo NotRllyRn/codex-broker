@@ -32,3 +32,21 @@ for (const [path, labels] of [
     assert.equal(requested.searchParams.has("unrelated"), false);
   });
 }
+
+test("duplicate enrollment displays the specific error", async () => {
+  const title = {}, message = {};
+  const error = { querySelector: (selector) => selector === "h2" ? title : message };
+  const nodes = { "[data-error]": error };
+  const root = { querySelector: (selector) => nodes[selector] ??= { addEventListener() {} } };
+  await runInNewContext(`${source}\npoll()`, {
+    document: { querySelector: () => root },
+    location: new URL("https://enroll.example.test/"),
+    URLSearchParams,
+    fetch: async (url) => url.startsWith("/start")
+      ? new Promise(() => {})
+      : { json: async () => ({ state: "FAILED", error_code: "PUBLIC_ACCOUNT_EXISTS" }) },
+  });
+  assert.equal(error.hidden, false);
+  assert.equal(title.textContent, "Account already exists");
+  assert.equal(message.textContent, "This ChatGPT account is already connected to Codex Broker or is being added.");
+});

@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/config"
 	"github.com/flosch/pongo2/v6"
@@ -148,5 +149,28 @@ func TestEnrollmentLinksForwardLabels(t *testing.T) {
 		if w.Code != 404 || w.Body.Len() != 0 {
 			t.Fatalf("disabled %s = %d %s", path, w.Code, w.Body.String())
 		}
+	}
+}
+
+func TestEnrollmentStatusExposesOnlyDuplicateError(t *testing.T) {
+	for _, code := range []string{"PUBLIC_ACCOUNT_EXISTS", "LOGIN_FAILED"} {
+		t.Run(code, func(t *testing.T) {
+			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]string{"state": "FAILED", "error_code": code, "error_summary": "internal details"})
+			}))
+			defer broker.Close()
+			server := &Server{config: config.Config{PublicEnrollmentBrokerURL: broker.URL}, client: broker.Client(), status: newThrottle(10, time.Minute)}
+			value := strings.Repeat("a", 32)
+			request := httptestRequestWithCookie(&http.Cookie{Name: cookieName, Value: (Handle{value, value, value, value}).Encode()})
+			response := httptest.NewRecorder()
+			server.poll(response, request)
+			var status map[string]string
+			if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
+				t.Fatal(err)
+			}
+			if response.Code != 200 || status["state"] != "FAILED" || (status["error_code"] == "PUBLIC_ACCOUNT_EXISTS") != (code == "PUBLIC_ACCOUNT_EXISTS") || status["error_summary"] != "" {
+				t.Fatalf("status = %d %s", response.Code, response.Body.String())
+			}
+		})
 	}
 }

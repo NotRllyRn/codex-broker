@@ -40,6 +40,10 @@ async function poll() {
 			setTimeout(poll, 3000);
 			return;
 		}
+		if (status.error_code === "PUBLIC_ACCOUNT_EXISTS") {
+			error.querySelector("h2").textContent = "Account already exists";
+			error.querySelector("p").textContent = "This ChatGPT account is already connected to Codex Broker or is being added.";
+		}
 		show(error);
 	} catch {
 		setTimeout(poll, 3000);

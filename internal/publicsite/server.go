@@ -309,6 +309,8 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	} else if state == "COMPLETED" {
 		email, _ := status["email"].(string)
 		status = map[string]any{"state": state, "email": email}
+	} else if state == "FAILED" && status["error_code"] == "PUBLIC_ACCOUNT_EXISTS" {
+		status = map[string]any{"state": state, "error_code": "PUBLIC_ACCOUNT_EXISTS"}
 	} else {
 		status = map[string]any{"state": state}
 	}
