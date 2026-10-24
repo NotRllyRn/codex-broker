@@ -212,6 +212,16 @@ class DurableSync(unittest.TestCase):
                  patch.object(sync.Path, "home", return_value=self.root), \
                  patch.object(sync.shutil, "which", return_value="systemctl"), \
                  patch.object(sync.subprocess, "run") as run:
+                def inspect_task(command, **kwargs):
+                    if platform == "win32" and "/XML" in command:
+                        task = sync.ET.parse(command[command.index("/XML") + 1])
+                        ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+                        self.assertEqual(task.findtext(".//t:LogonType", namespaces=ns), "InteractiveToken")
+                        self.assertEqual(task.findtext(".//t:Interval", namespaces=ns), "PT1H")
+                        self.assertEqual(task.findtext(".//t:StartWhenAvailable", namespaces=ns), "true")
+                        self.assertIsNotNone(task.find(".//t:LogonTrigger", ns))
+                        self.assertIn(str(self.state), task.findtext(".//t:Arguments", namespaces=ns))
+                run.side_effect = inspect_task
                 sync.schedule(self.state)
                 self.assertTrue(run.called)
                 for call in run.call_args_list:
