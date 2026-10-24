@@ -20,3 +20,9 @@ reports are retained. Include the same `--state-dir` if customized. Use `status`
 removes scheduling and retains state. Updates are explicit, not automatic.
 
 [Full setup and troubleshooting](https://github.com/NotRllyRn/codex-broker/blob/main/docs/usage-sync.md).
+
+If setup saved the wrong Broker URL, see [connection recovery](https://github.com/NotRllyRn/codex-broker/blob/main/docs/usage-sync.md#wrong-broker-url-or-failed-first-sync).
+Version `0.91.1` requires editing the saved `config.json`; reinstalling that version
+ignores a new `--broker-url`. New builds containing the connection-repair fix honor
+explicit `--broker-url` and `--ca` overrides without resetting device history.
+Installation can remain in place after a failed first sync so offline retries work.

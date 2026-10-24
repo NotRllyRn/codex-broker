@@ -49,6 +49,11 @@ See [device sync details](docs/usage-sync.md) for platform selection, private
 certificates, custom log directories, scheduling, correction/recovery, updates,
 and migration from the earlier Python helper.
 
+If a device was installed with the wrong Broker address, follow the
+[connection recovery steps](docs/usage-sync.md#wrong-broker-url-or-failed-first-sync).
+The published `0.91.1` client needs its saved URL edited; deleting device state
+is not required.
+
 ## Supported apps
 
 | App | Integration | First step |

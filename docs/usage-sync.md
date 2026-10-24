@@ -167,6 +167,56 @@ and queued reports. Revoke the device in Settings to stop uploads. Deleting an
 identity permanently removes its devices and identity reports. Ordinary
 account/proxy history remains independent.
 
+### Wrong Broker URL or failed first sync
+
+Installation validates the HTTPS URL format and CA certificate, but does not
+require a successful connection before saving state and installing scheduling.
+This allows offline recovery. An unreachable host, wrong root path, untrusted
+certificate, or invalid enrollment code can therefore leave an installed client
+whose syncs fail. Reinstalling does not mean resetting its saved configuration.
+
+**For the published `0.91.1` client:** `install --broker-url` is ignored when
+configuration already exists. Correct it as follows:
+
+1. Stop scheduled retries with `npx codex-broker@0.91.1 uninstall`. This retains
+   all credentials and reports. Let any already-running sync finish before editing.
+2. Open the private configuration in a text editor:
+   - Linux/macOS: `~/.codex-broker-usage-native/config.json`
+   - Windows: `%USERPROFILE%\.codex-broker-usage-native\config.json`
+3. Change only the `"url"` value to the correct HTTPS Broker address, including
+   any root path, with no trailing slash. Save valid JSON. Do not share this file:
+   it contains device credentials. If the private CA is also wrong, set `"ca"`
+   to an absolute path to the correct PEM certificate (escape Windows backslashes
+   as `\\` in JSON, or use forward slashes). Keep that certificate file in place.
+4. Run `npx codex-broker@0.91.1 install` to restore scheduling and immediately
+   retry sync using the corrected saved configuration. A successful exit confirms
+   that this initial sync completed; inspect any reported TLS/HTTP error if it fails.
+
+If you used a custom `--state-dir`, include it on every command above and edit
+`config.json` in that directory instead. Do not delete `config.json` or
+`reports.json`: that can lose enrollment recovery state or create another device.
+
+**With the connection-repair fix (not included in `0.91.1`):** reinstalling honors
+explicit connection overrides, so the manual edit is unnecessary:
+
+```sh
+npx codex-broker@latest install --broker-url https://CORRECT-BROKER
+# If the Broker uses a private CA:
+npx codex-broker@latest install --broker-url https://CORRECT-BROKER --ca /path/to/broker-ca.pem
+```
+
+Use this command once a newer npm build containing the fix is published, or run
+a native build from this branch's CI artifact. Include your existing
+`--state-dir` if customized. An omitted URL or CA retains the saved value;
+a provided CA is validated and copied into private state. Enrollment credentials,
+installation ID, reports, and revisions are preserved. If another sync holds the
+lock, let it finish and rerun the command.
+
+This repairs the address of the **same Broker**, or an address that never enrolled
+successfully. To move to an unrelated Broker, use a separate `--state-dir` and
+that Broker's identity code; existing device credentials belong to the original
+Broker. Stop the old installation's scheduling first if it is no longer needed.
+
 ### Upgrading from the earlier Python helper
 
 Run the old helper's `uninstall` command, then revoke its device in Settings.
