@@ -164,6 +164,8 @@ func (s *Server) routes() {
 	route("GET /logs/export", s.logsExport)
 	route("GET /settings", s.settings)
 	route("POST /settings/public-enrollment", s.publicEnabled)
+	route("POST /settings/labels", s.labelCreate)
+	route("POST /settings/labels/{id}/delete", s.labelDelete)
 	route("POST /settings/client-keys", s.clientKeyCreate)
 	route("POST /settings/client-keys/{id}/scopes", s.clientKeyScopes)
 	route("POST /settings/client-keys/{id}/revoke", s.clientKeyRevoke)

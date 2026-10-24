@@ -154,6 +154,10 @@ func (s *Service) Close() {
 }
 
 func (s *Service) CreateAccount(ctx context.Context, name string, labels []string, workspace, method string) (map[string]any, error) {
+	return s.createAccount(ctx, name, labels, workspace, method, false)
+}
+
+func (s *Service) createAccount(ctx context.Context, name string, labels []string, workspace, method string, existingLabelsOnly bool) (map[string]any, error) {
 	name = strings.Join(strings.Fields(name), " ")
 	if utf8.RuneCountInString(name) < 1 || utf8.RuneCountInString(name) > 80 {
 		return nil, core.NewError("ACCOUNT_NAME_INVALID", "Enter an account name of 1-80 characters", 422)
@@ -193,6 +197,12 @@ func (s *Service) CreateAccount(ctx context.Context, name string, labels []strin
 			return err
 		}
 		for _, label := range labels {
+			if existingLabelsOnly {
+				if _, err := db.ExecContext(ctx, "INSERT OR IGNORE INTO account_labels SELECT ?,label_id FROM labels WHERE lower(name)=lower(?)", id, label); err != nil {
+					return err
+				}
+				continue
+			}
 			labelID := core.NewID()
 			var existing string
 			err := db.QueryRowContext(ctx, "SELECT label_id FROM labels WHERE lower(name)=lower(?)", label).Scan(&existing)
@@ -371,8 +381,7 @@ func (s *Service) SetLabels(ctx context.Context, public string, labels []string)
 				return err
 			}
 		}
-		_, err := db.ExecContext(ctx, "DELETE FROM labels WHERE NOT EXISTS (SELECT 1 FROM account_labels WHERE account_labels.label_id=labels.label_id) AND NOT EXISTS (SELECT 1 FROM client_key_labels WHERE client_key_labels.label_id=labels.label_id)")
-		return err
+		return nil
 	})
 	if err == nil {
 		s.Events.Publish("account.updated", map[string]any{"resource_id": public, "labels": labels})

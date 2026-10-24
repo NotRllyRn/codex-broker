@@ -50,6 +50,29 @@
   </article>
 </section>
 <section class="detail-section">
+  <h2>Labels</h2>
+  <p class="subtle">Enrollment links such as /cindy/ or /?labels=cindy,team apply existing labels only. Deleting a label removes it from all accounts. Remove any client key access rules using it before deleting.</p>
+  {% if labels %}
+  <div class="data-list">
+    {% for label in labels %}
+    <article>
+      <strong>{{ label.Name }}</strong>
+      <form method="post" action="/settings/labels/{{ label.ID }}/delete" data-confirm="Delete this label from all accounts?">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <button class="danger-button" type="submit">Delete</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}<p class="subtle">No labels exist.</p>{% endif %}
+  <form class="account-form" method="post" action="/settings/labels">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+    <label for="label_name">Label name</label>
+    <input id="label_name" name="name" maxlength="40" required placeholder="cindy" />
+    <button class="primary-button" type="submit">Create label</button>
+  </form>
+</section>
+<section class="detail-section">
   <h2>Client access keys</h2>
   <p class="subtle">
     Without label rules, keys can access all accounts, including unlabeled accounts.

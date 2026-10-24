@@ -337,7 +337,7 @@ func (s *Server) settingsContext(r *http.Request, issued any) (pongo2.Context, e
 	if err != nil {
 		return nil, err
 	}
-	return pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}, nil
+	return pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}, nil
 }
 func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
@@ -549,4 +549,29 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) error {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) labelCreate(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireForm(r); err != nil {
+		return err
+	}
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	if err := s.App.Service.CreateLabel(r.Context(), r.Form.Get("name")); err != nil {
+		return err
+	}
+	s.redirect(w, r, "/settings")
+	return nil
+}
+
+func (s *Server) labelDelete(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireForm(r); err != nil {
+		return err
+	}
+	if err := s.App.Service.DeleteLabel(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
+	s.redirect(w, r, "/settings")
+	return nil
 }
