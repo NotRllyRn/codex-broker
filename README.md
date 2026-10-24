@@ -15,6 +15,49 @@ These estimates exclude direct leases and historical profile tokens; they are
 API-equivalent values, not subscription charges. Daily aggregates survive
 response cleanup, starting with the response history available at upgrade.
 
+**Usage identities** combine usage from multiple devices under a name such as
+“Tim.” The native sync helper imports every agent supported by pinned
+**ccusage 20.0.43**, including locally logged HTTP proxy requests. It uploads
+compact daily JSON reports; repeated uploads update totals instead of adding
+them again. Identity history survives seven-day proxy response cleanup.
+
+## Collect usage from your devices
+
+1. In **Settings → Usage identities**, create an identity and copy its generated
+   `cbi_…` code. Use that code on each device; its name cannot authorize uploads.
+2. Download the matching **native usage sync zip** from
+   [Releases](https://github.com/NotRllyRn/codex-broker/releases), then extract
+   **both executables**. Unreleased builds are in the successful branch CI run's
+   **usage-sync-bundles** artifact under [Actions](https://github.com/NotRllyRn/codex-broker/actions).
+3. Run once, substituting your Broker URL:
+
+   Linux/macOS:
+   ```sh
+   chmod +x codex-broker-usage ccusage
+   ./codex-broker-usage install --broker-url https://192.168.1.20:8787
+   ```
+
+   Windows PowerShell:
+   ```powershell
+   .\codex-broker-usage.exe install --broker-url https://192.168.1.20:8787
+   ```
+
+   Enter the identity code at the hidden prompt. Add `--ca /path/to/broker-ca.pem`
+   for a private CA, or `--name 'Work laptop'` for a friendly device name.
+   **No Python, Node, Go, or preinstalled ccusage is required.**
+4. On the dashboard, choose your identity, optionally a device, and **All time**.
+
+The first sync imports all retained history. Hourly/startup/login runs upload
+only changed daily reports, with durable recovery after outages and safe
+retries. All supported agents and routes are included; no direct/proxy choices
+are needed. Only numerical ccusage reports leave the device, not conversations.
+Token and cost totals follow ccusage; individual response counts are unavailable
+from aggregate reports. Different devices contribute independently.
+
+See [device sync details](docs/usage-sync.md) for platform selection, private
+certificates, custom log directories, scheduling, correction/recovery, updates,
+and migration from the earlier Python helper.
+
 ## Supported apps
 
 | App | Integration | First step |

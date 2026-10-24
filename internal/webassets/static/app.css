@@ -386,7 +386,7 @@ main {
 .usage-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; }
 .usage-legend strong { color: var(--ink); font-weight: 500; font-variant-numeric: tabular-nums; }
 .usage-coverage { margin-top: 1.5rem; margin-bottom: 0; }
-.usage-content[hidden] { display: none; }
+.usage-content[hidden], .usage-costs[hidden] { display: none; }
 @media (max-width: 900px) {
 	.usage-overview { grid-template-columns: 1fr; }
 	.usage-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }

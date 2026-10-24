@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/auth"
+	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/identity"
 	"github.com/NotRllyRn/codex-broker/internal/usage"
 )
 
@@ -28,6 +30,19 @@ func TestUsageEndpointRequiresAdminAndValidatesPeriod(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	owner, code, err := identity.Create(t.Context(), s.App.Store, "Usage test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := "cbu_" + core.RandomToken(32)
+	device, err := identity.Enroll(t.Context(), s.App.Store, code, "0123456789abcdef0123456789abcdef", "Laptop", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = identity.IngestReports(t.Context(), s.App.Store, token, identity.ReportBatch{Version: 2, CCUsageVersion: "20.0.43", Snapshots: []identity.Snapshot{{Revision: 1, Report: dailyReport(now.UTC().AddDate(0, 0, -100).Format(time.DateOnly), 42)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	_, err = s.App.Store.DB.Exec(`INSERT INTO usage_rate_cache VALUES(1,?,?)`, now.UnixMilli(), `{"gpt-test":{"input_cost_per_token":0.000002,"output_cost_per_token":0.00001}}`)
 	if err != nil {
 		t.Fatal(err)
@@ -40,7 +55,12 @@ func TestUsageEndpointRequiresAdminAndValidatesPeriod(t *testing.T) {
 		query     string
 		status    int
 		responses int64
-	}{{"?days=7&account=account0", 200, 1}, {"?days=30&account=missing", 200, 0}, {"?days=0", 400, 0}, {"?days=500000", 400, 0}, {"?days=invalid", 400, 0}} {
+	}{{"?days=7&account=account0", 200, 1}, {"?days=30&account=missing", 200, 0}, {"?days=0", 400, 0}, {"?days=500000", 400, 0}, {"?days=invalid", 400, 0},
+		{"?days=all&identity=" + owner.ID + "&device=" + device.ID, 200, 1},
+		{"?days=90&identity=" + owner.ID, 200, 0},
+		{"?days=all&identity=" + owner.ID + "&device=proxy", 200, 0},
+		{"?days=all&identity=all", 200, 1},
+		{"?days=all&identity=missing", 200, 0}} {
 		r := httptest.NewRequest(http.MethodGet, "/api/internal/v1/usage"+test.query, nil)
 		r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "usage-test"})
 		w := httptest.NewRecorder()
@@ -53,8 +73,11 @@ func TestUsageEndpointRequiresAdminAndValidatesPeriod(t *testing.T) {
 			if err := json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
 				t.Fatal(err)
 			}
-			if summary.Responses != test.responses || summary.Pricing.Status != "fresh" {
+			if summary.Responses+summary.Reports != test.responses || (summary.Pricing.Status != "fresh" && !summary.CCUsage) {
 				t.Fatalf("%s: %+v", test.query, summary)
+			}
+			if strings.Contains(test.query, "days=all&identity=") && test.responses == 1 && (summary.Output != 42 || len(summary.Daily) != 101) {
+				t.Fatalf("all-time history missing: %+v", summary)
 			}
 		}
 	}

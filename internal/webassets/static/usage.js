@@ -8,6 +8,7 @@ export function initUsageDashboard(panel, appPath) {
 	const content = find("content");
 	const status = find("status");
 	const period = find("days");
+	const identity = find("identity"), device = find("device");
 	let account = "all", metric = "cost", data, controller;
 
 	function renderChart() {
@@ -20,7 +21,7 @@ export function initUsageDashboard(panel, appPath) {
 		find("chart-title").textContent = title;
 		chart.setAttribute("aria-label", `${title}, ${dateLabel(data.since)} to ${dateLabel(data.until)}, UTC`);
 		find("headline").textContent = cost ? costValue(data.cost_usd) : compact.format(data.processed_tokens);
-		find("caption").textContent = `${data.responses.toLocaleString()} responses · ${cost ? "API estimate" : "processed tokens"}`;
+		find("caption").textContent = `${(data.ccusage ? data.reports : data.responses).toLocaleString()} ${data.ccusage ? "daily device reports" : "responses"} · ${cost ? "API estimate" : "processed tokens"}`;
 		chart.replaceChildren();
 		const peak = Math.max(0, ...data.daily.map((day) => day[field]));
 		const maximum = peak || 1;
@@ -58,7 +59,7 @@ export function initUsageDashboard(panel, appPath) {
 			label.textContent = dateLabel(day);
 			return label;
 		}));
-		find("chart-detail").textContent = unpriced ? "No cost estimates are available for this period. Switch to Tokens to see recorded usage." : data.responses ? "Hover or focus a point to see a day." : "No recorded proxy responses in this period.";
+		find("chart-detail").textContent = unpriced ? "No cost estimates are available for this period. Switch to Tokens to see recorded usage." : (data.responses || data.reports) ? "Hover or focus a point to see a day." : "No recorded usage in this period.";
 	}
 
 	function costValue(value) {
@@ -91,17 +92,21 @@ export function initUsageDashboard(panel, appPath) {
 			node.textContent = key === "cache_savings_usd" ? costValue(data[key]) : compact.format(data[key]);
 		}
 		const category = data.category, speed = data.speed;
+ const costDetails=find("costs"),savings=find("cache-savings");
+ if(costDetails) costDetails.hidden=Boolean(data.ccusage);
+ if(savings) savings.hidden=Boolean(data.ccusage);
 		renderBar("type", [["Input", category.input, "var(--usage-input)"], ["Cache read", category.cache_read, "var(--usage-cache)"], ["Output", category.output, "var(--ink)"], ["Other", category.other, "var(--line-strong)"]]);
 		renderBar("speed", [["Standard", speed.standard, "var(--usage-cache)"], ["Fast", speed.fast, "var(--usage-input)"], ...(speed.ultrafast > 0 ? [["Ultrafast", speed.ultrafast, "var(--ink)"]] : [])]);
 		find("premium").textContent = costValue(speed.premium);
-		const notices = ["Recorded proxy traffic only; direct leases and historical profile tokens are excluded."];
+		const notices = [identity?.value ? "All usage reported by ccusage, including HTTP proxy requests. Repeated uploads replace daily device totals. Costs come from the pinned ccusage version; response counts, cache savings and speed/type cost splits are not available." : "Recorded proxy traffic only; direct leases and historical profile tokens are excluded."];
 		if (data.history_since) notices.push(`Daily history available from ${data.history_since}.`);
 		if (data.unpriced_responses) notices.push(`${data.unpriced_responses.toLocaleString()} responses have no model/tier price and are excluded from costs.`);
 		if (data.missing_usage_responses) notices.push(`${data.missing_usage_responses.toLocaleString()} responses have incomplete token usage and are excluded from costs.`);
-		if (data.pricing.status === "unavailable") notices.push("Model pricing is unavailable; unknown costs are shown as —.");
+		if (data.ccusage) notices.push("ccusage costs are API estimates, not subscription charges.");
+ else if (data.pricing.status === "unavailable") notices.push("Model pricing is unavailable; unknown costs are shown as —.");
 		else notices.push(`LiteLLM ${data.pricing.status === "cached" ? "cached " : ""}list rates from ${new Date(data.pricing.fetched_at).toLocaleDateString()}.`);
 		find("coverage").textContent = notices.join(" ");
-		status.textContent = data.responses ? "" : "No recorded proxy usage in this period. Account-wide profile activity is shown below.";
+		status.textContent = (data.responses || data.reports) ? "" : "No recorded usage in this period. Set up identities and devices in Settings to collect client usage.";
 		content.hidden = false;
 		renderChart();
 	}
@@ -116,6 +121,7 @@ export function initUsageDashboard(panel, appPath) {
 		status.textContent = "Loading recorded usage…";
 		try {
 			const query = new URLSearchParams({ account, days: period.value });
+			if (identity?.value) { query.set("identity", identity.value); query.set("device", device.value); }
 			const response = await fetch(appPath(`/api/internal/v1/usage?${query}`), { signal: current.signal });
 			if (!response.ok) throw new Error("Usage could not be loaded. Try refreshing usage.");
 			const result = await response.json();
@@ -134,6 +140,13 @@ export function initUsageDashboard(panel, appPath) {
 		if (data) renderChart();
 	});
 	period.addEventListener("change", () => load());
+	identity?.addEventListener("change", () => {
+		device.value = "all";
+		device.disabled = !identity.value;
+		for (const option of device.options) option.hidden = Boolean(option.dataset.identity && identity.value !== "all" && option.dataset.identity !== identity.value);
+		load();
+	});
+	device?.addEventListener("change", () => load());
 	find("refresh").addEventListener("click", () => load());
 	return load;
 }

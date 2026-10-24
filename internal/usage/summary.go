@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"github.com/NotRllyRn/codex-broker/internal/usagereport"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type SpeedCost struct {
 }
 
 type Totals struct {
+	Reports               int64     `json:"reports"`
 	Responses             int64     `json:"responses"`
 	ProcessedTokens       int64     `json:"processed_tokens"`
 	CachedInput           int64     `json:"cached_input"`
@@ -40,6 +42,7 @@ type Day struct {
 }
 
 type Summary struct {
+	CCUsage bool `json:"ccusage"`
 	Totals
 	Daily        []Day         `json:"daily"`
 	Since        string        `json:"since"`
@@ -51,18 +54,87 @@ type Summary struct {
 // The profile endpoint has no model/cache breakdown, so only recorded proxy
 // tokens enter these estimates. Reasoning is already included in output.
 func ReadSummary(ctx context.Context, database *sql.DB, rates RateTable, account string, days int, now time.Time) (Summary, error) {
+	return readSummary(ctx, database, rates, `SELECT d.*,a.public_token AS owner,'' AS device_id,0 AS cache_write_tokens FROM usage_daily d JOIN accounts a USING(account_id)`, account, "all", days, now)
+}
+
+// Identity totals come exclusively from cumulative ccusage reports, never old events.
+func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, identity, device string, days int, now time.Time) (Summary, error) {
+	until := now.UTC().Format(time.DateOnly)
+	since := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
+	result := Summary{CCUsage: true, Until: until, Daily: []Day{}, Pricing: PricingStatus{Status: "ccusage"}}
+	rows, err := database.QueryContext(ctx, `SELECT r.day,r.payload FROM usage_reports r JOIN usage_devices d USING(device_id) WHERE (?='all' OR d.identity_id=?) AND (?='all' OR r.device_id=?) AND r.day<=? ORDER BY r.day`, identity, identity, device, device, until)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+	byDay := map[string]*Totals{}
+	for rows.Next() {
+		var day string
+		var raw []byte
+		if err := rows.Scan(&day, &raw); err != nil {
+			return result, err
+		}
+		if result.HistorySince == "" {
+			result.HistorySince = day
+		}
+		if days != 0 && day < since {
+			continue
+		}
+		_, report, err := usagereport.Canonical(raw)
+		if err != nil {
+			return result, err
+		}
+		value := Totals{Reports: 1, ProcessedTokens: report.Total, UncachedInput: report.Input + report.CacheWrite, CachedInput: report.CacheRead, Output: report.Output, CostUSD: report.Cost}
+		if byDay[day] == nil {
+			byDay[day] = &Totals{}
+		}
+		byDay[day].add(value)
+		result.Totals.add(value)
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
+	}
+	if days == 0 {
+		since = result.HistorySince
+		if since == "" {
+			since = until
+		}
+	}
+	result.Since = since
+	start, _ := time.Parse(time.DateOnly, since)
+	for date := start; date.Format(time.DateOnly) <= until; date = date.AddDate(0, 0, 1) {
+		day := Day{Day: date.Format(time.DateOnly)}
+		if value := byDay[day.Day]; value != nil {
+			day.Totals = *value
+		}
+		result.Daily = append(result.Daily, day)
+	}
+	return result, nil
+}
+
+func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source, owner, device string, days int, now time.Time) (Summary, error) {
 	until := now.UTC().Format(time.DateOnly)
 	since := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
 	result := Summary{Since: since, Until: until, Daily: []Day{}}
 	var earliest sql.NullString
-	if err := database.QueryRowContext(ctx, `SELECT min(d.day) FROM usage_daily d JOIN accounts a USING(account_id) WHERE (?='all' OR a.public_token=?)`, account, account).Scan(&earliest); err != nil {
+	if err := database.QueryRowContext(ctx, `SELECT min(d.day) FROM (`+source+`) d WHERE (?='all' OR d.owner=?) AND (?='all' OR d.device_id=?)`, owner, owner, device, device).Scan(&earliest); err != nil {
 		return result, err
 	}
 	result.HistorySince = earliest.String
-	rows, err := database.QueryContext(ctx, `SELECT d.day,d.model,d.service_tier,d.usage_known,sum(d.responses),sum(d.uncached_input_tokens),sum(d.cached_input_tokens),sum(d.output_tokens)
-		FROM usage_daily d JOIN accounts a USING(account_id)
-		WHERE d.day>=? AND d.day<=? AND (?='all' OR a.public_token=?)
-		GROUP BY d.day,d.model,d.service_tier,d.usage_known ORDER BY d.day`, since, until, account, account)
+	if days == 0 {
+		since = until
+		if earliest.Valid && earliest.String < until {
+			since = earliest.String
+		}
+		result.Since = since
+		start, _ := time.Parse(time.DateOnly, since)
+		end, _ := time.Parse(time.DateOnly, until)
+		days = int(end.Sub(start).Hours()/24) + 1
+	}
+	rows, err := database.QueryContext(ctx, `SELECT d.day,d.model,d.service_tier,d.usage_known,sum(d.responses),sum(d.uncached_input_tokens),sum(d.cached_input_tokens),sum(d.output_tokens),sum(d.cache_write_tokens)
+		FROM (`+source+`) d
+		WHERE d.day>=? AND d.day<=? AND (?='all' OR d.owner=?) AND (?='all' OR d.device_id=?)
+		GROUP BY d.day,d.model,d.service_tier,d.usage_known ORDER BY d.day`, since, until, owner, owner, device, device)
 	if err != nil {
 		return result, err
 	}
@@ -72,14 +144,15 @@ func ReadSummary(ctx context.Context, database *sql.DB, rates RateTable, account
 		var day, model, tier string
 		var known bool
 		var value Totals
-		if err := rows.Scan(&day, &model, &tier, &known, &value.Responses, &value.UncachedInput, &value.CachedInput, &value.Output); err != nil {
+		var cacheWrite int64
+		if err := rows.Scan(&day, &model, &tier, &known, &value.Responses, &value.UncachedInput, &value.CachedInput, &value.Output, &cacheWrite); err != nil {
 			return result, err
 		}
 		value.ProcessedTokens = value.UncachedInput + value.CachedInput + value.Output
 		selected, standard, priced := rates.Lookup(model, tier)
 		if !known {
 			value.MissingUsageResponses = value.Responses
-		} else if !priced {
+		} else if !priced || cacheWrite > 0 {
 			value.UnpricedResponses = value.Responses
 		} else {
 			value.Category = Cost{Input: float64(value.UncachedInput) * selected.Input, CacheRead: float64(value.CachedInput) * selected.Cached, Output: float64(value.Output) * selected.Output}
@@ -116,6 +189,7 @@ func ReadSummary(ctx context.Context, database *sql.DB, rates RateTable, account
 }
 
 func (t *Totals) add(v Totals) {
+	t.Reports += v.Reports
 	t.Responses += v.Responses
 	t.ProcessedTokens += v.ProcessedTokens
 	t.CachedInput += v.CachedInput

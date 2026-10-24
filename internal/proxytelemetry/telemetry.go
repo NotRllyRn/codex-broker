@@ -88,6 +88,15 @@ func Record(ctx context.Context, database *store.Store, value gateway.Observatio
 	return result, err
 }
 
+func first(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func Prune(ctx context.Context, database *store.Store, cutoff int64, limit int) error {
 	return database.Write(ctx, func(db store.Executor) error {
 		rows, err := db.QueryContext(ctx, `SELECT proxy_request_id,stats_model,active_duration_ms,

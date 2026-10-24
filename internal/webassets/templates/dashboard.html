@@ -121,15 +121,17 @@
       </select>
     </label>
   </header>
-  <section class="usage-dashboard" data-usage-dashboard hidden aria-labelledby="usage-title">
+  <section class="usage-dashboard" data-usage-dashboard aria-labelledby="usage-title">
     <header class="usage-heading">
-      <div><h3 id="usage-title">Usage</h3><p>Recorded proxy traffic · API estimate · UTC days</p></div>
+      <div><h3 id="usage-title">Usage</h3><p>Recorded usage · API estimate · UTC days</p></div>
       <div class="usage-controls">
+        <label><select data-usage-identity aria-label="Usage identity"><option value="">Broker proxy · selected account</option><option value="all">All identities</option>{% for identity in identities %}<option value="{{ identity.ID }}">{{ identity.Name }}</option>{% endfor %}</select></label>
+        <label><select data-usage-device aria-label="Usage device" disabled><option value="all">All devices</option>{% for device in usage_devices %}<option value="{{ device.ID }}" data-identity="{{ device.IdentityID }}">{{ device.Name }} · {{ device.ID|slice:":8" }}</option>{% endfor %}</select></label>
         <div class="usage-toggle" role="group" aria-label="Usage metric">
           <button type="button" data-usage-metric="cost" aria-pressed="true">Cost</button>
           <button type="button" data-usage-metric="tokens" aria-pressed="false">Tokens</button>
         </div>
-        <label><select data-usage-days aria-label="Usage period"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label>
+        <label><select data-usage-days aria-label="Usage period"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option><option value="all">All time</option></select></label>
         <button type="button" class="quiet-button" data-usage-refresh>Refresh usage</button>
       </div>
     </header>
@@ -150,9 +152,9 @@
         <div><dt>Cached input</dt><dd data-usage-total="cached_input">—</dd></div>
         <div><dt>Uncached input</dt><dd data-usage-total="uncached_input">—</dd></div>
         <div><dt>Output</dt><dd data-usage-total="output">—</dd></div>
-        <div><dt>Cache savings</dt><dd data-usage-total="cache_savings_usd">—</dd></div>
+        <div data-usage-cache-savings><dt>Cache savings</dt><dd data-usage-total="cache_savings_usd">—</dd></div>
       </dl>
-      <div class="usage-costs">
+      <div class="usage-costs" data-usage-costs>
         <section><h3>Cost by type</h3><div class="usage-share-bar" data-usage-type-bar aria-hidden="true"></div><div class="usage-legend" data-usage-type-legend></div></section>
         <section><header><h3>Cost by speed</h3><span>Premium <strong data-usage-premium>—</strong></span></header><div class="usage-share-bar" data-usage-speed-bar aria-hidden="true"></div><div class="usage-legend" data-usage-speed-legend></div></section>
       </div>
