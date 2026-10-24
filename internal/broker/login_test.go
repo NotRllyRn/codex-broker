@@ -74,6 +74,10 @@ func TestLoginFakeAppServer(t *testing.T) {
 			}
 			result["account"] = map[string]any{"type": "chatgpt", "email": email, "planType": "plus"}
 		case "account/rateLimits/read":
+			if *loginScenario == "usage-unavailable" {
+				send(map[string]any{"id": id, "error": map[string]any{"message": "usage unavailable"}})
+				continue
+			}
 			result["rateLimits"] = map[string]any{"limitId": "codex", "primary": map[string]any{"usedPercent": 0, "windowDurationMins": 300, "resetsAt": time.Now().Add(5 * time.Hour).Unix()}, "secondary": map[string]any{"usedPercent": 0, "windowDurationMins": 10080, "resetsAt": time.Now().Add(7 * 24 * time.Hour).Unix()}}
 		}
 		send(map[string]any{"id": id, "result": result})
@@ -129,6 +133,7 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			ctx := context.Background()
 			s, marker := loginFixture(t, "success")
+			configureEnrollmentWebhooks(t, s)
 			var started map[string]string
 			var err error
 			var public, id string
@@ -174,10 +179,17 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 			if _, err = s.Store.DB.Exec("INSERT INTO account_profiles(account_id,last_attempt_at_ms) VALUES(?,?) ON CONFLICT(account_id) DO UPDATE SET last_attempt_at_ms=excluded.last_attempt_at_ms", id, time.Now().UnixMilli()); err != nil {
 				t.Fatal(err)
 			}
+			assertEnrollmentEventCount(t, s, 0)
 			if err = os.WriteFile(marker, []byte("approve"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			waitLoginState(t, s, started["login_attempt_id"], "COMPLETED")
+			if method == "PUBLIC" {
+				assertEnrollmentEventCount(t, s, 1)
+				assertEnrollmentPayload(t, s, public, []string{"Label"}, true)
+			} else {
+				assertEnrollmentEventCount(t, s, 0)
+			}
 			// Wait for post-login usage and its runtime checkpoint to finish as well.
 			deadline := time.Now().Add(10 * time.Second)
 			for {
@@ -235,6 +247,7 @@ func TestLoginPreservesOriginalCredential(t *testing.T) {
 				var active, retired int
 				_ = s.Store.DB.QueryRow("SELECT count(*) FROM credential_bundles WHERE account_id=? AND state='ACTIVE'", id).Scan(&active)
 				_ = s.Store.DB.QueryRow("SELECT count(*) FROM credential_bundles WHERE account_id=? AND state='RETIRED'", id).Scan(&retired)
+				assertEnrollmentEventCount(t, s, 0)
 				if active != 1 || retired != 1 {
 					t.Fatalf("replacement generations active=%d retired=%d", active, retired)
 				}

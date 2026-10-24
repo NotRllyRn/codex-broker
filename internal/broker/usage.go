@@ -9,6 +9,9 @@ const weekMinutes = 10_080
 
 func NormalizeUsage(payload map[string]any) Usage {
 	source := payload
+	if limits, ok := payload["rateLimits"].(map[string]any); ok {
+		source = limits
+	}
 	selected := ""
 	if limits, ok := payload["rateLimitsByLimitId"].(map[string]any); ok {
 		if codex, ok := limits["codex"].(map[string]any); ok {

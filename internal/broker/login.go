@@ -144,7 +144,9 @@ func (s *Service) StartLogin(ctx context.Context, public, method, session string
 	s.mu.Lock()
 	s.loginCancels[attempt] = cancel
 	s.mu.Unlock()
-	if !s.runAsync(func() { s.runLogin(loginContext, account, operation, attempt, method, session, nonce) }) {
+	if !s.runAsync(func() {
+		s.runLogin(loginContext, account, operation, attempt, method, session, nonce, enrollmentID != "")
+	}) {
 		cancel()
 		s.mu.Lock()
 		delete(s.loginCancels, attempt)
@@ -155,7 +157,7 @@ func (s *Service) StartLogin(ctx context.Context, public, method, session string
 	return map[string]string{"operation_id": operation, "login_attempt_id": attempt, "interaction_nonce": nonce}, nil
 }
 
-func (s *Service) runLogin(ctx context.Context, account Account, operation, attempt, method, session, nonce string) {
+func (s *Service) runLogin(ctx context.Context, account Account, operation, attempt, method, session, nonce string, publicEnrollment bool) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.loginCancels, attempt)
@@ -294,6 +296,12 @@ func (s *Service) runLogin(ctx context.Context, account Account, operation, atte
 		fail(err)
 		return
 	}
+	var enrollmentUsage map[string]any
+	if publicEnrollment && s.Webhooks != nil {
+		usageCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		enrollmentUsage, _ = runtime.Adapter.RateLimits(usageCtx)
+		cancel()
+	}
 	if err = runtime.Client.Close(); err != nil {
 		fail(err)
 		return
@@ -308,7 +316,7 @@ func (s *Service) runLogin(ctx context.Context, account Account, operation, atte
 		return
 	}
 	safe = true
-	if err = s.commitLogin(ctx, account, operation, attempt, method, identity); err != nil {
+	if err = s.commitLogin(ctx, account, operation, attempt, method, identity, enrollmentUsage); err != nil {
 		fail(err)
 		return
 	}
@@ -377,7 +385,7 @@ func (s *Service) promoteLogin(ctx context.Context, accountID, attempt string, p
 	})
 }
 
-func (s *Service) commitLogin(ctx context.Context, account Account, operation, attempt, method string, identity map[string]any) error {
+func (s *Service) commitLogin(ctx context.Context, account Account, operation, attempt, method string, identity, enrollmentUsage map[string]any) error {
 	observed, err := verifyIdentity(account, identity)
 	if err != nil {
 		return err
@@ -407,6 +415,11 @@ func (s *Service) commitLogin(ctx context.Context, account Account, operation, a
 		}
 		if _, err = db.ExecContext(ctx, "UPDATE account_state SET auth_state='VERIFIED',worker_state='STOPPED',overall_state='WARNING',upstream_email=COALESCE(?,upstream_email),upstream_plan=COALESCE(?,upstream_plan),last_auth_verified_at_ms=?,last_error_code=NULL,last_error_summary=NULL,state_version=state_version+1,updated_at_ms=? WHERE account_id=?", nullString(email), nullString(plan), now, now, account.ID); err != nil {
 			return err
+		}
+		if enrollmentEmail.Valid && s.Webhooks != nil {
+			if err := s.notifyEnrollment(ctx, db, account, enrollmentEmail.String, plan, enrollmentUsage); err != nil {
+				return err
+			}
 		}
 		_, err = db.ExecContext(ctx, "UPDATE operations SET state='SUCCEEDED',progress_code='COMPLETED',progress_summary='Sign-in completed and credentials were checkpointed',error_code=NULL,error_summary=NULL,completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?", now, operation)
 		return err

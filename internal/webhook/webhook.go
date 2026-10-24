@@ -177,6 +177,17 @@ func (d *Dispatcher) Delete(ctx context.Context, id string) error {
 }
 
 func (d *Dispatcher) Emit(ctx context.Context, eventType, subject string, data map[string]any, incidentID, destinationID string) (string, error) {
+	var id string
+	err := d.store.Write(ctx, func(db store.Executor) error {
+		var err error
+		id, err = d.EmitTx(ctx, db, eventType, subject, data, incidentID, destinationID)
+		return err
+	})
+	return id, err
+}
+
+// EmitTx queues an immutable event and its deliveries in the caller's transaction.
+func (d *Dispatcher) EmitTx(ctx context.Context, db store.Executor, eventType, subject string, data map[string]any, incidentID, destinationID string) (string, error) {
 	id, now := core.NewID(), core.NowMS()
 	title := strings.ToUpper(strings.ReplaceAll(eventType, ".", " "))
 	if eventType == "codex-broker.test" {
@@ -184,45 +195,45 @@ func (d *Dispatcher) Emit(ctx context.Context, eventType, subject string, data m
 	}
 	event := map[string]any{"schema": "codex-broker.webhook/v1", "event_id": id, "event_type": eventType, "subject": subject, "occurred_at_ms": now, "occurred_at": time.UnixMilli(now).UTC().Format("2006-01-02T15:04:05.000000+00:00"), "notification": map[string]any{"source": "CODEX_BROKER", "code": eventCode(eventType), "title": title}, "data": logbook.Redact(data)}
 	generic, _ := json.Marshal(event)
-	err := d.store.Write(ctx, func(db store.Executor) error {
-		if _, err := db.ExecContext(ctx, "INSERT INTO webhook_events VALUES(?,?,?,?,?,?,?)", id, eventType, subject, now, generic, nullString(incidentID), now); err != nil {
-			return err
+	if _, err := db.ExecContext(ctx, "INSERT INTO webhook_events VALUES(?,?,?,?,?,?,?)", id, eventType, subject, now, generic, nullString(incidentID), now); err != nil {
+		return id, err
+	}
+	query := "SELECT destination_id,kind FROM webhook_destinations WHERE enabled=1"
+	args := []any{}
+	if destinationID != "" {
+		query = "SELECT destination_id,kind FROM webhook_destinations WHERE destination_id=?"
+		args = []any{destinationID}
+	}
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return id, err
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		found = true
+		var destination, kind string
+		if err := rows.Scan(&destination, &kind); err != nil {
+			return id, err
 		}
-		query := "SELECT destination_id,kind FROM webhook_destinations WHERE enabled=1"
-		args := []any{}
-		if destinationID != "" {
-			query = "SELECT destination_id,kind FROM webhook_destinations WHERE destination_id=?"
-			args = []any{destinationID}
+		body := providerBody(kind, event)
+		if _, err := db.ExecContext(ctx, "INSERT INTO webhook_deliveries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", core.NewID(), id, destination, "PENDING", 0, now, body, "application/json", nil, nil, nil, nil, nil, now, nil); err != nil {
+			return id, err
 		}
-		rows, err := db.QueryContext(ctx, query, args...)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		found := false
-		for rows.Next() {
-			found = true
-			var destination, kind string
-			if err := rows.Scan(&destination, &kind); err != nil {
-				return err
-			}
-			body := providerBody(kind, event)
-			if _, err := db.ExecContext(ctx, "INSERT INTO webhook_deliveries VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", core.NewID(), id, destination, "PENDING", 0, now, body, "application/json", nil, nil, nil, nil, nil, now, nil); err != nil {
-				return err
-			}
-		}
-		if destinationID != "" && !found {
-			return errors.New("webhook destination not found")
-		}
-		return rows.Err()
-	})
-	return id, err
+	}
+	if destinationID != "" && !found {
+		return id, errors.New("webhook destination not found")
+	}
+	return id, rows.Err()
 }
+
 func (d *Dispatcher) Test(ctx context.Context, id string) (string, error) {
 	return d.Emit(ctx, "codex-broker.test", "destination:"+id, map[string]any{"destination_id": id, "message": "Codex Broker successfully created a test notification.", "delivery_status": "DELIVERED", "severity": "INFO", "recommended_action": "No action required. This confirms the destination accepts Codex Broker webhooks."}, "", id)
 }
 func eventCode(value string) string {
 	switch value {
+	case "account.enrolled":
+		return "CB-201"
 	case "incident.opened":
 		return "CB-101"
 	case "incident.updated":
@@ -269,6 +280,26 @@ func notificationText(event map[string]any) string {
 		account += " <" + email + ">"
 	}
 	lines := []string{"CODEX BROKER · " + textValue(notification["code"], 600), textValue(notification["title"], 600), "", "Account: " + account}
+	if labels, ok := data["labels"].([]string); ok {
+		value := strings.Join(labels, ", ")
+		if value == "" {
+			value = "None"
+		}
+		lines = append(lines, "Labels: "+textValue(value, 1000))
+	}
+	if usage, ok := data["usage"].(map[string]any); ok {
+		for _, item := range []struct{ key, name string }{{"short", "5h"}, {"weekly", "7d"}} {
+			window, _ := usage[item.key].(map[string]any)
+			value := "Unavailable"
+			if window["used_percent"] != nil {
+				value = textValue(window["used_percent"], 32) + "% used"
+			}
+			if reset, ok := window["resets_at_s"].(int64); ok {
+				value += " · resets " + time.Unix(reset, 0).UTC().Format(time.RFC3339)
+			}
+			lines = append(lines, item.name+" usage: "+value)
+		}
+	}
 	status, severity := textValue(data["incident_status"], 600), textValue(data["severity"], 600)
 	if status == "" {
 		status = textValue(data["delivery_status"], 600)

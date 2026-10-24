@@ -76,6 +76,14 @@ Labels created in Settings or through administrator account edits share the exis
 
 Implementation uses the existing public start endpoint and account creation transaction: the page passes link labels to the public process, the private broker attaches only matching label rows, and the existing foreign key cascade removes account assignments on deletion. No new tables, migration, or public label-list endpoint are needed.
 
+## Enrollment notifications
+
+Successful public signups queue an `account.enrolled` webhook (`CB-201`) for every enabled destination configured in **Settings → Webhook destinations**. Generic JSON, Slack, and Discord notifications include the account email, labels still applied when signup completes, and initial short/weekly quota usage and reset times. Generic JSON places these in `data.account_email`, `data.labels`, and `data.usage.short` / `data.usage.weekly` (`used_percent`, `duration_minutes`, `resets_at_s`). Empty labels are an empty array; unavailable usage windows are `null`.
+
+The login process reads usage after verifying the identity, with a five-second timeout, then queues the event in the same transaction that activates the account. This sends the notification as soon as the account is added, without waiting for background usage polling. An unavailable usage read does not block signup: the notification reports unavailable usage and the normal background refresh still runs. Delivery uses the existing signed, persistent webhook queue and retries; the dispatcher normally picks up queued events within two seconds. Failed signups, administrator sign-ins, and reauthentication do not produce enrollment events.
+
+Implementation plan: reuse the active login runtime for the bounded usage read, expose transaction-scoped enqueueing in the existing dispatcher, and build a small enrollment payload helper. Keeping event enqueueing and account activation in one transaction prevents committed accounts from losing their notification during a restart, and prevents rolled-back activations from notifying. No migration or new queue is required.
+
 ## Configuration
 
 By default, the broker runs up to eight authentication workers and accepts up to
