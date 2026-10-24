@@ -5,35 +5,29 @@
 1. Create an identity in **Settings → Usage identities**. Copy its generated
    `cbi_…` enrollment code; it is shown only once. Use that same code on every
    device that should contribute to the identity. Names cannot authorize uploads.
-2. Download the matching `codex-broker-usage-OS-ARCH.zip` from
-   [Releases](https://github.com/NotRllyRn/codex-broker/releases). For an unreleased
-   branch, open its successful **CI** run under
-   [Actions](https://github.com/NotRllyRn/codex-broker/actions), download the
-   **usage-sync-bundles** artifact, and select your platform zip inside it.
-3. Extract the zip. Keep **both executables** together for installation:
-   `codex-broker-usage` and `ccusage` (both end in `.exe` on Windows).
-4. Run the command below, replacing the URL with your Broker address. Enter the
-   identity code at its hidden prompt. Do not put the code in a URL or argument.
+2. Install Node.js 22 or newer, then run on Linux, macOS, or Windows:
 
-**Linux/macOS:**
+   ```sh
+   npx codex-broker@latest install --broker-url https://YOUR-BROKER
+   ```
 
-```sh
-chmod +x codex-broker-usage ccusage
-./codex-broker-usage install --broker-url https://192.168.1.20:8787
-```
+   Alternatively, use `pnpm dlx codex-broker@latest install --broker-url https://YOUR-BROKER`.
+3. Enter the generated identity code at the hidden prompt. Never put the code
+   in a URL or command argument.
 
-**Windows PowerShell:**
+npm verifies the package integrity and selects the included native helper for
+Linux, macOS, or Windows on x64 or ARM64. The helper downloads its pinned ccusage
+executable from npm and verifies the pinned SHA-512 hash before installation.
+Node is needed only for setup; scheduled syncs run the installed native binaries,
+not files in the npm cache. No Go, Python, or preinstalled ccusage is needed.
+Unsupported OS/CPU combinations are rejected. Native execution still depends on
+your OS version and security policy.
 
-```powershell
-.\codex-broker-usage.exe install --broker-url https://192.168.1.20:8787
-```
-
-Python, Node, Go, and ccusage do **not** need to be installed beforehand. The
-bundle includes the native ccusage executable. Targets are Linux, macOS
-(`darwin`), and Windows, each with `amd64` (Intel/AMD x64) and `arm64` (Apple
-Silicon/ARM64). Older OS releases, 32-bit systems, Android, and iOS are not
-claimed to be supported. macOS or Windows may require approving a downloaded
-unsigned executable through the OS's normal security UI.
+For devices without Node, CI's **usage-sync-bundles** artifact contains the six
+native zip bundles. Extract both executables, then run `./codex-broker-usage
+install --broker-url https://YOUR-BROKER` (Windows: `.\codex-broker-usage.exe`).
+Complete bundles can install without accessing npm. Builds do not require a
+GitHub Release or tag.
 
 For a private Broker certificate, add `--ca /path/to/broker-ca.pem` (Windows:
 `--ca C:\certs\broker-ca.pem`). The helper copies the CA into its private state.
@@ -152,11 +146,15 @@ process leaves data for safe retry. Malformed collector output does not replace
 the saved journal. Broker validates sizes, dates, numerical ranges, credentials,
 and supported protocol/version; it trusts ccusage's accounting decisions.
 
-To update, download a newer bundle and run its `install` command with the same
-`--state-dir` if customized. Existing enrollment, device token, and journal are
-reused. Both executables are copied from the bundle. If you downloaded only the
-helper, it can fetch its exact pinned native package from npm using HTTPS and
-verify its SHA-512 hash. Complete bundles work without npm connectivity.
+To update, run `npx codex-broker@latest install` (or `pnpm dlx
+codex-broker@latest install`). Include the same `--state-dir` if customized.
+Existing enrollment, device token, private CA, collector configuration, and
+queued reports are reused. No identity code is requested for an existing install.
+The collector is replaced when its pinned version changes; its replacement is
+validated before overwriting the old executable. If a sync is running, wait for
+it to finish and rerun installation. Updates are explicit, not automatic.
+If a download fails, rerun the command when connectivity returns. An initial
+sync can fail offline even after successful installation; scheduled retries remain.
 
 For multiple identities on one computer, use a separate `--state-dir` on every
 command for each installation. Scanning the same logs in both identities counts
@@ -191,7 +189,14 @@ go run ./cmd/package-usage-sync
 
 The output is `dist/usage-sync/*.zip` and `SHA256SUMS`. Verify download checksums
 against the published `SHA256SUMS` using your OS's hash tool. CI uploads these
-as an artifact; version-tag builds attach them to GitHub Releases after tests
-pass. Native client unit tests also run on Linux, macOS, and Windows CI hosts. Do not commit generated binaries. Update `usagereport.Version` and all
+as an artifact. Native client unit tests also run on Linux, macOS, and Windows CI hosts. Do not commit generated binaries. Update `usagereport.Version` and all
 six integrity hashes together, test the real collector against fixtures, and
 review JSON/accounting changes before upgrading the pin.
+
+### npm publishing (no GitHub Releases)
+
+See [npm setup](npm-publishing.md) for the one-time account setup. Every successful
+main-branch CI run publishes `codex-broker` with version
+`0.<GitHub run number>.<run attempt>`. Branches and PRs build a downloadable npm
+tarball without publishing. A manual CI run on main also publishes. No version
+commit, release, or tag is required. CI tests native upgrades on all three OSes.
