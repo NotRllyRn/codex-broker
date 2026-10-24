@@ -1,0 +1,77 @@
+name: Managed Codex upgrade
+
+on:
+  schedule:
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: managed-codex-upgrade
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Detect latest stable release and update pins
+        id: release
+        run: python3 scripts/update-managed-codex.py --latest
+      - name: Open or update upgrade PR
+        if: steps.release.outputs.changed == 'true'
+        id: pr
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
+        with:
+          token: ${{ github.token }}
+          branch: automation/managed-codex-upgrade
+          base: ${{ github.event.repository.default_branch }}
+          draft: always-true
+          commit-message: 'chore: upgrade managed Codex to ${{ steps.release.outputs.version }}'
+          title: 'chore: upgrade managed Codex to ${{ steps.release.outputs.version }}'
+          add-paths: |
+            managed-codex-version.txt
+            Dockerfile
+            internal/codex/compatibility.go
+            flake.nix
+            nix/checks.nix
+            README.md
+          body: |
+            Updates managed Codex from **${{ steps.release.outputs.current }}** to **${{ steps.release.outputs.version }}**.
+
+            [Upstream release notes](https://github.com/openai/codex/releases/tag/rust-v${{ steps.release.outputs.version }})
+            · [Updater run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            This is a candidate upgrade. CI tests the broker, Nix configuration, and the candidate Docker image's real app-server handshake and unauthenticated account response. Check the PR checks for results.
+
+            Before marking ready and merging:
+            - [ ] Review upstream changes to authentication, credential storage, and app-server protocol.
+            - [ ] All required CI checks pass on the current commit.
+            - [ ] Verify login, renewal/persistence, quota reads, and a window pulse using an isolated test account in staging.
+            - [ ] Confirm deployment/recovery readiness. Nix operators must supply the matching Codex package.
+
+            Authenticated staging checks are manual; CI does not use production credentials. This workflow neither merges nor deploys.
+
+            This branch is automation-owned and may be regenerated from the default branch. Put adapter fixes in a separate PR before retrying. See [upgrade procedure](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.repository.default_branch }}/docs/managed-codex-upgrades.md).
+      - name: Start candidate CI explicitly
+        if: steps.pr.outputs.pull-request-operation == 'created' || steps.pr.outputs.pull-request-operation == 'updated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh workflow run ci.yml --ref automation/managed-codex-upgrade
+      - name: Summarize
+        env:
+          CURRENT: ${{ steps.release.outputs.current }}
+          CANDIDATE: ${{ steps.release.outputs.version }}
+          CHANGED: ${{ steps.release.outputs.changed }}
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: |
+          printf 'Current: %s\n\nCandidate: %s\n\nUpgrade needed: %s\n\nPR: %s\n' "$CURRENT" "$CANDIDATE" "$CHANGED" "$PR_URL" >> "$GITHUB_STEP_SUMMARY"

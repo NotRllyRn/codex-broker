@@ -292,6 +292,7 @@ npm run check --prefix packages/pi-extension
 ## More documentation
 
 - [Operations](OPERATIONS.md) — health, backups, upgrades, and incident response
+- [Managed Codex upgrades](docs/managed-codex-upgrades.md) — automated release detection, upgrade PRs, and GitHub Actions setup
 - [ChatGPT macOS adapter](docs/integrations/chatgpt-macos.md) — local installation and Codex provider configuration
 - [Public enrollment](docs/public-enrollment.md) — isolated device-code enrollment
 - [Relay Edge deployment](docs/relay-edge.md) — active/passive high availability
