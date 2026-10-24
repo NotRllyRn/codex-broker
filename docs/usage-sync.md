@@ -63,8 +63,22 @@ ccusage version, and per-day revision. It does not contain conversation logs,
 prompts, responses, or tool outputs. Raw ccusage report fields are preserved;
 Broker does not maintain parsers for individual agents. Token totals and API
 cost estimates come from ccusage. These costs are not subscription payments.
-Because this is aggregated data, individual response counts, cost-by-speed/type,
-and cache-savings estimates are not fabricated in the identity dashboard.
+The dashboard's **Usage by model** table reads the model breakdowns already stored
+in these reports. It shows five models by default; **Show more** expands the full
+list. Cost/Tokens changes the ranking and share calculation. Identity, device,
+and date filters apply to both the chart and model table. Model names are kept
+exactly as reported; provider-prefixed names are not merged with unprefixed names.
+Missing model costs appear as a dash. Shares use the overall selected total;
+model details can omit some tokens (such as separately counted reasoning) or costs.
+No client update or historical re-upload is needed for stored model breakdowns.
+
+**Cached input share** is cached input divided by all input tokens, including
+uncached input and cache writes. It measures token reuse, not money saved. Because
+ccusage does not supply dollar cache savings or sufficient pricing/tier detail to
+reconstruct them reliably, **Estimated cache savings** shows a dash with an
+explanation for identity usage. Proxy usage retains its rate-based savings estimate.
+Individual response counts and cost-by-speed/type are also unavailable for
+aggregated identity reports.
 
 The first sync scans all retained history. Later syncs scan all retained logs
 again, but upload only changed days. Scanning is delegated to ccusage; this
