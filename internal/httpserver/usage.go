@@ -14,10 +14,12 @@ func (s *Server) internalUsage(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	days := 30
-	if raw := r.URL.Query().Get("days"); raw != "" {
+	if raw := r.URL.Query().Get("days"); raw == "all" {
+		days = 0
+	} else if raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || (parsed != 7 && parsed != 30 && parsed != 90) {
-			return core.NewError("INVALID_USAGE_WINDOW", "Choose 7, 30, or 90 days", 400)
+			return core.NewError("INVALID_USAGE_WINDOW", "Choose 7, 30, or 90 days, or all time", 400)
 		}
 		days = parsed
 	}

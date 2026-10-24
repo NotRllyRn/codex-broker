@@ -68,6 +68,16 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 		return result, err
 	}
 	result.HistorySince = earliest.String
+	if days == 0 {
+		since = until
+		if earliest.Valid && earliest.String < until {
+			since = earliest.String
+		}
+		result.Since = since
+		start, _ := time.Parse(time.DateOnly, since)
+		end, _ := time.Parse(time.DateOnly, until)
+		days = int(end.Sub(start).Hours()/24) + 1
+	}
 	rows, err := database.QueryContext(ctx, `SELECT d.day,d.model,d.service_tier,d.usage_known,sum(d.responses),sum(d.uncached_input_tokens),sum(d.cached_input_tokens),sum(d.output_tokens),sum(d.cache_write_tokens)
 		FROM (`+source+`) d
 		WHERE d.day>=? AND d.day<=? AND (?='all' OR d.owner=?) AND (?='all' OR d.device_id=?)

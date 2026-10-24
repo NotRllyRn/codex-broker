@@ -71,3 +71,53 @@ test("shared model selector updates rolling/lifetime tokens and quota without fa
 	assert.equal(panels[0].nodes.short_rate.textContent, "—");
 	assert.equal(panels[1].nodes.short_rate.textContent, "5 pp/h");
 });
+
+test("usage dashboard scopes identity/device queries and resets device on identity changes", async () => {
+	const node = () => ({ value: "", dataset: {}, style: {}, options: [], listeners: {},
+		addEventListener(event, callback) { this.listeners[event] = callback; },
+		replaceChildren() {}, append() {}, setAttribute() {} });
+	const nodes = new Map();
+	const find = (selector) => {
+		if (!nodes.has(selector)) nodes.set(selector, node());
+		return nodes.get(selector);
+	};
+	const panel = { hidden: false, querySelector: find, querySelectorAll: () => [], setAttribute() {} };
+	const identity = find("[data-usage-identity]"), device = find("[data-usage-device]");
+	find("[data-usage-days]").value = "all";
+	device.value = "all";
+	device.options = [{ dataset: {} }, { dataset: { identity: "tim" } }, { dataset: { identity: "other" } }];
+	const urls = [];
+	const zero = { responses: 0, unpriced_responses: 0, missing_usage_responses: 0, cost_usd: 0,
+		processed_tokens: 0, daily: [], since: "2026-01-01", until: "2026-01-01",
+		category: { input: 0, cache_read: 0, output: 0, other: 0 },
+		speed: { standard: 0, fast: 0, ultrafast: 0, premium: 0 }, pricing: { status: "unavailable" } };
+	const script = readFileSync(new URL("../internal/webassets/static/usage.js", import.meta.url), "utf8");
+	const context = { Intl, Date, URLSearchParams, AbortController,
+		document: { createElement: node, createElementNS: node },
+		fetch: async (url) => { urls.push(url); return { ok: true, json: async () => zero }; } };
+	runInNewContext(script.replace("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
+	const load = context.initialize(panel, (path) => "/broker" + path);
+	await load("account1");
+	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all");
+	identity.value = "tim";
+	identity.listeners.change();
+	await new Promise(setImmediate);
+	assert.equal(device.disabled, false);
+	assert.equal(device.options[1].hidden, false);
+	assert.equal(device.options[2].hidden, true);
+	assert.match(urls.at(-1), /identity=tim&device=all$/);
+	device.value = "laptop";
+	device.listeners.change();
+	await new Promise(setImmediate);
+	assert.match(urls.at(-1), /identity=tim&device=laptop$/);
+	identity.value = "all";
+	identity.listeners.change();
+	await new Promise(setImmediate);
+	assert.equal(device.value, "all");
+	assert.equal(device.options[2].hidden, false);
+	identity.value = "";
+	identity.listeners.change();
+	await new Promise(setImmediate);
+	assert.equal(device.disabled, true);
+	assert.equal(new URL(urls.at(-1), "https://test").searchParams.has("identity"), false);
+});

@@ -60,6 +60,16 @@ func TestEnrollmentAndLedger(t *testing.T) {
 	if n, err := Ingest(ctx, db, secondToken, []Event{e}); err != nil || n != 0 {
 		t.Fatalf("cross-device copy=%d err=%v", n, err)
 	}
+	copy := e
+	copy.TimestampMS -= 1000
+	if n, err := Ingest(ctx, db, secondToken, []Event{copy}); err != nil || n != 0 {
+		t.Fatalf("restamped copy=%d err=%v", n, err)
+	}
+	var stamp int64
+	var uploader string
+	if err := db.DB.QueryRow("SELECT timestamp_ms,device_id FROM identity_usage WHERE identity_id=?", a.ID).Scan(&stamp, &uploader); err != nil || stamp != copy.TimestampMS || uploader != d.ID {
+		t.Fatalf("copy changed ownership or earliest time: %d %s %v", stamp, uploader, err)
+	}
 	thirdToken := "cbu_" + core.RandomToken(32)
 	if _, err := Enroll(ctx, db, other, install, "Other laptop", thirdToken); err != nil {
 		t.Fatal(err)

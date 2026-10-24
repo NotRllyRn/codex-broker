@@ -222,10 +222,15 @@ func Insert(ctx context.Context, tx store.Executor, owner, device string, e Even
 		return true, nil
 	}
 	var same bool
-	err = tx.QueryRowContext(ctx, `SELECT source=? AND timestamp_ms=? AND model=? AND service_tier=? AND input_tokens=? AND cached_input_tokens=? AND cache_write_tokens=? AND output_tokens=? AND reasoning_tokens=? AND usage_known=?
-		FROM identity_usage WHERE identity_id=? AND event_id=?`, e.Source, e.TimestampMS, e.Model, e.ServiceTier, e.InputTokens, e.CachedInputTokens, e.CacheWriteTokens, e.OutputTokens, e.ReasoningTokens, e.UsageKnown, owner, e.ID).Scan(&same)
+	err = tx.QueryRowContext(ctx, `SELECT source=? AND model=? AND service_tier=? AND input_tokens=? AND cached_input_tokens=? AND cache_write_tokens=? AND output_tokens=? AND reasoning_tokens=? AND usage_known=?
+		FROM identity_usage WHERE identity_id=? AND event_id=?`, e.Source, e.Model, e.ServiceTier, e.InputTokens, e.CachedInputTokens, e.CacheWriteTokens, e.OutputTokens, e.ReasoningTokens, e.UsageKnown, owner, e.ID).Scan(&same)
 	if err == nil && !same {
 		return false, core.Conflict("USAGE_EVENT_CONFLICT", "An existing event has different usage; the batch was not saved")
+	}
+	if err == nil {
+		// Copied histories may be re-stamped. Keep the earliest observed time,
+		// without counting the provider event a second time.
+		_, err = tx.ExecContext(ctx, "UPDATE identity_usage SET timestamp_ms=min(timestamp_ms,?) WHERE identity_id=? AND event_id=?", e.TimestampMS, owner, e.ID)
 	}
 	return false, err
 }
