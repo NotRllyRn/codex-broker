@@ -5,7 +5,7 @@
   <h1>{{ operation.kind|humanize|title }}</h1>
   <p>This page reports committed state and never waits on Codex.</p>
 </section>
-<section class="operation-view" data-operation="{{ operation.operation_id }}">
+<section class="operation-view" data-operation="{{ operation.operation_id }}" data-state="{{ operation.state }}">
   <span class="status-label">{{ operation.state|humanize|title }}</span>
   <h2>
     {% if operation.progress_summary %}{{ operation.progress_summary }}{% elif operation.error_summary %}{{ operation.error_summary }}{% else %}Waiting to start{% endif %}
@@ -31,6 +31,12 @@
       <dt>Completed</dt>
       <dd>{{ operation.completed_at|default_if_none:"Not complete" }}</dd>
     </div>
+    {% if operation.result.codex_version %}
+    <div>
+      <dt>Codex CLI</dt>
+      <dd>{{ operation.result.codex_version }}</dd>
+    </div>
+    {% endif %}
     {% if operation.result.model %}
     <div>
       <dt>Model</dt>
@@ -38,10 +44,36 @@
     </div>
     <div>
       <dt>Reasoning</dt>
-      <dd>{{ operation.result.reasoning_effort|title }} · Standard tier</dd>
+      <dd>{{ operation.result.reasoning_effort|title }}</dd>
+    </div>
+    <div>
+      <dt>Service tier requested</dt>
+      <dd>{{ operation.result.service_tier }}</dd>
+    </div>
+    <div>
+      <dt>Turn status</dt>
+      <dd>{{ operation.result.status|default:"Not completed" }}</dd>
+    </div>
+    <div>
+      <dt>Pulse duration</dt>
+      <dd>{{ operation.result.duration_ms }} ms</dd>
+    </div>
+    <div>
+      <dt>Thread ID · Ephemeral</dt>
+      <dd>{{ operation.result.thread_id|default:"Not started" }}</dd>
+    </div>
+    <div>
+      <dt>Turn ID</dt>
+      <dd>{{ operation.result.turn_id|default:"Not started" }}</dd>
     </div>
     {% endif %}
   </dl>
+  {% if operation.result.prompt %}
+  <h2>Prompt</h2>
+  <pre>{{ operation.result.prompt }}</pre>
+  <h2>Model response</h2>
+  {% if operation.result.response %}<pre>{{ operation.result.response }}</pre>{% else %}<p class="subtle">No model response was recorded.</p>{% endif %}
+  {% endif %}
   {% if operation.error_code %}
   <p class="form-error" role="alert">
     <strong>{{ operation.error_code }}</strong>: {{ operation.error_summary }}

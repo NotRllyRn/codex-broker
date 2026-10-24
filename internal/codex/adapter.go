@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
+	"time"
+
+	"github.com/NotRllyRn/codex-broker/internal/core"
 )
 
 type LoginInteraction struct {
@@ -42,50 +46,100 @@ func (a Adapter) RateLimits(ctx context.Context) (map[string]any, error) {
 	return a.Client.Request(ctx, "account/rateLimits/read", map[string]any{})
 }
 
-func (a Adapter) PulseWindows(ctx context.Context) (map[string]any, error) {
+// PulseResult contains only displayable pulse details, never credentials.
+type PulseResult struct {
+	Usage           map[string]any `json:"-"`
+	Model           string         `json:"model"`
+	ReasoningEffort string         `json:"reasoning_effort"`
+	ServiceTier     string         `json:"service_tier"`
+	Prompt          string         `json:"prompt"`
+	Response        string         `json:"response"`
+	ThreadID        string         `json:"thread_id"`
+	TurnID          string         `json:"turn_id"`
+	Status          string         `json:"status"`
+	DurationMS      int64          `json:"duration_ms"`
+}
+
+func (a Adapter) PulseWindows(ctx context.Context) (result PulseResult, err error) {
+	began := time.Now()
+	defer func() { result.DurationMS = time.Since(began).Milliseconds() }()
+	result.Prompt, result.ServiceTier = "Reply OK.", "default"
 	listed, err := a.Client.Request(ctx, "model/list", map[string]any{"limit": 100})
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	model, effort, err := pulseModel(listed["data"])
+	result.Model, result.ReasoningEffort, err = pulseModel(listed["data"])
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	started, err := a.Client.Request(ctx, "thread/start", map[string]any{"ephemeral": true, "model": model, "serviceTier": "default"})
+	started, err := a.Client.Request(ctx, "thread/start", map[string]any{"ephemeral": true, "model": result.Model, "serviceTier": result.ServiceTier})
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	threadID := nestedText(started, "thread", "id")
-	if threadID == "" {
-		return nil, errors.New("Codex returned no window-pulse thread ID")
+	result.ThreadID = nestedText(started, "thread", "id")
+	if result.ThreadID == "" {
+		return result, errors.New("Codex returned no window-pulse thread ID")
 	}
-	turn, err := a.Client.Request(ctx, "turn/start", map[string]any{"threadId": threadID, "input": []any{map[string]any{"type": "text", "text": "Reply OK."}}, "model": model, "effort": effort, "serviceTier": "default"})
+	turn, err := a.Client.Request(ctx, "turn/start", map[string]any{"threadId": result.ThreadID, "input": []any{map[string]any{"type": "text", "text": result.Prompt}}, "model": result.Model, "effort": result.ReasoningEffort, "serviceTier": result.ServiceTier})
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	turnID := nestedText(turn, "turn", "id")
-	if turnID == "" {
-		return nil, errors.New("Codex returned no window-pulse turn ID")
+	result.TurnID = nestedText(turn, "turn", "id")
+	if result.TurnID == "" {
+		return result, errors.New("Codex returned no window-pulse turn ID")
+	}
+	appendResponse := func(item map[string]any) {
+		if text(item["type"]) != "agentMessage" {
+			return
+		}
+		if result.Response != "" {
+			result.Response += "\n"
+		}
+		result.Response += text(item["text"])
+		// A pulse should return a tiny answer; bound persisted output regardless.
+		if len(result.Response) > 16384 {
+			result.Response = strings.ToValidUTF8(result.Response[:16384], "")
+		}
 	}
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return result, ctx.Err()
 		case <-a.Client.Done():
-			return nil, a.Client.Err()
+			return result, a.Client.Err()
 		case message := <-a.Client.Notifications():
-			if text(message["method"]) != "turn/completed" {
-				continue
-			}
 			params, _ := message["params"].(map[string]any)
-			completed, _ := params["turn"].(map[string]any)
-			if text(completed["id"]) != turnID {
-				continue
+			switch text(message["method"]) {
+			case "item/completed":
+				if text(params["threadId"]) == result.ThreadID && text(params["turnId"]) == result.TurnID {
+					item, _ := params["item"].(map[string]any)
+					appendResponse(item)
+				}
+			case "turn/completed":
+				completed, _ := params["turn"].(map[string]any)
+				if text(completed["id"]) != result.TurnID {
+					continue
+				}
+				result.Status = text(completed["status"])
+				if result.Response == "" {
+					for _, rawItem := range list(completed["items"]) {
+						item, _ := rawItem.(map[string]any)
+						appendResponse(item)
+					}
+				}
+				if result.Status != "completed" {
+					detail := nestedText(completed, "error", "message")
+					if authError(detail) {
+						return result, core.NewError("CODEX_AUTH_REQUIRED", "Codex authentication must be renewed", 503)
+					}
+					if detail == "" {
+						detail = "Codex window pulse failed"
+					}
+					return result, core.NewError("WINDOW_PULSE_FAILED", detail, 503)
+				}
+				result.Usage, err = a.RateLimits(ctx)
+				return result, err
 			}
-			if text(completed["status"]) != "completed" {
-				return nil, errors.New("Codex window pulse failed")
-			}
-			return a.RateLimits(ctx)
 		}
 	}
 }

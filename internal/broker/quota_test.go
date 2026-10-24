@@ -148,7 +148,7 @@ func TestFreshUsageReadUnlocksButInflightReadDoesNot(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(80), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": account.WeeklyReset.Int64}}
-	if err := router.Service.commitUsage(ctx, account, "inflight", raw, time.Hour, "test", nil, false); err != nil {
+	if err := router.Service.commitUsage(ctx, account, "inflight", raw, time.Hour, "test", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	var blocks int
@@ -158,7 +158,7 @@ func TestFreshUsageReadUnlocksButInflightReadDoesNot(t *testing.T) {
 	if _, err := router.Store.DB.Exec("UPDATE account_quota_blocks SET blocked_at_ms=blocked_at_ms-1000"); err != nil {
 		t.Fatal(err)
 	}
-	if err := router.Service.commitUsage(ctx, account, "fresh", raw, 0, "test", nil, false); err != nil {
+	if err := router.Service.commitUsage(ctx, account, "fresh", raw, 0, "test", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	lease, wait, err := router.Route(ctx, "two", RouteRequest{})
@@ -182,7 +182,7 @@ func TestUsageCommitMeasuresActualPollDeltaBeforeReplacingBaseline(t *testing.T)
 		t.Fatal(err)
 	}
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(85), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}, "secondary": map[string]any{"usedPercent": int64(43), "windowDurationMins": int64(10080), "resetsAt": account.WeeklyReset.Int64}}
-	if err := router.Service.commitUsage(ctx, account, "poll", raw, 0, "test", nil, false); err != nil {
+	if err := router.Service.commitUsage(ctx, account, "poll", raw, 0, "test", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := proxytelemetry.ReadQuotaTotals(ctx, router.Store.DB, 0)
