@@ -275,3 +275,60 @@ func TestFailedJournalWriteNeverUploadsNewReports(t *testing.T) {
 		t.Fatal("new usage uploaded without durable local state", requests)
 	}
 }
+
+func TestCollectorUpgradePreservesState(t *testing.T) {
+	binary := os.Getenv("CCUSAGE_TEST_BINARY")
+	if binary == "" {
+		t.Skip("set CCUSAGE_TEST_BINARY to test real collector upgrades")
+	}
+	collector, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, source := t.TempDir(), t.TempDir()
+	files := map[string][]byte{
+		"config.json":   []byte(`{"device_id":"existing-device","token":"existing-token"}`),
+		"reports.json":  []byte(`{"2026-09-01":{"revision":3,"acked":false}}`),
+		"ccusage.json":  []byte(`{"timezone":"UTC"}`),
+		"broker-ca.pem": []byte("existing private CA"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(directory, executable("ccusage"))
+	old := []byte("obsolete collector")
+	if err := writeExecutable(target, old); err != nil {
+		t.Fatal(err)
+	}
+	fetch := func(context.Context, string, string) ([]byte, error) { return []byte("broken download"), nil }
+	if err := ensureCollector(t.Context(), directory, source, fetch); err == nil {
+		t.Fatal("accepted broken replacement")
+	}
+	if data, _ := os.ReadFile(target); !bytes.Equal(data, old) {
+		t.Fatal("failed upgrade replaced old collector")
+	}
+	calls := 0
+	fetch = func(context.Context, string, string) ([]byte, error) { calls++; return collector, nil }
+	for range 2 {
+		if err := ensureCollector(t.Context(), directory, source, fetch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("downloaded %d times, want one upgrade and no redundant download", calls)
+	}
+	var config Config
+	if err := readJSON(filepath.Join(directory, "config.json"), &config); err != nil {
+		t.Fatal(err)
+	}
+	if err := install(t.Context(), directory, &config, nil, "", "", "", "", false, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range files {
+		if got, err := os.ReadFile(filepath.Join(directory, name)); err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("upgrade changed %s: %v", name, err)
+		}
+	}
+}

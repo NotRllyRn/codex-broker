@@ -521,33 +521,11 @@ func install(ctx context.Context, directory string, config *Config, readErr erro
 	if err != nil {
 		return err
 	}
+	if err := ensureCollector(ctx, directory, filepath.Dir(self), Native); err != nil {
+		return err
+	}
 	if err := copyExecutable(self, filepath.Join(directory, executable("codex-broker-usage"))); err != nil {
 		return err
-	}
-	target := filepath.Join(directory, executable("ccusage"))
-	sibling := filepath.Join(filepath.Dir(self), executable("ccusage"))
-	if _, err := os.Stat(sibling); err == nil && sibling != target {
-		if err := copyExecutable(sibling, target); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-		data, err := Native(ctx, runtime.GOOS, runtime.GOARCH)
-		if err != nil {
-			return err
-		}
-		if err := writeExecutable(target, data); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	version, err := exec.CommandContext(ctx, target, "--version").Output()
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(string(version)) != "ccusage "+usagereport.Version {
-		return fmt.Errorf("expected ccusage %s, got %s", usagereport.Version, strings.TrimSpace(string(version)))
 	}
 	options := filepath.Join(directory, "ccusage.json")
 	if configPath != "" {
@@ -568,6 +546,39 @@ func install(ctx context.Context, directory string, config *Config, readErr erro
 	}
 	fmt.Fprintf(output, "Installed in %s. All usage sources are included; ccusage %s.\n", directory, usagereport.Version)
 	return nil
+}
+
+// Validate the replacement before touching the installed collector. npm ships only
+// the helper; a changed collector pin must replace an existing older collector.
+func ensureCollector(ctx context.Context, directory, source string, fetch func(context.Context, string, string) ([]byte, error)) error {
+	target := filepath.Join(directory, executable("ccusage"))
+	valid := func(path string) bool {
+		version, err := exec.CommandContext(ctx, path, "--version").Output()
+		return err == nil && strings.TrimSpace(string(version)) == "ccusage "+usagereport.Version
+	}
+	if valid(target) {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(source, executable("ccusage")))
+	if errors.Is(err, os.ErrNotExist) || source == directory {
+		data, err = fetch(ctx, runtime.GOOS, runtime.GOARCH)
+	}
+	if err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(directory, ".collector-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging)
+	candidate := filepath.Join(staging, executable("ccusage"))
+	if err := writeExecutable(candidate, data); err != nil {
+		return err
+	}
+	if !valid(candidate) {
+		return fmt.Errorf("expected a working ccusage %s executable", usagereport.Version)
+	}
+	return replaceFile(candidate, target)
 }
 
 func writeExecutable(path string, data []byte) error {
