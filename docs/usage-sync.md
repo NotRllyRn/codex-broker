@@ -196,7 +196,7 @@ If you used a custom `--state-dir`, include it on every command above and edit
 `config.json` in that directory instead. Do not delete `config.json` or
 `reports.json`: that can lose enrollment recovery state or create another device.
 
-**With the connection-repair fix (not included in `0.91.1`):** reinstalling honors
+**Version `0.92.1` and later:** reinstalling honors
 explicit connection overrides, so the manual edit is unnecessary:
 
 ```sh
@@ -205,8 +205,7 @@ npx codex-broker@latest install --broker-url https://CORRECT-BROKER
 npx codex-broker@latest install --broker-url https://CORRECT-BROKER --ca /path/to/broker-ca.pem
 ```
 
-Use this command once a newer npm build containing the fix is published, or run
-a native build from this branch's CI artifact. Include your existing
+The fix is published in `0.92.1`; use `@0.92.1` to select it explicitly. Include your existing
 `--state-dir` if customized. An omitted URL or CA retains the saved value;
 a provided CA is validated and copied into private state. Enrollment credentials,
 installation ID, reports, and revisions are preserved. If another sync holds the

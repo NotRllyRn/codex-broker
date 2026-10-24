@@ -51,8 +51,8 @@ and migration from the earlier Python helper.
 
 If a device was installed with the wrong Broker address, follow the
 [connection recovery steps](docs/usage-sync.md#wrong-broker-url-or-failed-first-sync).
-The published `0.91.1` client needs its saved URL edited; deleting device state
-is not required.
+Upgrade from `0.91.1` with `npx codex-broker@latest install --broker-url https://CORRECT-BROKER`
+to repair the saved URL while preserving device state (fixed in `0.92.1`).
 
 ## Supported apps
 

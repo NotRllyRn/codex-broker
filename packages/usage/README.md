@@ -23,6 +23,6 @@ removes scheduling and retains state. Updates are explicit, not automatic.
 
 If setup saved the wrong Broker URL, see [connection recovery](https://github.com/NotRllyRn/codex-broker/blob/main/docs/usage-sync.md#wrong-broker-url-or-failed-first-sync).
 Version `0.91.1` requires editing the saved `config.json`; reinstalling that version
-ignores a new `--broker-url`. New builds containing the connection-repair fix honor
+ignores a new `--broker-url`. Version `0.92.1` and later honor
 explicit `--broker-url` and `--ca` overrides without resetting device history.
 Installation can remain in place after a failed first sync so offline retries work.
