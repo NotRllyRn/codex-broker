@@ -15,60 +15,48 @@ These estimates exclude direct leases and historical profile tokens; they are
 API-equivalent values, not subscription charges. Daily aggregates survive
 response cleanup, starting with the response history available at upgrade.
 
-**Usage identities** also combine usage from multiple devices under names such
-as “Tim.” Assign proxy keys to an identity and optionally install the small
-Codex/Pi sync helper for direct provider usage. Identity history survives the
-seven-day response cleanup and supports all-time and per-device views.
+**Usage identities** combine usage from multiple devices under a name such as
+“Tim.” The native sync helper imports every agent supported by pinned
+**ccusage 20.0.43**, including locally logged HTTP proxy requests. It uploads
+compact daily JSON reports; repeated uploads update totals instead of adding
+them again. Identity history survives seven-day proxy response cleanup.
 
 ## Collect usage from your devices
 
-1. In **Settings → Usage identities**, create an identity. **Copy its generated
-   `cbi_…` code**: it is shown once and works like an enrollment password. Use
-   the same identity code on every device you want grouped together. A name
-   alone cannot authorize uploads.
-2. For apps using Broker's HTTP proxy, assign their existing client access keys
-   to this identity in **Settings → Client access keys → Usage identity**.
-   This counts future requests using the original upstream token usage.
-3. In Settings, click **Download the usage sync helper**. On each device,
-   install Python **3.9+**, then run the downloaded file:
+1. In **Settings → Usage identities**, create an identity and copy its generated
+   `cbi_…` code. Use that code on each device; its name cannot authorize uploads.
+2. Download the matching **native usage sync zip** from
+   [Releases](https://github.com/NotRllyRn/codex-broker/releases), then extract
+   **both executables**. Unreleased builds are in the successful branch CI run's
+   **usage-sync-bundles** artifact under [Actions](https://github.com/NotRllyRn/codex-broker/actions).
+3. Run once, substituting your Broker URL:
 
-   **Linux or macOS:**
+   Linux/macOS:
    ```sh
-   python3 usage-sync.py install --broker-url https://192.168.1.20:8787
+   chmod +x codex-broker-usage ccusage
+   ./codex-broker-usage install --broker-url https://192.168.1.20:8787
    ```
 
-   **Windows PowerShell** (Python from python.org with its `py` launcher):
+   Windows PowerShell:
    ```powershell
-   py -3 .\usage-sync.py install --broker-url https://192.168.1.20:8787
+   .\codex-broker-usage.exe install --broker-url https://192.168.1.20:8787
    ```
 
-   Enter the identity code at the hidden prompt. The helper asks how each
-   agent's logs are routed: choose **`direct`** for direct provider requests,
-   **`broker`** for this Broker's proxy, or **`off`** to ignore that agent.
-   Broker-routed logs are not uploaded again. If you use a private CA that
-   Python does not already trust, add `--ca /path/to/broker-ca.pem` (Windows:
-   `--ca C:\path\broker-ca.pem`). TLS verification stays enabled.
-4. Open the dashboard's **Usage** panel, choose your identity, and optionally
-   select a device or **Assigned proxy keys**. Choose **All time** for the full
-   retained history. Device names default to hostnames; use `--name "Work laptop"`
-   during installation to choose your own. Devices have separate credentials
-   and can be revoked independently in Settings.
+   Enter the identity code at the hidden prompt. Add `--ca /path/to/broker-ca.pem`
+   for a private CA, or `--name 'Work laptop'` for a friendly device name.
+   **No Python, Node, Go, or preinstalled ccusage is required.**
+4. On the dashboard, choose your identity, optionally a device, and **All time**.
 
-Installation performs the first full import and schedules hourly checks and
-startup/login catch-up using systemd (Linux), launchd (macOS), or Task Scheduler
-(Windows). Subsequent uploads contain newly discovered numerical events, not
-full conversations. Durable checkpoints, an on-disk queue, and server-side
-deduplication allow weeks of outages without adding duplicate usage. A failed
-first connection is retried by the installed schedule.
+The first sync imports all retained history. Hourly/startup/login runs upload
+only changed daily reports, with durable recovery after outages and safe
+retries. All supported agents and routes are included; no direct/proxy choices
+are needed. Only numerical ccusage reports leave the device, not conversations.
+Token and cost totals follow ccusage; individual response counts are unavailable
+from aggregate reports. Different devices contribute independently.
 
-**Choose routes accurately:** one source directory must contain direct usage
-or Broker-routed usage, not a mixture. Use separate session directories for
-mixed routing and pass direct-only `--codex-path` / `--pi-path` options. This
-initial helper supports Codex and Pi, including Pi tool/compaction usage; it
-does not claim ccusage's full agent coverage. Full transcripts, prompts, tool
-outputs, and account credentials are never uploaded. See [device sync details](docs/usage-sync.md)
-for download commands, background behavior, limitations, troubleshooting,
-and removal.
+See [device sync details](docs/usage-sync.md) for platform selection, private
+certificates, custom log directories, scheduling, correction/recovery, updates,
+and migration from the earlier Python helper.
 
 ## Supported apps
 

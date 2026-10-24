@@ -1,208 +1,197 @@
 # Device usage sync
 
-## What belongs to an identity
+## One-time setup
 
-An identity owns usage, not account access. Create “Tim” in Settings and enroll
-several devices with the same generated code. Each device gets a separate ID
-and upload-only credential. The identity code cannot authorize proxy requests
-or uploads; it only enrolls devices. Upload credentials cannot read usage,
-change an identity, or enroll another device. Server-side credentials are
-hashed. The administrator alone can read dashboards and manage identities.
+1. Create an identity in **Settings → Usage identities**. Copy its generated
+   `cbi_…` enrollment code; it is shown only once. Use that same code on every
+   device that should contribute to the identity. Names cannot authorize uploads.
+2. Download the matching `codex-broker-usage-OS-ARCH.zip` from
+   [Releases](https://github.com/NotRllyRn/codex-broker/releases). For an unreleased
+   branch, open its successful **CI** run under
+   [Actions](https://github.com/NotRllyRn/codex-broker/actions), download the
+   **usage-sync-bundles** artifact, and select your platform zip inside it.
+3. Extract the zip. Keep **both executables** together for installation:
+   `codex-broker-usage` and `ccusage` (both end in `.exe` on Windows).
+4. Run the command below, replacing the URL with your Broker address. Enter the
+   identity code at its hidden prompt. Do not put the code in a URL or argument.
 
-Codes are shown only when created or rotated. If one is lost, choose **Generate
-new code**. Existing enrolled devices remain connected. Revoke compromised
-devices separately. Deleting an identity permanently removes its devices,
-proxy-key assignments, and identity usage history. Ordinary account/proxy
-history remains unchanged.
-
-## Download and install
-
-Use **Settings → Download the usage sync helper**, then run the command in the
-README. The downloaded file is standalone: Python 3.9+ is the only runtime
-dependency. Neither Node, ccusage, SSH, nor an OpenTelemetry Collector is needed.
-
-For a command-line download on Linux/macOS using an existing trusted private CA:
+**Linux/macOS:**
 
 ```sh
-curl --fail --show-error --cacert broker-ca.pem \
-  https://192.168.1.20:8787/static/usage-sync.py -o usage-sync.py
-python3 usage-sync.py install --broker-url https://192.168.1.20:8787 \
-  --ca broker-ca.pem --name 'Work laptop'
+chmod +x codex-broker-usage ccusage
+./codex-broker-usage install --broker-url https://192.168.1.20:8787
 ```
 
-With a publicly trusted or system-trusted certificate, omit the CA arguments.
-If Broker uses a root path, include it in both URLs, for example
-`https://broker.example/broker/static/usage-sync.py` and
-`--broker-url https://broker.example/broker`. On Windows, download using the
-Settings link, then run:
+**Windows PowerShell:**
 
 ```powershell
-py -3 .\usage-sync.py install --broker-url https://192.168.1.20:8787 `
-  --ca C:\certs\broker-ca.pem --name 'Windows desktop'
+.\codex-broker-usage.exe install --broker-url https://192.168.1.20:8787
 ```
 
-The private prompt accepts the `cbi_…` code, never the identity name. Do not put
-the code in command-line arguments, URLs, or scheduled tasks. Automation may
-use `--code-stdin` with a private stdin stream. Installation saves the code
-privately only until enrollment succeeds, then removes it. If enrollment's
-reply is lost, retrying uses the same installation ID and device secret.
+Python, Node, Go, and ccusage do **not** need to be installed beforehand. The
+bundle includes the native ccusage executable. Targets are Linux, macOS
+(`darwin`), and Windows, each with `amd64` (Intel/AMD x64) and `arm64` (Apple
+Silicon/ARM64). Older OS releases, 32-bit systems, Android, and iOS are not
+claimed to be supported. macOS or Windows may require approving a downloaded
+unsigned executable through the OS's normal security UI.
 
-From a repository checkout, the equivalent command is:
+For a private Broker certificate, add `--ca /path/to/broker-ca.pem` (Windows:
+`--ca C:\certs\broker-ca.pem`). The helper copies the CA into its private state.
+For a URL root path, include it: `--broker-url https://broker.example/broker`.
+TLS verification is mandatory, and redirects are rejected. Connections are
+outbound HTTPS to the existing Broker listener, over LAN/VPN/Tailscale; no SSH,
+inbound device port, persistent connection, or OTel Collector is needed.
+
+Use `--name 'Work laptop'` to override the hostname. Separate devices enrolled
+with the same code have independent upload-only tokens and revocation controls.
+Codes authorize enrollment only. Broker stores credential hashes and erases the
+client's saved identity code after successful enrollment. Lost enrollment replies
+are safely retried using the same installation ID and device token. Only an
+administrator can read the dashboard or manage identities.
+
+## What is uploaded and counted
+
+The helper runs **ccusage 20.0.43**, pinned with published SHA-512 package hashes:
 
 ```sh
-scripts/install-usage-sync.sh --broker-url https://192.168.1.20:8787 --ca broker-ca.pem
+ccusage daily --by-agent --json --timezone UTC --offline --config ccusage.json
 ```
 
-The helper installs itself in `~/.codex-broker-usage/`, alongside its restricted
-configuration, SQLite checkpoints and numerical upload queue. Keep this folder
-on the device; do not copy it to another device. The default device name is its
-hostname. Running `install` again reuses that installation's configuration and
-repairs its schedule. To enroll a separate identity from the same computer,
-use a different `--state-dir` on every command for that installation.
+Every agent detected by that ccusage version is included. **Direct requests and
+HTTP proxy requests are both included.** There are no direct/Broker routing
+questions or agent allowlists. Broker's existing proxy/account usage view stays
+separate from identity totals. Proxy requests without a corresponding client
+log cannot appear in ccusage; this does not import server-only proxy history.
 
-## Direct and proxied requests
+Each upload contains the raw ccusage **daily JSON rows**, including per-agent
+and model breakdowns, plus a device credential, protocol version, pinned
+ccusage version, and per-day revision. It does not contain conversation logs,
+prompts, responses, or tool outputs. Raw ccusage report fields are preserved;
+Broker does not maintain parsers for individual agents. Token totals and API
+cost estimates come from ccusage. These costs are not subscription payments.
+Because this is aggregated data, individual response counts, cost-by-speed/type,
+and cache-savings estimates are not fabricated in the identity dashboard.
 
-Assign each inference client key to its identity in Broker Settings. Future
-proxied requests then contribute original upstream usage, including responses
-through a relay after it reconnects. Earlier proxy traffic is not backfilled
-or reassigned when a key's identity changes. Existing identity history keeps its
-original owner. Proxy totals appear under **Assigned proxy keys**, independently
-of enrolled device names. Give each app its own key for access/revocation.
+The first sync scans all retained history. Later syncs scan all retained logs
+again, but upload only changed days. Scanning is delegated to ccusage; this
+trades some local scan time for broad format support and recovery of old data.
+The helper saves compact reports locally instead of copying original JSONL.
 
-At client setup, choose a route for each source:
+Broker keeps **one row per device and UTC day**. A newer revision replaces its
+cumulative totals; it is never added on top of the previous snapshot. Identical
+retries are no-ops. Conflicting contents under the same revision fail atomically.
+Stale revisions fail with a recovery error instead of overwriting newer data.
+Thus retrying a report or adding more usage to the current day does not count
+previously uploaded requests again. ccusage handles duplicate records within
+its own sources. Different devices contribute independently; copied histories
+or separate installations scanning the same logs are not reconciled.
 
-- `direct`: import the local usage records, including requests made through
-  another provider or gateway which this Broker does not otherwise count.
-- `broker`: omit this source's local counts. This Broker already accounts for
-  requests made with the identity's assigned proxy key.
-- `off`: do not collect that source.
+Identity snapshots survive the seven-day proxy response cleanup. Missing days
+never delete existing server history. If a day's token counts shrink (including
+an agent/model disappearing after log cleanup), the helper retains its previous
+report, reports the issue, and still uploads other valid days. Restore the logs,
+or use `sync --allow-decrease` only for an intentional correction. This option
+permits replacing totals with lower values; it does not recover deleted logs.
 
-These choices are explicit because logs do not always identify their proxy
-destination, and Broker sometimes changes returned input counts to trigger
-compaction. We cannot reliably infer the route from a model/provider name.
-**Do not mark a mixed direct/proxy directory as direct.** Keep separate agent
-homes/session directories and give the helper only direct directories:
+## Background operation and outages
 
-```sh
-python3 usage-sync.py install --broker-url https://broker.example \
-  --codex-mode direct --codex-path ~/.codex-direct/sessions \
-  --codex-path ~/.codex-direct/archived_sessions --pi-mode broker
-```
+Installation copies both executables, configuration, and a durable report/
+acknowledgement journal into `~/.codex-broker-usage-native/`. Protect and keep
+this directory intact. Do not share it between devices or restore an older
+journal over a newer one. Credentials and state use private file permissions
+on Unix and the current user's profile directory on Windows.
 
-Default discovery uses `$CODEX_HOME/sessions` and `archived_sessions` (or
-`~/.codex`), and `$PI_CODING_AGENT_SESSION_DIR` or
-`$PI_CODING_AGENT_DIR/sessions` (or `~/.pi/agent/sessions`). Repeat `--codex-path`
-or `--pi-path` for extra direct-only directories. Run installation from a
-terminal with the relevant environment variables set; resolved paths are saved
-so scheduled runs do not depend on shell environment initialization.
+It installs hourly retries plus startup/login catch-up:
 
-## Accuracy and retention
+- **Linux:** current-user systemd service/timer, with persistent missed runs.
+  A working user service manager is required. For operation while logged out,
+  enable lingering using your system's administration procedure.
+- **macOS:** LaunchAgent running at login and hourly during the user session.
+  Diagnostics append to `~/.codex-broker-usage-native/sync.log`.
+- **Windows:** Task Scheduler, current-user logon and hourly triggers, with
+  missed-run catch-up. No stored Windows password is required; the user must
+  be logged in. No extra scripting runtime is used by the scheduled command.
 
-The helper supports plain JSONL Codex rollouts and Pi sessions. It prefers
-Codex's modern `token_usage_record` per-response records, ignores mirrored
-`token_count` events, and includes separately recorded compaction requests.
-Older rollouts use advancing cumulative token totals and legacy fork-prefix
-suppression. Model metadata is required; malformed/incomplete usage is reported
-instead of silently assigned a model. Pi assistant, tool-result, compaction,
-branch-summary and standalone usage records are included. Reasoning is part of
-output; cached reads and writes are parts of input, not extra tokens.
+Use `install --no-schedule` if your system has no supported scheduler. Schedule
+its installed `sync` command hourly using your own scheduler. An initial
+connection failure leaves installation, enrollment state, reports, and retries
+intact. While offline, scheduled runs continue capturing retained local history.
+Pending reports are acknowledged before newer snapshots are sent. Reports can
+catch up after weeks offline; history that was deleted before ccusage could
+read it cannot be recovered. A sleeping machine retries when its scheduler
+next runs with connectivity; this is not an immediate network-change trigger.
 
-Missing/deleted logs and usage the agent never recorded cannot be recovered.
-Compressed `.jsonl.zst` rollouts are not supported by this standard-library
-helper; retain or restore plain JSONL for import. ccusage and T3 can differ
-because their supported record types, compaction and replay handling differ.
-Unknown prices and cache-write costs unsupported by the current price model
-are excluded from API cost estimates; token counts remain visible.
-
-Only numerical usage and minimal event metadata leave the device. Provider
-response IDs (Codex) or stable entry identities (Pi/legacy rollouts) produce
-deduplication keys independent of the uploading device. A copied event counts
-once within an identity; its device view shows the first uploader. Codex per-response copies
-re-stamped by the agent use the earliest observed time. Conflicting numerical
-payloads are rejected atomically and retained for investigation, never summed.
-Deduplication across legacy fork formats is limited to the history identity
-and replay information those formats retained.
-
-The server retains identity usage events and deduplication keys independently
-of its seven-day proxy response cleanup. Daily charts and **All time** totals
-continue to work. The sync helper stores file positions/parser state and queues
-events before upload. Server acknowledgements follow a database commit. Lost
-replies can cause retransmission but cannot add the same event twice.
-
-Changed files are checked regardless of their date. Incomplete final lines are
-left for a later scan. File replacement/truncation and a changed checkpoint
-tail trigger rescanning; a file edited earlier in place without changing its
-checkpoint tail requires an explicit `rescan`. The helper does not perform a
-two-day-only import: any unsynced retained history is eligible, even after
-weeks offline. Do not delete unscanned logs or the local upload queue before
-successful synchronization.
-
-## Scheduling and connectivity
-
-Clients make outbound HTTPS requests to Broker's existing listener, through
-the LAN or your existing VPN/Tailscale connection. They need no inbound port,
-SSH key, additional server, or persistent socket. Trust the actual Broker CA;
-redirects are rejected, and TLS verification is never disabled.
-
-- **Linux:** installs a current-user systemd service/timer under
-  `~/.config/systemd/user/`, with hourly checks, startup catch-up and persistent
-  missed-calendar runs. The user's service manager must be available. To run
-  while logged out, enable lingering for that user using your normal system
-  administration procedure (`loginctl enable-linger USER`).
-- **macOS:** installs a LaunchAgent under `~/Library/LaunchAgents/`, running at
-  login and hourly while the user session is available. Diagnostics go to
-  `~/.codex-broker-usage/sync.log`.
-- **Windows:** installs an interactive current-user Task Scheduler task,
-  triggered at login and hourly, with missed-run catch-up. No stored Windows
-  password is needed. Python must remain installed at the same executable path.
-
-Offline failures leave checkpoints and queued events intact; the next hourly
-check retries. A sleeping/offline machine does not maintain a connection.
-Upload resumes after the scheduler runs with connectivity. No promise of an
-immediate network-change trigger is required for this first implementation.
-
-For servers without a supported per-user scheduler, use `--no-schedule` and
-schedule `python3 ~/.codex-broker-usage/usage-sync.py sync` with your existing
-scheduler (for example hourly cron). First install still imports immediately.
+Source directory environment variables such as `CODEX_HOME`,
+`CLAUDE_CONFIG_DIR`, and `PI_CODING_AGENT_DIR` are saved during installation.
+Run setup in the environment you use for your agents, with absolute source
+paths. An empty private ccusage config avoids inheriting unrelated working-
+directory filters. For custom sources/options, pass
+`--ccusage-config /absolute/path/to/ccusage.json`; installation copies it.
+See [ccusage configuration](https://ccusage.com/guide/configuration).
+Avoid date filters if you want complete history. Rerun installation to update
+copied configuration or executable versions. Scheduled runs never fetch latest
+ccusage; it changes only with a tested, pinned helper release.
 
 ## Status, recovery, updates and removal
 
-Linux/macOS commands (on Windows substitute `py -3` and
-`$HOME\.codex-broker-usage\usage-sync.py`):
+Linux/macOS commands (Windows: replace the executable with
+`$HOME\.codex-broker-usage-native\codex-broker-usage.exe`):
 
 ```sh
-python3 ~/.codex-broker-usage/usage-sync.py status
-python3 ~/.codex-broker-usage/usage-sync.py sync
+~/.codex-broker-usage-native/codex-broker-usage status
+~/.codex-broker-usage-native/codex-broker-usage sync
+# Only to accept an intentional reduction/correction:
+~/.codex-broker-usage-native/codex-broker-usage sync --allow-decrease
 ```
 
-The status command shows tracked files and queued events without credentials.
-Settings shows last successful sync and per-device revocation. A failed batch
-does not advance the server acknowledgement. Authentication errors need a
-valid enrollment/device credential; an offline or failed first enrollment is
-automatically retried with the saved identity code.
+There is no two-day cutoff or last-upload-date filter. All retained days are
+eligible, and unchanged snapshots are skipped. File locks prevent concurrent
+manual/scheduled syncs. Revisions and reports are saved before network calls;
+acknowledgements are saved after Broker commits. A lost response or interrupted
+process leaves data for safe retry. Malformed collector output does not replace
+the saved journal. Broker validates sizes, dates, numerical ranges, credentials,
+and supported protocol/version; it trusts ccusage's accounting decisions.
 
-To recheck all retained history after restoring files or correcting an earlier
-in-place edit:
+To update, download a newer bundle and run its `install` command with the same
+`--state-dir` if customized. Existing enrollment, device token, and journal are
+reused. Both executables are copied from the bundle. If you downloaded only the
+helper, it can fetch its exact pinned native package from npm using HTTPS and
+verify its SHA-512 hash. Complete bundles work without npm connectivity.
+
+For multiple identities on one computer, use a separate `--state-dir` on every
+command for each installation. Scanning the same logs in both identities counts
+those logs independently. For an additional identity, this is intentional;
+for accidental duplicate installations within one identity, revoke the extra
+device and correct its data before trusting the combined total.
+
+Remove scheduling with `codex-broker-usage uninstall`. This retains credentials
+and queued reports. Revoke the device in Settings to stop uploads. Deleting an
+identity permanently removes its devices and identity reports. Ordinary
+account/proxy history remains independent.
+
+### Upgrading from the earlier Python helper
+
+Run the old helper's `uninstall` command, then revoke its device in Settings.
+Install the native helper as a new device and import retained logs. Old custom
+event tables remain in the database for recovery/export, but are excluded from
+new identity totals so that the ccusage import does not add to old event counts.
+Existing identity codes and enrolled credentials are preserved by the migration;
+obsolete protocol-1 uploads receive a clear upgrade error. Python state cannot
+be automatically converted to a complete multi-agent ccusage report. Retain
+old state until you have verified the new totals; deleted source logs must be
+restored before ccusage can import them.
+
+## Maintainers
+
+Build all six bundles (Go is required only on the build machine):
 
 ```sh
-python3 ~/.codex-broker-usage/usage-sync.py rescan
-python3 ~/.codex-broker-usage/usage-sync.py sync
+go run ./cmd/package-usage-sync
 ```
 
-Existing events are deduplicated. Conflicting usage requires investigation
-instead of overwriting historical counts. Download a newer helper and rerun
-`install` to update the installed script without changing its identity or
-checkpoints. If route configuration needs changing, use a new state directory
-and revoke the old device; previously misclassified usage needs administrator
-correction before totals can be considered accurate.
-
-Remove the background schedule with:
-
-```sh
-python3 ~/.codex-broker-usage/usage-sync.py uninstall
-```
-
-This retains local queued data and credentials for recovery. Revoke the device
-in Settings to prevent future uploads; remove the local state directory only
-after any wanted queued usage has reached Broker. Server history remains until
-its identity is explicitly deleted.
+The output is `dist/usage-sync/*.zip` and `SHA256SUMS`. Verify download checksums
+against the published `SHA256SUMS` using your OS's hash tool. CI uploads these
+as an artifact; version-tag builds attach them to GitHub Releases after tests
+pass. Native client unit tests also run on Linux, macOS, and Windows CI hosts. Do not commit generated binaries. Update `usagereport.Version` and all
+six integrity hashes together, test the real collector against fixtures, and
+review JSON/accounting changes before upgrading the pin.
