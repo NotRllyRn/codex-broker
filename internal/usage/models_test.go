@@ -62,3 +62,40 @@ func TestStoredModelBreakdownsRespectFiltersAndAvoidDoubleCounting(t *testing.T)
 		}
 	}
 }
+
+func TestModelProviderFiltersDailyTotals(t *testing.T) {
+	db := usageDatabase(t)
+	for _, query := range []string{
+		`INSERT INTO usage_identities VALUES('one','Personal usage',x'01',1)`,
+		`INSERT INTO usage_devices(device_id,identity_id,installation_id,name,token_hash,created_at_ms) VALUES('a','one','a','Work laptop',x'01',1)`,
+		`INSERT INTO usage_reports VALUES('a','2026-10-20',1,'20.0.43','{"period":"2026-10-20","agent":"all","inputTokens":30,"outputTokens":10,"cacheReadTokens":60,"cacheCreationTokens":0,"totalTokens":100,"totalCost":3,"agents":[],"modelBreakdowns":[{"modelName":"[pi] gpt-5","inputTokens":10,"outputTokens":5,"cacheReadTokens":40,"cost":1},{"modelName":"claude-sonnet","inputTokens":20,"outputTokens":5,"cacheReadTokens":20,"cost":2}]}',1)`,
+	} {
+		if _, err := db.DB.Exec(query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		filter            Filter
+		tokens            int64
+		cost              float64
+		models, available int
+	}{
+		{Filter{}, 100, 3, 2, 2}, {Filter{Provider: "all", Model: "all"}, 100, 3, 2, 2},
+		{Filter{Provider: "openai"}, 55, 1, 1, 1}, {Filter{Model: "claude-sonnet"}, 45, 2, 1, 2},
+		{Filter{Provider: "openai", Model: "claude-sonnet"}, 0, 0, 0, 1},
+	} {
+		s, err := ReadIdentitySummary(t.Context(), db.DB, nil, "all", "all", 7, now, tc.filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.ProcessedTokens != tc.tokens || s.CostUSD != tc.cost || len(s.Models) != tc.models || len(s.AvailableModels) != tc.available || s.Daily[6].ProcessedTokens != tc.tokens {
+			t.Fatalf("filter %+v: %+v", tc.filter, s)
+		}
+	}
+	for name, want := range map[string]string{"[pi] gpt-5": "openai", "openai-codex/gpt-5": "openai", "claude-sonnet": "anthropic", "gemini-pro": "google", "custom-model": "other"} {
+		if got := Provider(name); got != want {
+			t.Fatalf("%s: %s", name, got)
+		}
+	}
+}

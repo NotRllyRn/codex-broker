@@ -92,6 +92,14 @@ func TestDailyUsagePricesFiltersDeduplicatesAndSurvivesPruning(t *testing.T) {
 	closeTo(t, summary.Speed.Fast, summary.CostUSD)
 	closeTo(t, summary.Speed.Premium, summary.CostUSD/2)
 	closeTo(t, summary.Category.Input+summary.Category.CacheRead+summary.Category.Output, summary.CostUSD)
+	filtered, err := ReadSummary(ctx, db.DB, rates, "all", 7, now, Filter{Provider: "openai", Model: "gpt-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filtered.ProcessedTokens != summary.ProcessedTokens || filtered.Responses != 1 || len(filtered.Models) != 1 || len(filtered.AvailableModels) != 1 {
+		t.Fatalf("filtered proxy: %+v", filtered)
+	}
+	closeTo(t, filtered.CacheSavingsUSD, summary.CacheSavingsUSD)
 	all, err := ReadSummary(ctx, db.DB, rates, "all", 30, now)
 	if err != nil {
 		t.Fatal(err)

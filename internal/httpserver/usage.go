@@ -27,6 +27,7 @@ func (s *Server) internalUsage(w http.ResponseWriter, r *http.Request) error {
 	if account == "" {
 		account = "all"
 	}
+	filter := usage.Filter{Provider: r.URL.Query().Get("provider"), Model: r.URL.Query().Get("model")}
 	var summary usage.Summary
 	var err error
 	if owner := r.URL.Query().Get("identity"); owner != "" {
@@ -34,11 +35,11 @@ func (s *Server) internalUsage(w http.ResponseWriter, r *http.Request) error {
 		if device == "" {
 			device = "all"
 		}
-		summary, err = usage.ReadIdentitySummary(r.Context(), s.App.Store.DB, nil, owner, device, days, time.Now())
+		summary, err = usage.ReadIdentitySummary(r.Context(), s.App.Store.DB, nil, owner, device, days, time.Now(), filter)
 	} else {
 		s.usageRatesOnce.Do(func() { s.usageRates = usage.NewCatalog(s.App.Store) })
 		rates, pricing := s.usageRates.Read(r.Context())
-		summary, err = usage.ReadSummary(r.Context(), s.App.Store.DB, rates, account, days, time.Now())
+		summary, err = usage.ReadSummary(r.Context(), s.App.Store.DB, rates, account, days, time.Now(), filter)
 		summary.Pricing = pricing
 	}
 	if err != nil {

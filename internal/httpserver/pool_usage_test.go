@@ -66,7 +66,7 @@ func TestPoolUsageDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := response.Body.String()
-	if strings.Count(body, "Next available reset: 2.5 hours (5-hour)") != 2 {
+	if strings.Count(body, "Next available reset: 2h 30m (5-hour)") != 2 {
 		t.Error("reset should appear in both pool and account sections, even without matching accounts")
 	}
 	if strings.Count(body, "account available") != 1 {

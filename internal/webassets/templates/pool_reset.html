@@ -1,1 +1,1 @@
-<p class="pool-reset">Next available reset: {% if next_available_reset %}{{ next_available_reset.Hours|floatformat:1 }} hours ({{ next_available_reset.Label }}){% else %}Unknown{% endif %}</p>
+<p class="pool-reset">Next available reset: {% if next_available_reset %}{{ next_available_reset.Duration }} ({{ next_available_reset.Label }}){% else %}Unknown{% endif %}</p>

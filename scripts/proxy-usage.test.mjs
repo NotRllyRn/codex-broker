@@ -86,6 +86,8 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	const identity = find("[data-usage-identity]"), device = find("[data-usage-device]");
 	find("[data-usage-days]").value = "all";
 	device.value = "all";
+ find("[data-usage-provider]").value = "openai";
+ find("[data-usage-model]").value = "all";
 	device.options = [{ dataset: {} }, { dataset: { identity: "example" } }, { dataset: { identity: "other" } }];
 	const urls = [];
 	const zero = { responses: 0, unpriced_responses: 0, missing_usage_responses: 0, cost_usd: 0,
@@ -99,7 +101,7 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	runInNewContext(script.replaceAll("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
 	const load = context.initialize(panel, (path) => "/broker" + path);
 	await load("account1");
-	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all");
+	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all&provider=openai&model=all");
 	identity.value = "example";
 	identity.listeners.change();
 	await new Promise(setImmediate);
@@ -111,7 +113,6 @@ test("usage dashboard scopes identity/device queries and resets device on identi
  assert.equal(find("[data-usage-costs]").hidden,true);
  assert.equal(find("[data-usage-cache-savings]").querySelector("dd").textContent,"—");
  assert.match(find("[data-usage-cache-savings]").title,/does not report dollar cache savings/);
- assert.match(find("[data-usage-coverage]").textContent,/including HTTP proxy requests/);
 	device.value = "laptop";
 	device.listeners.change();
 	await new Promise(setImmediate);

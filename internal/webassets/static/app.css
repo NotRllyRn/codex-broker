@@ -1548,3 +1548,7 @@ textarea {
 .usage-models button { margin-top: 1rem; }
 .usage-model-note { font-size: 0.8rem; margin-bottom: 0; }
 .usage-models [hidden] { display: none; }
+
+.token-share-legend details summary { cursor: pointer; color: var(--muted); }
+.token-share-legend details[open] summary { margin-bottom: 10px; }
+.token-share-legend details div + div { margin-top: 10px; }

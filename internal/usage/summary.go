@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/usagereport"
@@ -50,9 +51,45 @@ type ModelUsage struct {
 	CostKnown       bool    `json:"cost_known"`
 }
 
+// Provider groups model families; reports do not identify the serving vendor.
+func Provider(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for strings.HasPrefix(name, "[") && strings.Contains(name, "]") {
+		name = strings.TrimSpace(name[strings.Index(name, "]")+1:])
+	}
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	for _, prefix := range []string{"gpt-", "codex", "o1", "o3", "o4", "chatgpt"} {
+		if strings.HasPrefix(name, prefix) {
+			return "openai"
+		}
+	}
+	if strings.HasPrefix(name, "claude") {
+		return "anthropic"
+	}
+	if strings.HasPrefix(name, "gemini") {
+		return "google"
+	}
+	return "other"
+}
+
+type Filter struct{ Provider, Model string }
+
+func (f Filter) matches(name string) bool {
+	return (f.Provider == "" || f.Provider == "all" || Provider(name) == f.Provider) && (f.Model == "" || f.Model == "all" || name == f.Model)
+}
+func selectedFilter(filters []Filter) Filter {
+	if len(filters) > 0 {
+		return filters[0]
+	}
+	return Filter{}
+}
+
 type Summary struct {
-	Models  []ModelUsage `json:"models"`
-	CCUsage bool         `json:"ccusage"`
+	AvailableModels []string     `json:"available_models"`
+	Models          []ModelUsage `json:"models"`
+	CCUsage         bool         `json:"ccusage"`
 	Totals
 	Daily        []Day         `json:"daily"`
 	Since        string        `json:"since"`
@@ -63,12 +100,12 @@ type Summary struct {
 
 // The profile endpoint has no model/cache breakdown, so only recorded proxy
 // tokens enter these estimates. Reasoning is already included in output.
-func ReadSummary(ctx context.Context, database *sql.DB, rates RateTable, account string, days int, now time.Time) (Summary, error) {
-	return readSummary(ctx, database, rates, `SELECT d.*,a.public_token AS owner,'' AS device_id,0 AS cache_write_tokens FROM usage_daily d JOIN accounts a USING(account_id)`, account, "all", days, now)
+func ReadSummary(ctx context.Context, database *sql.DB, rates RateTable, account string, days int, now time.Time, filters ...Filter) (Summary, error) {
+	return readSummary(ctx, database, rates, `SELECT d.*,a.public_token AS owner,'' AS device_id,0 AS cache_write_tokens FROM usage_daily d JOIN accounts a USING(account_id)`, account, "all", days, now, filters...)
 }
 
 // Identity totals come exclusively from cumulative ccusage reports, never old events.
-func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, identity, device string, days int, now time.Time) (Summary, error) {
+func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, identity, device string, days int, now time.Time, filters ...Filter) (Summary, error) {
 	until := now.UTC().Format(time.DateOnly)
 	since := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
 	result := Summary{CCUsage: true, Until: until, Daily: []Day{}, Pricing: PricingStatus{Status: "ccusage"}}
@@ -79,6 +116,8 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 	defer rows.Close()
 	byDay := map[string]*Totals{}
 	byModel := map[string]*ModelUsage{}
+	filter := selectedFilter(filters)
+	available := map[string]bool{}
 	for rows.Next() {
 		var day string
 		var raw []byte
@@ -101,15 +140,33 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 				models = append(models, agent.Models...)
 			}
 		}
+		value := Totals{Reports: 1, ProcessedTokens: report.Total, UncachedInput: report.Input + report.CacheWrite, CachedInput: report.CacheRead, Output: report.Output, CostUSD: report.Cost}
+		filtered := (filter.Provider != "" && filter.Provider != "all") || (filter.Model != "" && filter.Model != "all")
+		if filtered {
+			value = Totals{}
+		}
 		for _, model := range models {
+			if filter.Provider == "" || filter.Provider == "all" || Provider(model.Name) == filter.Provider {
+				available[model.Name] = true
+			}
+			if !filter.matches(model.Name) {
+				continue
+			}
 			known := model.Cost != nil
 			cost := 0.0
 			if known {
 				cost = *model.Cost
 			}
+			if filtered {
+				value.Reports = 1
+				value.ProcessedTokens += model.Input + model.Output + model.CacheRead + model.CacheWrite
+				value.UncachedInput += model.Input + model.CacheWrite
+				value.CachedInput += model.CacheRead
+				value.Output += model.Output
+				value.CostUSD += cost
+			}
 			addModel(byModel, model.Name, model.Input+model.Output+model.CacheRead+model.CacheWrite, cost, known)
 		}
-		value := Totals{Reports: 1, ProcessedTokens: report.Total, UncachedInput: report.Input + report.CacheWrite, CachedInput: report.CacheRead, Output: report.Output, CostUSD: report.Cost}
 		if byDay[day] == nil {
 			byDay[day] = &Totals{}
 		}
@@ -134,11 +191,15 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 		}
 		result.Daily = append(result.Daily, day)
 	}
+	for name := range available {
+		result.AvailableModels = append(result.AvailableModels, name)
+	}
+	sort.Strings(result.AvailableModels)
 	result.Models = sortedModels(byModel)
 	return result, nil
 }
 
-func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source, owner, device string, days int, now time.Time) (Summary, error) {
+func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source, owner, device string, days int, now time.Time, filters ...Filter) (Summary, error) {
 	until := now.UTC().Format(time.DateOnly)
 	since := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
 	result := Summary{Since: since, Until: until, Daily: []Day{}}
@@ -167,6 +228,8 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 	defer rows.Close()
 	byDay := map[string]*Totals{}
 	byModel := map[string]*ModelUsage{}
+	filter := selectedFilter(filters)
+	available := map[string]bool{}
 	for rows.Next() {
 		var day, model, tier string
 		var known bool
@@ -174,6 +237,12 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 		var cacheWrite int64
 		if err := rows.Scan(&day, &model, &tier, &known, &value.Responses, &value.UncachedInput, &value.CachedInput, &value.Output, &cacheWrite); err != nil {
 			return result, err
+		}
+		if filter.Provider == "" || filter.Provider == "all" || Provider(model) == filter.Provider {
+			available[model] = true
+		}
+		if !filter.matches(model) {
+			continue
 		}
 		value.ProcessedTokens = value.UncachedInput + value.CachedInput + value.Output
 		selected, standard, priced := rates.Lookup(model, tier)
@@ -213,6 +282,10 @@ func readSummary(ctx context.Context, database *sql.DB, rates RateTable, source,
 		}
 		result.Daily = append(result.Daily, day)
 	}
+	for name := range available {
+		result.AvailableModels = append(result.AvailableModels, name)
+	}
+	sort.Strings(result.AvailableModels)
 	result.Models = sortedModels(byModel)
 	return result, nil
 }

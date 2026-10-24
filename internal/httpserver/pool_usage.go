@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"fmt"
+	"math"
 	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/broker"
@@ -23,6 +25,11 @@ func accountAvailable(account broker.AccountSummary) bool {
 type poolReset struct {
 	Label string
 	Hours float64
+}
+
+func (r *poolReset) Duration() string {
+	minutes := int(math.Ceil(r.Hours * 60))
+	return fmt.Sprintf("%dh %dm", minutes/60, minutes%60)
 }
 
 func nextAvailableReset(accounts []broker.AccountSummary, now time.Time) *poolReset {

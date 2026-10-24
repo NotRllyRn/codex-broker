@@ -18,6 +18,7 @@ export function initUsageDashboard(panel, appPath) {
 	const content = find("content");
 	const status = find("status");
 	const period = find("days");
+	const provider = find("provider"), model = find("model");
 	const identity = find("identity"), device = find("device");
 	let account = "all", metric = "cost", data, controller, expandedModels = false;
 
@@ -145,14 +146,7 @@ export function initUsageDashboard(panel, appPath) {
 		renderBar("type", [["Input", category.input, "var(--usage-input)"], ["Cache read", category.cache_read, "var(--usage-cache)"], ["Output", category.output, "var(--ink)"], ["Other", category.other, "var(--line-strong)"]]);
 		renderBar("speed", [["Standard", speed.standard, "var(--usage-cache)"], ["Fast", speed.fast, "var(--usage-input)"], ...(speed.ultrafast > 0 ? [["Ultrafast", speed.ultrafast, "var(--ink)"]] : [])]);
 		find("premium").textContent = costValue(speed.premium);
-		const notices = [identity?.value ? "All usage reported by ccusage, including HTTP proxy requests. Repeated uploads replace daily device totals. Costs come from the pinned ccusage version; dollar cache savings, response counts and speed/type cost splits are not supplied. Cached input share measures token reuse, not money saved." : "Recorded proxy traffic only; direct leases and historical profile tokens are excluded."];
-		if (data.history_since) notices.push(`Daily history available from ${data.history_since}.`);
-		if (data.unpriced_responses) notices.push(`${data.unpriced_responses.toLocaleString()} responses have no model/tier price and are excluded from costs.`);
-		if (data.missing_usage_responses) notices.push(`${data.missing_usage_responses.toLocaleString()} responses have incomplete token usage and are excluded from costs.`);
-		if (data.ccusage) notices.push("ccusage costs are API estimates, not subscription charges.");
-		else if (data.pricing.status === "unavailable") notices.push("Model pricing is unavailable; unknown costs are shown as —.");
-		else notices.push(`LiteLLM ${data.pricing.status === "cached" ? "cached " : ""}list rates from ${new Date(data.pricing.fetched_at).toLocaleDateString()}.`);
-		find("coverage").textContent = notices.join(" ");
+
 		status.textContent = (data.responses || data.reports) ? "" : "No recorded usage in this period. Set up identities and devices in Settings to collect client usage.";
 		content.hidden = false;
 		renderChart();
@@ -169,12 +163,20 @@ export function initUsageDashboard(panel, appPath) {
 		status.textContent = "Loading recorded usage…";
 		try {
 			const query = new URLSearchParams({ account, days: period.value });
+			if (provider) query.set("provider", provider.value);
+			if (model) query.set("model", model.value);
 			if (identity?.value) { query.set("identity", identity.value); query.set("device", device.value); }
 			const response = await fetch(appPath(`/api/internal/v1/usage?${query}`), { signal: current.signal });
 			if (!response.ok) throw new Error("Usage could not be loaded. Try refreshing usage.");
 			const result = await response.json();
 			if (current.signal.aborted) return;
 			data = result;
+			if (model) {
+				const selected = model.value;
+				model.replaceChildren(...["all", ...(data.available_models || [])].map(name => { const option = document.createElement("option"); option.value = name; option.textContent = name === "all" ? "All models" : name; return option; }));
+				model.value = (data.available_models || []).includes(selected) ? selected : "all";
+				if (selected !== model.value) { return await load(); }
+			}
 			render();
 		} catch (error) {
 			if (!current.signal.aborted) status.textContent = error.message;
@@ -188,6 +190,8 @@ export function initUsageDashboard(panel, appPath) {
 		if (data) { renderChart(); renderModels(); }
 	});
 	find("model-more").addEventListener("click", () => { expandedModels = !expandedModels; renderModels(); });
+	provider?.addEventListener("change", () => { model.value = "all"; expandedModels = false; load(); });
+	model?.addEventListener("change", () => { expandedModels = false; load(); });
 	period.addEventListener("change", () => load());
 	identity?.addEventListener("change", () => {
 		device.value = "all";

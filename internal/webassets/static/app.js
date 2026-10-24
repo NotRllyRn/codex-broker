@@ -172,7 +172,7 @@ if (profileDashboard) {
 	function renderTokenShare(profile) {
 		const chart = profileDashboard.querySelector("[data-token-share-chart]");
 		const legend = profileDashboard.querySelector("[data-token-share-legend]");
-		const shares = (profile.token_shares || []).filter((item) => item.tokens > 0);
+		const shares = (profile.token_shares || []).filter((item) => item.tokens > 0).sort((a, b) => b.tokens - a.tokens);
 		const total = shares.reduce((sum, item) => sum + item.tokens, 0);
 		let cursor = 0;
 		const segments = shares.map((item, index) => {
@@ -182,7 +182,14 @@ if (profileDashboard) {
 		});
 		chart.style.background = segments.length ? `conic-gradient(${segments.join(",")})` : "var(--surface-2)";
 		chart.querySelector("[data-token-share-total]").textContent = value(total);
+		const expanded = legend.querySelector("details")?.open || false;
 		legend.replaceChildren();
+		const more = document.createElement("details");
+		more.open = expanded;
+		const summary = document.createElement("summary");
+		summary.textContent = `Show more (${Math.max(0, shares.length - 5)})`;
+		more.append(summary);
+		more.addEventListener("toggle", () => { summary.textContent = more.open ? "Show less" : `Show more (${shares.length - 5})`; });
 		shares.forEach((item, index) => {
 			const row = document.createElement("div");
 			const swatch = document.createElement("i");
@@ -192,8 +199,9 @@ if (profileDashboard) {
 			label.textContent = item.label;
 			amount.textContent = value(item.tokens);
 			row.append(swatch, label, amount);
-			legend.append(row);
+			(index < 5 ? legend : more).append(row);
 		});
+		if (shares.length > 5) legend.append(more);
 	}
 
 	function renderProfile() {

@@ -127,6 +127,8 @@
       <div class="usage-controls">
         <label><select data-usage-identity aria-label="Usage identity"><option value="">Broker proxy · selected account</option><option value="all">All identities</option>{% for identity in identities %}<option value="{{ identity.ID }}">{{ identity.Name }}</option>{% endfor %}</select></label>
         <label><select data-usage-device aria-label="Usage device" disabled><option value="all">All devices</option>{% for device in usage_devices %}<option value="{{ device.ID }}" data-identity="{{ device.IdentityID }}">{{ device.Name }} · {{ device.ID|slice:":8" }}</option>{% endfor %}</select></label>
+        <label><select data-usage-provider aria-label="Model provider (inferred from model name)"><option value="all">All providers</option><option value="openai" selected>OpenAI / Codex models</option><option value="anthropic">Anthropic models</option><option value="google">Google models</option><option value="other">Other / unknown models</option></select></label>
+        <label><select data-usage-model aria-label="Usage model"><option value="all">All models</option></select></label>
         <div class="usage-toggle" role="group" aria-label="Usage metric">
           <button type="button" data-usage-metric="cost" aria-pressed="true">Cost</button>
           <button type="button" data-usage-metric="tokens" aria-pressed="false">Tokens</button>
@@ -166,9 +168,7 @@
         </div>
         <p class="subtle" data-usage-model-empty hidden>No model breakdown was recorded for this selection.</p>
         <button type="button" class="quiet-button" data-usage-model-more aria-expanded="false" aria-controls="usage-model-rows" hidden>Show more</button>
-        <p class="subtle usage-model-note">Model names are kept as reported. Shares use the overall selected total; model details may omit some tokens or costs.</p>
       </section>
-      <p class="usage-coverage" data-usage-coverage></p>
     </div>
   </section>
   <h3 class="profile-section-title">Account-wide profile</h3>
