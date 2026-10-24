@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { resolve } from 'node:path';
+import { realpathSync } from 'node:fs';
 
 export function nativePath(platform = process.platform, arch = process.arch) {
   if (!['linux', 'darwin', 'win32'].includes(platform) || !['x64', 'arm64'].includes(arch)) {
@@ -16,7 +16,7 @@ export function run(args, spawn = spawnSync) {
   return result.status ?? 1;
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     process.exitCode = run(process.argv.slice(2));
   } catch (error) {
