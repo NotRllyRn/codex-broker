@@ -21,7 +21,7 @@
   </div>
 </section>
 <section class="status-strip" aria-label="Account status summary">
-  <div><span>{{ accounts|length }}</span><small>Accounts</small></div>
+  <div><span>{{ account_count }}</span><small>Accounts</small></div>
   <div><span>{{ counts.HEALTHY }}</span><small>Healthy</small></div>
   <div><span>{{ counts.WARNING }}</span><small>Warnings</small></div>
   <div>
@@ -91,7 +91,7 @@
   <small>Since broker restart · Recent clients: last five minutes</small>
 </section>
 <section class="pool-usage" aria-labelledby="pool-usage-title">
-  <header><h2 id="pool-usage-title">Total pool usage</h2><p>{{ pool_usage.0.Available }} account{% if pool_usage.0.Available != 1 %}s{% endif %} available</p></header>
+  <header><h2 id="pool-usage-title">Total pool usage</h2><div><p>{{ pool_usage.0.Available }} account{% if pool_usage.0.Available != 1 %}s{% endif %} available</p>{% include "pool_reset.html" %}</div></header>
   <div class="pool-usage-grid">
     {% for window in pool_usage %}
     <article>
@@ -189,7 +189,7 @@
   <label
     ><span>Status</span
     ><select name="state_filter">
-      <option value="">All states</option>
+      <option value=""{% if not state_filter %} selected{% endif %}>All states</option>
       {% for status in status_options %}
       <option
         value="{{ status }}"
@@ -216,14 +216,6 @@
 </section>
 {% endif %}
 
-{% if not accounts %}
-<section class="empty-state">
-  <p class="kicker">No matching accounts</p>
-  <h2>Nothing is on watch.</h2>
-  <p>Add an authorized ChatGPT account or clear the active filters.</p>
-  <a class="primary-button" href="/accounts/new">Add account</a>
-</section>
-{% else %}
 <section class="orbit-layout" aria-label="Orbit cockpit layout">
   <aside class="orbit-queue">
     <h2>Attention queue</h2>
@@ -239,10 +231,19 @@
   </aside>
   <div class="orbit-core">
     <p>Routing authority</p>
-    <strong>{% if cycle_enabled %}{{ cycle_ready }} in rotation{% if cycle_held %} · {{ cycle_held }} held{% endif %}{% else %}{{ counts.HEALTHY }} ready{% endif %}</strong>
+    <strong>{{ pool_usage.0.Available }} available · {% if cycle_enabled %}{{ cycle_ready }} in rotation · {{ cycle_held }} held{% else %}{{ counts.HEALTHY }} ready{% endif %}</strong>
     <span>Clients request the best account at every user-turn boundary.</span>
+    {% include "pool_reset.html" %}
   </div>
   <div class="orbit-accounts">
+    {% if not accounts %}
+    <section class="empty-state">
+      <p class="kicker">No matching accounts</p>
+      <h2>Nothing is on watch.</h2>
+      <p>Add an authorized ChatGPT account or clear the active filters.</p>
+      <a class="primary-button" href="/accounts/new">Add account</a>
+    </section>
+    {% else %}
     {% for account in accounts %}
     <article class="orbit-account state-{{ account.overall_state|lower }}">
       <header>
@@ -288,6 +289,7 @@
       </footer>
     </article>
     {% endfor %}
+    {% endif %}
   </div>
 </section>
-{% endif %} {% endblock %}
+{% endblock %}

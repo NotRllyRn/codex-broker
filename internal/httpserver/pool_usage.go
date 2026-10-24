@@ -1,12 +1,50 @@
 package httpserver
 
-import "github.com/NotRllyRn/codex-broker/internal/broker"
+import (
+	"time"
+
+	"github.com/NotRllyRn/codex-broker/internal/broker"
+)
 
 type poolWindow struct {
 	Label                       string
 	Used, Remaining             float64
 	Accounts, Unknown, Excluded int
 	Available                   int
+}
+
+// Available accounts have measured short-window capacity and no known quota block.
+func accountAvailable(account broker.AccountSummary) bool {
+	return account.Enabled && account.AuthState == "VERIFIED" && !account.QuotaBlocked &&
+		account.ShortPercent != nil && *account.ShortPercent >= 0 && *account.ShortPercent < 100 &&
+		(account.WeeklyPercent == nil || *account.WeeklyPercent < 100)
+}
+
+type poolReset struct {
+	Label string
+	Hours float64
+}
+
+func nextAvailableReset(accounts []broker.AccountSummary, now time.Time) *poolReset {
+	var next *poolReset
+	var earliest int64
+	for _, account := range accounts {
+		if !account.Enabled || account.AuthState != "VERIFIED" {
+			continue
+		}
+		for i, reset := range []*int64{account.ShortResetMS, account.WeeklyResetMS} {
+			if reset == nil || *reset <= now.UnixMilli() || earliest != 0 && *reset >= earliest {
+				continue
+			}
+			// A short reset cannot restore capacity while the weekly window is full.
+			if i == 0 && account.WeeklyPercent != nil && *account.WeeklyPercent >= 100 {
+				continue
+			}
+			earliest = *reset
+			next = &poolReset{Label: []string{"5-hour", "Weekly"}[i], Hours: time.UnixMilli(*reset).Sub(now).Hours()}
+		}
+	}
+	return next
 }
 
 // Pool percentages give each account one equal share of capacity; upstream
@@ -33,7 +71,7 @@ func poolUsage(accounts []broker.AccountSummary) []poolWindow {
 				continue
 			}
 			// Availability uses measured capacity, without counting exhausted shares.
-			if i == 0 && *used < 100 {
+			if i == 0 && accountAvailable(account) {
 				window.Available++
 			}
 			window.Used += float64(*used)

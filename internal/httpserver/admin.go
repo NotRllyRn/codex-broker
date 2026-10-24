@@ -61,12 +61,21 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	filter, query := r.URL.Query().Get("state_filter"), strings.ToLower(r.URL.Query().Get("q"))
+	if !r.URL.Query().Has("state_filter") {
+		filter = "AVAILABLE"
+	}
 	var views []map[string]any
 	var attention []map[string]any
 	cycleReady, cycleHeld := 0, 0
 	counts := map[string]int{"HEALTHY": 0, "WARNING": 0, "ACTION_REQUIRED": 0, "ERROR": 0, "DISABLED": 0}
 	for _, account := range accounts {
-		if filter != "" && account.OverallState != filter {
+		if account.CycleState == "IN_CYCLE" && !account.QuotaBlocked {
+			cycleReady++
+		} else if account.CycleState == "HELD" || account.CycleState == "RELEASING" {
+			cycleHeld++
+		}
+		counts[account.OverallState]++
+		if filter == "AVAILABLE" && !accountAvailable(account) || filter != "" && filter != "AVAILABLE" && account.OverallState != filter {
 			continue
 		}
 		if query != "" && !strings.Contains(strings.ToLower(account.DisplayName+" "+strings.Join(account.Labels, " ")), query) {
@@ -74,17 +83,11 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 		}
 		view := accountView(account)
 		views = append(views, view)
-		if account.CycleState == "IN_CYCLE" && !account.QuotaBlocked {
-			cycleReady++
-		} else if account.CycleState == "HELD" || account.CycleState == "RELEASING" {
-			cycleHeld++
-		}
 		if account.OverallState != "HEALTHY" {
 			attention = append(attention, view)
 		}
-		counts[account.OverallState]++
 	}
-	selected := map[string]bool{}
+	selected := map[string]bool{"AVAILABLE": filter == "AVAILABLE"}
 	for key := range counts {
 		selected[key] = filter == key
 	}
@@ -92,7 +95,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	if cycle.NextPulseAtMS != nil {
 		cycleNextMS = *cycle.NextPulseAtMS
 	}
-	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "pool_usage": poolUsage(accounts), "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld, "cycle_spacing": compactDuration(int(cycle.SpacingMS / 1000)), "cycle_next_at": timestampView(cycle.NextPulseAtMS), "cycle_next_ms": cycleNextMS})
+	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"root_path": s.App.Config.RootPath, "pool_usage": poolUsage(accounts), "next_available_reset": nextAvailableReset(accounts, time.Now()), "account_count": len(accounts), "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"AVAILABLE", "HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld, "cycle_spacing": compactDuration(int(cycle.SpacingMS / 1000)), "cycle_next_at": timestampView(cycle.NextPulseAtMS), "cycle_next_ms": cycleNextMS})
 }
 
 func (s *Server) accountNew(w http.ResponseWriter, r *http.Request) error {
