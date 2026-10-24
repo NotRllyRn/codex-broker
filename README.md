@@ -15,6 +15,61 @@ These estimates exclude direct leases and historical profile tokens; they are
 API-equivalent values, not subscription charges. Daily aggregates survive
 response cleanup, starting with the response history available at upgrade.
 
+**Usage identities** also combine usage from multiple devices under names such
+as “Tim.” Assign proxy keys to an identity and optionally install the small
+Codex/Pi sync helper for direct provider usage. Identity history survives the
+seven-day response cleanup and supports all-time and per-device views.
+
+## Collect usage from your devices
+
+1. In **Settings → Usage identities**, create an identity. **Copy its generated
+   `cbi_…` code**: it is shown once and works like an enrollment password. Use
+   the same identity code on every device you want grouped together. A name
+   alone cannot authorize uploads.
+2. For apps using Broker's HTTP proxy, assign their existing client access keys
+   to this identity in **Settings → Client access keys → Usage identity**.
+   This counts future requests using the original upstream token usage.
+3. In Settings, click **Download the usage sync helper**. On each device,
+   install Python **3.9+**, then run the downloaded file:
+
+   **Linux or macOS:**
+   ```sh
+   python3 usage-sync.py install --broker-url https://192.168.1.20:8787
+   ```
+
+   **Windows PowerShell** (Python from python.org with its `py` launcher):
+   ```powershell
+   py -3 .\usage-sync.py install --broker-url https://192.168.1.20:8787
+   ```
+
+   Enter the identity code at the hidden prompt. The helper asks how each
+   agent's logs are routed: choose **`direct`** for direct provider requests,
+   **`broker`** for this Broker's proxy, or **`off`** to ignore that agent.
+   Broker-routed logs are not uploaded again. If you use a private CA that
+   Python does not already trust, add `--ca /path/to/broker-ca.pem` (Windows:
+   `--ca C:\path\broker-ca.pem`). TLS verification stays enabled.
+4. Open the dashboard's **Usage** panel, choose your identity, and optionally
+   select a device or **Assigned proxy keys**. Choose **All time** for the full
+   retained history. Device names default to hostnames; use `--name "Work laptop"`
+   during installation to choose your own. Devices have separate credentials
+   and can be revoked independently in Settings.
+
+Installation performs the first full import and schedules hourly checks and
+startup/login catch-up using systemd (Linux), launchd (macOS), or Task Scheduler
+(Windows). Subsequent uploads contain newly discovered numerical events, not
+full conversations. Durable checkpoints, an on-disk queue, and server-side
+deduplication allow weeks of outages without adding duplicate usage. A failed
+first connection is retried by the installed schedule.
+
+**Choose routes accurately:** one source directory must contain direct usage
+or Broker-routed usage, not a mixture. Use separate session directories for
+mixed routing and pass direct-only `--codex-path` / `--pi-path` options. This
+initial helper supports Codex and Pi, including Pi tool/compaction usage; it
+does not claim ccusage's full agent coverage. Full transcripts, prompts, tool
+outputs, and account credentials are never uploaded. See [device sync details](docs/usage-sync.md)
+for download commands, background behavior, limitations, troubleshooting,
+and removal.
+
 ## Supported apps
 
 | App | Integration | First step |

@@ -1,6 +1,7 @@
 <section class="detail-section" id="usage-identities">
   <h2>Usage identities</h2>
   <p class="subtle">Group usage from multiple devices under one name. Identity codes enroll devices; each device receives its own upload-only credential. Assign proxy keys below to count their future usage here.</p>
+  <p><a href="/static/usage-sync.py" download>Download the usage sync helper</a> · Run <code>python3 usage-sync.py install</code> on Linux/macOS or <code>py -3 usage-sync.py install</code> on Windows. It prompts for the Broker HTTPS URL and identity code.</p>
   {% if identity_code %}
   <div class="service-alert" role="status">
     <strong>Copy this identity code now. It will not be shown again.</strong>
