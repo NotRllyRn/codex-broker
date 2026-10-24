@@ -16,7 +16,7 @@ API-equivalent values, not subscription charges. Daily aggregates survive
 response cleanup, starting with the response history available at upgrade.
 
 **Usage identities** combine usage from multiple devices under a name such as
-“Tim.” The native sync helper imports every agent supported by pinned
+“Personal usage.” The native sync helper imports every agent supported by pinned
 **ccusage 20.0.43**, including locally logged HTTP proxy requests. It uploads
 compact daily JSON reports; repeated uploads update totals instead of adding
 them again. Identity history survives seven-day proxy response cleanup.
@@ -25,26 +25,17 @@ them again. Identity history survives seven-day proxy response cleanup.
 
 1. In **Settings → Usage identities**, create an identity and copy its generated
    `cbi_…` code. Use that code on each device; its name cannot authorize uploads.
-2. Download the matching **native usage sync zip** from
-   [Releases](https://github.com/NotRllyRn/codex-broker/releases), then extract
-   **both executables**. Unreleased builds are in the successful branch CI run's
-   **usage-sync-bundles** artifact under [Actions](https://github.com/NotRllyRn/codex-broker/actions).
-3. Run once, substituting your Broker URL:
+2. With Node.js 22 or newer installed, run on each device:
 
-   Linux/macOS:
    ```sh
-   chmod +x codex-broker-usage ccusage
-   ./codex-broker-usage install --broker-url https://192.168.1.20:8787
+   npx codex-broker@latest install --broker-url https://YOUR-BROKER
    ```
 
-   Windows PowerShell:
-   ```powershell
-   .\codex-broker-usage.exe install --broker-url https://192.168.1.20:8787
-   ```
-
-   Enter the identity code at the hidden prompt. Add `--ca /path/to/broker-ca.pem`
+   `pnpm dlx codex-broker@latest install --broker-url https://YOUR-BROKER`
+   also works. No manual release download or local build is needed.
+3. Enter the identity code at the hidden prompt. Add `--ca /path/to/broker-ca.pem`
    for a private CA, or `--name 'Work laptop'` for a friendly device name.
-   **No Python, Node, Go, or preinstalled ccusage is required.**
+   Node is needed only for setup; background syncing runs native executables.
 4. On the dashboard, choose your identity, optionally a device, and **All time**.
 
 The first sync imports all retained history. Hourly/startup/login runs upload
@@ -57,6 +48,11 @@ from aggregate reports. Different devices contribute independently.
 See [device sync details](docs/usage-sync.md) for platform selection, private
 certificates, custom log directories, scheduling, correction/recovery, updates,
 and migration from the earlier Python helper.
+
+If a device was installed with the wrong Broker address, follow the
+[connection recovery steps](docs/usage-sync.md#wrong-broker-url-or-failed-first-sync).
+Upgrade from `0.91.1` with `npx codex-broker@latest install --broker-url https://CORRECT-BROKER`
+to repair the saved URL while preserving device state (fixed in `0.92.1`).
 
 ## Supported apps
 

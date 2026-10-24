@@ -39,6 +39,8 @@ jobs:
       - run: GOOS=darwin GOARCH=arm64 go build -o /tmp/codex-broker-adapter-arm64 ./cmd/codex-broker-adapter
       - run: sh -n scripts/bootstrap.sh scripts/install-hermes-integration.sh scripts/install-macos-adapter.sh
       - run: node --check internal/webassets/static/app.js
+      - run: node --test packages/usage/test/*.test.mjs
+      - run: npm run test:usage
       - run: npm run test:proxy
       - run: npm run test:enrollment
       - run: npm install --prefix packages/pi-extension
@@ -57,12 +59,19 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: go test ./internal/usagesync ./internal/usagereport
+      - shell: bash
+        run: go run ./cmd/package-usage-sync --target "$(go env GOOS)-$(go env GOARCH)" --out dist/native-test
+      - shell: bash
+        run: |
+          unzip -q dist/native-test/*.zip -d dist/native-test/bin
+          chmod +x dist/native-test/bin/*
+          CCUSAGE_TEST_BINARY="$PWD/dist/native-test/bin/ccusage${{ runner.os == 'Windows' && '.exe' || '' }}" go test ./internal/usagesync ./internal/usagereport
   usage-sync:
     needs: [test, usage-sync-native]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5
@@ -74,13 +83,28 @@ jobs:
         with:
           name: usage-sync-bundles
           path: dist/usage-sync/
-      - name: Publish tagged usage sync bundles
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - name: Build npm client
         run: |
-          gh release view "$GITHUB_REF_NAME" || gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes
-          gh release upload "$GITHUB_REF_NAME" dist/usage-sync/* --clobber
+          npm --prefix packages/usage version "0.${{ github.run_number }}.${{ github.run_attempt }}" --no-git-tag-version
+          npm --prefix packages/usage run build
+          cd packages/usage
+          npm pack --pack-destination ../../dist/usage-sync
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: usage-sync-npm
+          path: dist/usage-sync/*.tgz
+      - name: Smoke-test packed npm command
+        run: |
+          package="$PWD/$(find dist/usage-sync -name '*.tgz' -print -quit)"
+          cd "$RUNNER_TEMP"
+          npm exec --yes --package "$package" -- codex-broker-usage version
+      - name: Publish npm client from main
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: npm publish dist/usage-sync/*.tgz --access public --provenance
   managed-codex:
     runs-on: ubuntu-latest
     timeout-minutes: 20

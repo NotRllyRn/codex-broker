@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -446,6 +447,7 @@ func Run(ctx context.Context, args []string, input *os.File, output io.Writer) e
 		if lockErr != nil {
 			return lockErr
 		}
+		err = readJSON(filepath.Join(*directory, "config.json"), &config)
 		err = install(ctx, *directory, &config, err, *address, *name, *ca, *configPath, *codeStdin, input, output)
 		unlock()
 		if err != nil {
@@ -453,7 +455,7 @@ func Run(ctx context.Context, args []string, input *os.File, output io.Writer) e
 		}
 		if !*noSchedule {
 			if err := schedule(*directory, false); err != nil {
-				return err
+				return fmt.Errorf("installed, but background scheduling failed: %w; fix the scheduler and rerun install, or use --no-schedule with an external scheduler", err)
 			}
 		}
 	} else if err != nil {
@@ -468,6 +470,9 @@ func Run(ctx context.Context, args []string, input *os.File, output io.Writer) e
 	if args[0] == "install" && errors.Is(err, ErrSyncRunning) {
 		fmt.Fprintln(output, "Installed; the background sync is already running.")
 		return nil
+	}
+	if args[0] == "install" && err != nil {
+		return fmt.Errorf("installed, but initial sync failed: %w; check the Broker URL and CA, then rerun install --broker-url https://YOUR-BROKER with the same --state-dir to correct the saved connection", err)
 	}
 	return err
 }
@@ -517,37 +522,20 @@ func install(ctx context.Context, directory string, config *Config, readErr erro
 			return err
 		}
 	}
+	if readErr == nil && (address != "" || ca != "") {
+		if err := updateConnection(directory, config, address, ca); err != nil {
+			return err
+		}
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
+	if err := ensureCollector(ctx, directory, filepath.Dir(self), Native); err != nil {
+		return err
+	}
 	if err := copyExecutable(self, filepath.Join(directory, executable("codex-broker-usage"))); err != nil {
 		return err
-	}
-	target := filepath.Join(directory, executable("ccusage"))
-	sibling := filepath.Join(filepath.Dir(self), executable("ccusage"))
-	if _, err := os.Stat(sibling); err == nil && sibling != target {
-		if err := copyExecutable(sibling, target); err != nil {
-			return err
-		}
-	}
-	if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
-		data, err := Native(ctx, runtime.GOOS, runtime.GOARCH)
-		if err != nil {
-			return err
-		}
-		if err := writeExecutable(target, data); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	version, err := exec.CommandContext(ctx, target, "--version").Output()
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(string(version)) != "ccusage "+usagereport.Version {
-		return fmt.Errorf("expected ccusage %s, got %s", usagereport.Version, strings.TrimSpace(string(version)))
 	}
 	options := filepath.Join(directory, "ccusage.json")
 	if configPath != "" {
@@ -568,6 +556,71 @@ func install(ctx context.Context, directory string, config *Config, readErr erro
 	}
 	fmt.Fprintf(output, "Installed in %s. All usage sources are included; ccusage %s.\n", directory, usagereport.Version)
 	return nil
+}
+
+// Explicit connection overrides repair a failed installation without reenrollment.
+func updateConnection(directory string, config *Config, address, ca string) error {
+	next := *config
+	if address != "" {
+		next.URL = strings.TrimRight(address, "/")
+	}
+	if ca != "" {
+		next.CA = ca
+	}
+	client, err := transport(next)
+	if err != nil {
+		return err
+	}
+	client.CloseIdleConnections()
+	if ca != "" {
+		data, err := os.ReadFile(ca)
+		if err != nil {
+			return err
+		}
+		// Keep the previous CA usable if saving the new configuration fails.
+		next.CA = filepath.Join(directory, fmt.Sprintf("broker-ca-%x.pem", sha256.Sum256(data)))
+		if err := os.WriteFile(next.CA, data, 0600); err != nil {
+			return err
+		}
+	}
+	if err := atomicJSON(filepath.Join(directory, "config.json"), next); err != nil {
+		return err
+	}
+	*config = next
+	return nil
+}
+
+// Validate the replacement before touching the installed collector. npm ships only
+// the helper; a changed collector pin must replace an existing older collector.
+func ensureCollector(ctx context.Context, directory, source string, fetch func(context.Context, string, string) ([]byte, error)) error {
+	target := filepath.Join(directory, executable("ccusage"))
+	valid := func(path string) bool {
+		version, err := exec.CommandContext(ctx, path, "--version").Output()
+		return err == nil && strings.TrimSpace(string(version)) == "ccusage "+usagereport.Version
+	}
+	if valid(target) {
+		return nil
+	}
+	data, err := os.ReadFile(filepath.Join(source, executable("ccusage")))
+	if errors.Is(err, os.ErrNotExist) || source == directory {
+		data, err = fetch(ctx, runtime.GOOS, runtime.GOARCH)
+	}
+	if err != nil {
+		return err
+	}
+	staging, err := os.MkdirTemp(directory, ".collector-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(staging)
+	candidate := filepath.Join(staging, executable("ccusage"))
+	if err := writeExecutable(candidate, data); err != nil {
+		return err
+	}
+	if !valid(candidate) {
+		return fmt.Errorf("expected a working ccusage %s executable", usagereport.Version)
+	}
+	return replaceFile(candidate, target)
 }
 
 func writeExecutable(path string, data []byte) error {

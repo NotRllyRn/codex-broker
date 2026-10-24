@@ -83,6 +83,10 @@ func TestDailyUsagePricesFiltersDeduplicatesAndSurvivesPruning(t *testing.T) {
 	if summary.Responses != 1 || summary.ProcessedTokens != 125 || summary.UncachedInput != 20 || summary.CachedInput != 80 || summary.Output != 25 || len(summary.Daily) != 7 {
 		t.Fatalf("summary=%+v", summary)
 	}
+	if len(summary.Models) != 1 || summary.Models[0].Name != "gpt-test" || summary.Models[0].ProcessedTokens != 125 || !summary.Models[0].CostKnown {
+		t.Fatalf("proxy model breakdown: %+v", summary.Models)
+	}
+	closeTo(t, summary.Models[0].CostUSD, summary.CostUSD)
 	closeTo(t, summary.CostUSD, 0.000612)
 	closeTo(t, summary.CacheSavingsUSD, 0.000288)
 	closeTo(t, summary.Speed.Fast, summary.CostUSD)

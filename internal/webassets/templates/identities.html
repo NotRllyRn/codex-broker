@@ -1,7 +1,8 @@
 <section class="detail-section" id="usage-identities">
   <h2>Usage identities</h2>
   <p class="subtle">Combine ccusage reports from multiple devices under one name. All locally recorded usage is included, including HTTP proxy requests. Each device has its own upload-only credential.</p>
-  <p><a href="https://github.com/NotRllyRn/codex-broker/releases">Download a native usage sync bundle</a> · Extract both executables, then run <code>./codex-broker-usage install --broker-url https://YOUR-BROKER</code> on Linux/macOS or <code>.\codex-broker-usage.exe install --broker-url https://YOUR-BROKER</code> on Windows. Python, Node and Go are not required. <a href="https://github.com/NotRllyRn/codex-broker/actions">Unreleased branch builds</a>.</p>
+  <p>On each device, run <code>npx codex-broker@latest install --broker-url https://YOUR-BROKER</code> (Node.js 22 or newer), then enter the identity code at the hidden prompt. Replace the URL with your Broker address, including any root path; add <code>--ca /path/to/broker-ca.pem</code> for a private CA. Node is needed only for setup; syncing runs automatically in the background.</p>
+  <p>To upgrade, run <code>npx codex-broker@latest install</code> again. Existing credentials and usage history are preserved. Include the same <code>--state-dir</code> if customized. <a href="https://github.com/NotRllyRn/codex-broker/blob/main/docs/usage-sync.md">Setup and troubleshooting</a>.</p>
   {% if identity_code %}
   <div class="service-alert" role="status">
     <strong>Copy this identity code now. It will not be shown again.</strong>
@@ -45,7 +46,7 @@
   {% empty %}<p class="subtle">No usage identities exist.</p>{% endfor %}
   <form class="account-form" method="post" action="/settings/identities">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-    <label>Identity name <input name="name" maxlength="80" required placeholder="Tim" /></label>
+    <label>Identity name <input name="name" maxlength="80" required placeholder="Personal usage" /></label>
     <button class="primary-button" type="submit">Create identity and code</button>
   </form>
 </section>

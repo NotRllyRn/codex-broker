@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -274,4 +275,135 @@ func TestFailedJournalWriteNeverUploadsNewReports(t *testing.T) {
 	if requests != 1 {
 		t.Fatal("new usage uploaded without durable local state", requests)
 	}
+}
+
+func TestCollectorUpgradePreservesState(t *testing.T) {
+	binary := os.Getenv("CCUSAGE_TEST_BINARY")
+	if binary == "" {
+		t.Skip("set CCUSAGE_TEST_BINARY to test real collector upgrades")
+	}
+	collector, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, source := t.TempDir(), t.TempDir()
+	files := map[string][]byte{
+		"config.json":   []byte(`{"device_id":"existing-device","token":"existing-token"}`),
+		"reports.json":  []byte(`{"2026-09-01":{"revision":3,"acked":false}}`),
+		"ccusage.json":  []byte(`{"timezone":"UTC"}`),
+		"broker-ca.pem": []byte("existing private CA"),
+	}
+	for name, data := range files {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := filepath.Join(directory, executable("ccusage"))
+	old := []byte("obsolete collector")
+	if err := writeExecutable(target, old); err != nil {
+		t.Fatal(err)
+	}
+	fetch := func(context.Context, string, string) ([]byte, error) { return []byte("broken download"), nil }
+	if err := ensureCollector(t.Context(), directory, source, fetch); err == nil {
+		t.Fatal("accepted broken replacement")
+	}
+	if data, _ := os.ReadFile(target); !bytes.Equal(data, old) {
+		t.Fatal("failed upgrade replaced old collector")
+	}
+	calls := 0
+	fetch = func(context.Context, string, string) ([]byte, error) { calls++; return collector, nil }
+	for range 2 {
+		if err := ensureCollector(t.Context(), directory, source, fetch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("downloaded %d times, want one upgrade and no redundant download", calls)
+	}
+	var config Config
+	if err := readJSON(filepath.Join(directory, "config.json"), &config); err != nil {
+		t.Fatal(err)
+	}
+	if err := install(t.Context(), directory, &config, nil, "", "", "", "", false, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range files {
+		if got, err := os.ReadFile(filepath.Join(directory, name)); err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("upgrade changed %s: %v", name, err)
+		}
+	}
+}
+
+func TestUpdateConnectionPreservesEnrollment(t *testing.T) {
+	for _, enrolled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enrolled), func(t *testing.T) {
+			directory := t.TempDir()
+			config := Config{URL: "https://wrong.example", Code: "pending-code", Installation: "existing-installation", Token: "existing-token", Environment: []string{"CODEX_HOME=/example"}}
+			if enrolled {
+				config.Code, config.Device = "", "existing-device"
+			}
+			want := config
+			want.URL = "https://correct.example/broker"
+			journal := []byte(`{"2026-09-01":{"revision":3,"acked":false}}`)
+			if err := os.WriteFile(filepath.Join(directory, "reports.json"), journal, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := updateConnection(directory, &config, want.URL+"/", ""); err != nil {
+				t.Fatal(err)
+			}
+			var saved Config
+			if err := readJSON(filepath.Join(directory, "config.json"), &saved); err != nil {
+				t.Fatal(err)
+			}
+			gotJSON, _ := json.Marshal(saved)
+			wantJSON, _ := json.Marshal(want)
+			if !bytes.Equal(gotJSON, wantJSON) {
+				t.Fatal("connection update changed enrollment or environment")
+			}
+			for _, invalid := range []string{"http://insecure.example", "https://example.com?secret=value", "not a URL"} {
+				if err := updateConnection(directory, &config, invalid, ""); err == nil {
+					t.Fatal("accepted invalid URL", invalid)
+				}
+			}
+			if err := updateConnection(directory, &config, "https://another.example", filepath.Join(directory, "missing.pem")); err == nil {
+				t.Fatal("accepted missing CA")
+			}
+			data, _ := os.ReadFile(filepath.Join(directory, "config.json"))
+			if !bytes.Equal(data, wantJSON) || config.URL != want.URL {
+				t.Fatal("failed override changed saved connection")
+			}
+			data, _ = os.ReadFile(filepath.Join(directory, "reports.json"))
+			if !bytes.Equal(data, journal) {
+				t.Fatal("connection update changed queued reports")
+			}
+		})
+	}
+}
+
+func TestUpdateConnectionCopiesValidatedCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.NotFoundHandler())
+	defer server.Close()
+	directory := t.TempDir()
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	if err := os.WriteFile(ca, certificate, 0600); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{URL: server.URL, Device: "existing-device"}
+	if err := updateConnection(directory, &config, "", ca); err != nil {
+		t.Fatal(err)
+	}
+	if config.CA == ca || filepath.Dir(config.CA) != directory {
+		t.Fatal("CA was not copied into private state")
+	}
+	client, err := transport(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.CloseIdleConnections()
+	response, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatal("copied CA did not establish trust:", err)
+	}
+	response.Body.Close()
 }

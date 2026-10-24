@@ -7,3 +7,5 @@ sources/
 /codex-broker
 /codex-broker-adapter
 coverage.out
+
+/packages/usage/native/

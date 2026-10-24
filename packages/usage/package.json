@@ -1,0 +1,12 @@
+{
+  "name": "codex-broker",
+  "version": "0.1.0",
+  "description": "Install and manage native Codex Broker device usage sync",
+  "type": "module",
+  "bin": { "codex-broker-usage": "cli.mjs" },
+  "files": ["cli.mjs", "native/", "README.md"],
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/NotRllyRn/codex-broker.git", "directory": "packages/usage" },
+  "publishConfig": { "access": "public" },
+  "scripts": { "build": "node build.mjs", "test": "node --test test/*.test.mjs" }
+}

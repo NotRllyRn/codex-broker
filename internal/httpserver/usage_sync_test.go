@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/pem"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,6 +105,21 @@ func TestNativeUsageSyncHTTPS(t *testing.T) {
 	summary, err := usage.ReadIdentitySummary(t.Context(), s.App.Store.DB, nil, owner.ID, "all", 0, time.Now())
 	if err != nil || summary.Output != 12 || summary.Reports != 1 || summary.Responses != 0 {
 		t.Fatalf("summary=%+v err=%v", summary, err)
+	}
+	if len(summary.Models) != 2 {
+		t.Fatalf("uploaded model breakdown missing: %+v", summary.Models)
+	}
+	var modelTokens int64
+	var modelCost float64
+	for _, model := range summary.Models {
+		modelTokens += model.ProcessedTokens
+		modelCost += model.CostUSD
+		if !model.CostKnown {
+			t.Fatal("ccusage model cost missing")
+		}
+	}
+	if modelTokens != summary.ProcessedTokens || math.Abs(modelCost-summary.CostUSD) > 1e-9 {
+		t.Fatal("model breakdown does not match uploaded totals", summary.Models)
 	}
 	config, err := os.ReadFile(filepath.Join(state, "config.json"))
 	if err != nil || bytes.Contains(config, []byte(code)) {
