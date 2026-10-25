@@ -18,7 +18,10 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 )
 
-type Client struct{ ID, Name, Prefix string }
+type Client struct {
+	ID, Name, Prefix string
+	StreamerMode     bool
+}
 
 type RouteRequest struct{ SessionID, TurnID, PreferredAccountID, FailedAccountID, FailureKind string }
 
@@ -221,6 +224,9 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		if kind == "" || kind == "auth" && attemptCounts[selected.AccountID] >= 2 {
 			if isResponse && response.StatusCode == http.StatusOK {
 				notice := Notice(*selected)
+				if key.StreamerMode {
+					notice.AccountID, notice.AccountLabel = "", "Usage stats"
+				}
 				if failovers > 0 {
 					notice.Status = "↻ failover"
 				} else if retries > 0 {

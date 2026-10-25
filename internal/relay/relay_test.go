@@ -352,3 +352,42 @@ func TestOfflineRelayScopes(t *testing.T) {
 		t.Fatal("older snapshot accepted")
 	}
 }
+
+func TestRelayStreamerModeSurvivesOfflineCache(t *testing.T) {
+	r, token := relayFixture(t)
+	r.state.Snapshot.Clients[0].StreamerMode = true
+	r.mu.Lock()
+	err := r.saveLocked()
+	r.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := &Relay{config: r.config, state: state{Exclusions: map[string]int64{}}}
+	if err := loaded.load(); err != nil {
+		t.Fatal(err)
+	}
+	key, err := loaded.Authenticate(httptest.NewRequest("POST", "/v1/responses", nil), token)
+	if err != nil || !key.StreamerMode {
+		t.Fatalf("cached key=%+v err=%v", key, err)
+	}
+	server := NewServer(loaded)
+	server.engine.Client = &http.Client{Transport: roundTrip(func(*http.Request) (*http.Response, error) {
+		body := "data: {\"type\":\"response.created\",\"response\":{}}\n\n" +
+			"data: {\"type\":\"response.output_item.added\",\"item\":{\"id\":\"answer\",\"type\":\"message\",\"role\":\"assistant\",\"phase\":\"final_answer\"}}\n\n" +
+			"data: {\"type\":\"response.output_text.delta\",\"item_id\":\"answer\",\"delta\":\"Hello\"}\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"output\":[]}}\n\n"
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	request := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"test","input":[]}`))
+	request.Header.Set("Authorization", "Bearer "+token)
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, request)
+	body := response.Body.String()
+	if response.Code != 200 || strings.Contains(body, "Active") || !strings.Contains(body, "Usage stats") || !strings.Contains(body, "5h 80%") {
+		t.Fatalf("response=%d %s", response.Code, body)
+	}
+	loaded.state.Snapshot.ProtocolVersion--
+	if _, err := loaded.Authenticate(request, token); err == nil {
+		t.Fatal("accepted cache from older protocol without privacy support")
+	}
+}

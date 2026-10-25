@@ -22,14 +22,14 @@ func (a *Application) RelaySnapshot(ctx context.Context, relayID string) (relayp
 	if err != nil {
 		return relayprotocol.Snapshot{}, err
 	}
-	rows, err := a.Store.DB.QueryContext(ctx, "SELECT k.key_id,k.name,k.key_prefix,k.secret_hash,EXISTS(SELECT 1 FROM client_key_labels kl WHERE kl.key_id=k.key_id) FROM client_api_keys k WHERE k.revoked_at_ms IS NULL ORDER BY k.created_at_ms,k.key_id")
+	rows, err := a.Store.DB.QueryContext(ctx, "SELECT k.key_id,k.name,k.key_prefix,k.secret_hash,k.streamer_mode,EXISTS(SELECT 1 FROM client_key_labels kl WHERE kl.key_id=k.key_id) FROM client_api_keys k WHERE k.revoked_at_ms IS NULL ORDER BY k.created_at_ms,k.key_id")
 	if err != nil {
 		return relayprotocol.Snapshot{}, err
 	}
 	var clients []relayprotocol.Client
 	for rows.Next() {
 		var item relayprotocol.Client
-		if err := rows.Scan(&item.ID, &item.Name, &item.Prefix, &item.Digest, &item.Restricted); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &item.Prefix, &item.Digest, &item.StreamerMode, &item.Restricted); err != nil {
 			rows.Close()
 			return relayprotocol.Snapshot{}, err
 		}
