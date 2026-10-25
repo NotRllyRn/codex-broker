@@ -51,7 +51,8 @@ func (r *renderer) render(writer http.ResponseWriter, status int, name string, c
 }
 
 func (s *Server) render(w http.ResponseWriter, request *http.Request, status int, name string, context pongo2.Context) error {
-	context["streamer_mode"] = cookie(request, "codex-broker.streamer") == "on"
+	context["streamer_dashboard"] = name == "dashboard.html"
+	context["streamer_mode"] = name == "dashboard.html" && cookie(request, "codex-broker.streamer") == "on"
 	noStore(w)
 	return s.renderer.render(w, status, name, context)
 }

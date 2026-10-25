@@ -9,7 +9,7 @@
 </section>
 <form class="filter-bar" method="get">
   <label
-    ><span>Search</span><input type="search" name="q" value="{% if not streamer_mode %}{{ q }}{% endif %}" {% if streamer_mode %}disabled{% endif %} /></label
+    ><span>Search</span><input type="search" name="q" value="{{ q }}" /></label
   ><label
     ><span>Level</span
     ><select name="level">
@@ -34,7 +34,7 @@
       <span class="log-level">{{ event.level }}</span><time>{{ event.ts }}</time
       ><strong>{{ event.event }}</strong>
     </header>
-    <pre>{{ event|json|private:streamer_mode }}</pre>
+    <pre>{{ event|json }}</pre>
   </article>
   {% endfor %}{% else %}
   <div class="empty-state">

@@ -343,10 +343,11 @@ a trusted client from copying an already-leased access token.
 
 ### Streamer modes
 
-Use **Streamer mode** in the dashboard header to hide account names, emails,
+Use **Streamer mode** in the accounts dashboard header to hide account names,
 labels, client names/key prefixes, usage identities, and device names behind
-generic labels. The preference stays in this browser across navigation and
-reloads. Turn it off to restore names and sensitive editors. Usage statistics
+generic labels on that dashboard. The preference stays in this browser across
+navigation and reloads. Settings and other pages always show their normal names
+and controls. Turn it off to restore dashboard names. Usage statistics
 remain visible. This is display privacy; authenticated APIs and downloaded data
 retain their normal contents.
 

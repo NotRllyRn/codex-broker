@@ -6,23 +6,23 @@
   {% if identity_code %}
   <div class="service-alert" role="status">
     <strong>Copy this identity code now. It will not be shown again.</strong>
-    <code>{{ identity_code|private:streamer_mode }}</code>
+    <code>{{ identity_code }}</code>
     <p>Enter it at the usage sync installer's private prompt on each device. Rotating this code leaves existing devices connected.</p>
   </div>
   {% endif %}
   {% for identity in identities %}
   <article class="detail-section">
-    <h3>{{ identity.Name|private:streamer_mode }}</h3>
-    {% if not streamer_mode %}<form class="account-form" method="post" action="/settings/identities/{{ identity.ID }}/rename">
+    <h3>{{ identity.Name }}</h3>
+    <form class="account-form" method="post" action="/settings/identities/{{ identity.ID }}/rename">
       <input type="hidden" name="csrf_token" value="{{ csrf }}" />
-      <label>Name <input name="name" value="{{ identity.Name|private:streamer_mode }}" maxlength="80" required /></label>
+      <label>Name <input name="name" value="{{ identity.Name }}" maxlength="80" required /></label>
       <button class="quiet-button" type="submit">Rename</button>
-    </form>{% endif %}
+    </form>
     <div class="inline-actions">
-      {% if not streamer_mode %}<form method="post" action="/settings/identities/{{ identity.ID }}/rotate" data-confirm="Replace this identity's enrollment code? Existing devices stay connected.">
+      <form method="post" action="/settings/identities/{{ identity.ID }}/rotate" data-confirm="Replace this identity's enrollment code? Existing devices stay connected.">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <button class="quiet-button" type="submit">Generate new code</button>
-      </form>{% endif %}
+      </form>
       <form method="post" action="/settings/identities/{{ identity.ID }}/delete" data-confirm="Permanently delete this identity, its devices, and all of its usage history?">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <button class="danger-button" type="submit">Delete identity and history</button>
@@ -31,7 +31,7 @@
     <div class="data-list">
       {% for device in usage_devices %}{% if device.IdentityID == identity.ID %}
       <article>
-        <strong>{{ device.Name|private:streamer_mode }}</strong><small>Device {{ device.ID|private:streamer_mode }}</small>
+        <strong>{{ device.Name }}</strong><small>Device {{ device.ID }}</small>
         <span>Last sync: {{ device.LastSyncText|default:"never" }}{% if device.Revoked.Valid %} · Revoked{% endif %}</span>
         {% if not device.Revoked.Valid %}
         <form method="post" action="/settings/usage-devices/{{ device.ID }}/revoke" data-confirm="Stop this device uploading? Its recorded usage will remain.">
@@ -44,11 +44,9 @@
     </div>
   </article>
   {% empty %}<p class="subtle">No usage identities exist.</p>{% endfor %}
-  {% if not streamer_mode %}
   <form class="account-form" method="post" action="/settings/identities">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
     <label>Identity name <input name="name" maxlength="80" required placeholder="Personal usage" /></label>
     <button class="primary-button" type="submit">Create identity and code</button>
   </form>
-  {% else %}<p class="subtle">Turn off dashboard streamer mode to create or rotate identity codes.</p>{% endif %}
 </section>

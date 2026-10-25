@@ -56,7 +56,7 @@
   <div class="data-list">
     {% for label in labels %}
     <article>
-      <strong>{{ label.Name|private:streamer_mode }}</strong>
+      <strong>{{ label.Name }}</strong>
       <form method="post" action="/settings/labels/{{ label.ID }}/delete" data-confirm="Delete this label from all accounts?">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <button class="danger-button" type="submit">Delete</button>
@@ -86,15 +86,15 @@
   {% if issued_key %}
   <div class="service-alert" role="status">
     <strong>Copy this key now. It will not be shown again.</strong>
-    <code>{{ issued_key.token|private:streamer_mode }}</code>
+    <code>{{ issued_key.token }}</code>
   </div>
   {% endif %} {% if client_keys %}
   <div class="data-list">
     {% for key in client_keys %}
     <article>
-      <strong>{{ key.name|private:streamer_mode }}</strong
+      <strong>{{ key.name }}</strong
       ><span
-        >{{ key.key_prefix|private:streamer_mode }}… | {% if key.revoked_at_ms %}Revoked{% else %}Active{% endif %}</span
+        >{{ key.key_prefix }}… | {% if key.revoked_at_ms %}Revoked{% else %}Active{% endif %}</span
       >
       <small
         >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms|default_if_none:"never" }}</small
@@ -133,7 +133,6 @@
   {% else %}
   <p class="subtle">No client keys exist.</p>
   {% endif %}
-  {% if not streamer_mode %}
   <form class="account-form" method="post" action="/settings/client-keys">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
     <label for="client_key_name">Client name</label>
@@ -147,7 +146,6 @@
     {% include "key_scope_fields.html" %}
     <button class="primary-button" type="submit">Create key</button>
   </form>
-  {% else %}<p class="subtle">Turn off dashboard streamer mode to create and copy a new key.</p>{% endif %}
 </section>
 <section class="detail-section settings-webhooks">
   <h2>Webhook destinations</h2>
@@ -159,7 +157,7 @@
   <div class="data-list">
     {% for destination in destinations %}
     <article>
-      <strong>{{ destination.display_name|private:streamer_mode }}</strong
+      <strong>{{ destination.display_name }}</strong
       ><span
         >{{ destination.kind|title }} | {% if destination.enabled %}Enabled{% else %}Disabled{% endif %}</span
       ><small>Created {{ destination.created_at_ms }}</small>

@@ -125,8 +125,8 @@ func TestStreamerSettingsAuthorizationAndBrowserPreference(t *testing.T) {
 	}
 	// Dashboard privacy has no effect on the saved key flag.
 	page := request("GET", "/settings", nil, true, true)
-	if page.Code != 200 || strings.Contains(page.Body.String(), key.Name) || strings.Contains(page.Body.String(), key.Prefix) || !strings.Contains(page.Body.String(), "Streamer mode: off</button>") {
-		t.Fatalf("private settings=%d %s", page.Code, page.Body.String())
+	if page.Code != 200 || !strings.Contains(page.Body.String(), key.Name) || !strings.Contains(page.Body.String(), key.Prefix) || !strings.Contains(page.Body.String(), "Streamer mode: off</button>") {
+		t.Fatalf("unmasked settings=%d %s", page.Code, page.Body.String())
 	}
 	if got := request("POST", path, form, true, true); got.Code != 303 {
 		t.Fatalf("update=%d %s", got.Code, got.Body.String())
@@ -140,35 +140,39 @@ func TestStreamerSettingsAuthorizationAndBrowserPreference(t *testing.T) {
 	}
 }
 
-func TestStreamerTemplatesHideSensitiveTextAndEditors(t *testing.T) {
+func TestStreamerRenderingIsDashboardOnly(t *testing.T) {
 	renderer, err := newRenderer("templates")
 	if err != nil {
 		t.Fatal(err)
 	}
+	s := &Server{renderer: renderer}
 	const sensitive = "private-example@example.test"
 	cases := map[string]pongo2.Context{
 		"dashboard.html":      {"accounts": []map[string]any{{"display_name": sensitive, "labels": []string{sensitive}, "evidence": sensitive}}, "profiles": []map[string]any{{"ID": "all", "Label": sensitive}}, "identities": []map[string]any{{"ID": "identity", "Name": sensitive}}, "usage_devices": []map[string]any{{"Name": sensitive, "ID": "device"}}},
-		"account_detail.html": {"detail": map[string]any{"account": map[string]any{"display_name": sensitive, "upstream_email": sensitive, "workspace_constraint": sensitive, "labels": []string{sensitive}}}},
-		"identities.html":     {"identities": []map[string]any{{"ID": "identity", "Name": sensitive}}, "usage_devices": []map[string]any{{"Name": sensitive, "ID": "device", "IdentityID": "identity"}}, "identity_code": sensitive},
-		"settings.html":       {"client_keys": []map[string]any{{"name": sensitive, "key_prefix": sensitive}}, "labels": []map[string]any{{"Name": sensitive}}, "issued_key": map[string]any{"token": sensitive}},
+		"account_detail.html": {"detail": map[string]any{"account": map[string]any{"display_name": sensitive, "upstream_email": sensitive, "labels": []string{sensitive}}}},
+		"settings.html":       {"client_keys": []map[string]any{{"name": sensitive, "key_prefix": sensitive}}, "identities": []map[string]any{{"ID": "identity", "Name": sensitive}}, "issued_key": map[string]any{"token": sensitive}},
 	}
 	for name, context := range cases {
 		t.Run(name, func(t *testing.T) {
 			for _, enabled := range []bool{true, false} {
-				context["streamer_mode"] = enabled
+				request := httptest.NewRequest("GET", "/", nil)
+				if enabled {
+					request.AddCookie(&http.Cookie{Name: "codex-broker.streamer", Value: "on"})
+				}
 				response := httptest.NewRecorder()
-				if err := renderer.render(response, 200, name, context); err != nil {
+				if err := s.render(response, request, 200, name, context); err != nil {
 					t.Fatal(err)
 				}
 				body := response.Body.String()
-				if name == "identities.html" && !strings.Contains(body, "/settings/usage-devices/device/revoke") {
-					t.Fatal("device action target was masked")
+				masked := enabled && name == "dashboard.html"
+				if strings.Contains(body, sensitive) == masked {
+					t.Fatalf("page=%s privacy=%v body=%s", name, enabled, body)
 				}
-				if strings.Contains(body, sensitive) == enabled {
-					t.Fatalf("privacy=%v body=%s", enabled, body)
+				if strings.Contains(body, "data-streamer-toggle") != (name == "dashboard.html") {
+					t.Fatal("dashboard toggle shown on wrong page")
 				}
-				if enabled && (strings.Contains(body, `name="confirmation"`) || strings.Contains(body, `/rename"`) || strings.Contains(body, `id="account_labels"`) || strings.Contains(body, `>Create key</button>`) || strings.Contains(body, `/rotate"`) || strings.Contains(body, `>Create identity and code</button>`)) {
-					t.Fatal("sensitive editor visible")
+				if name == "settings.html" && (!strings.Contains(body, ">Create key</button>") || !strings.Contains(body, ">Create identity and code</button>") || !strings.Contains(body, "/rename\"")) {
+					t.Fatal("settings controls hidden")
 				}
 			}
 		})

@@ -2,7 +2,7 @@
   <legend>Account access</legend>
   {% for label in scope_options %}
   <label>
-    <span>{{ label.name|private:streamer_mode }}</span>
+    <span>{{ label.name }}</span>
     <select name="label_{{ label.id }}">
       <option value=""{% if not label.mode %} selected{% endif %}>No rule</option>
       <option value="allow"{% if label.mode == "allow" %} selected{% endif %}>Allow</option>

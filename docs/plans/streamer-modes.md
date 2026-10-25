@@ -4,10 +4,11 @@
 
 Keep two independent, opt-in controls. Dashboard streamer mode belongs to this
 browser and persists in a cookie scoped to the application's root path. Render
-sensitive labels generically on the server, including account names/emails,
+sensitive dashboard labels generically on the server, including account names,
 labels, client keys, identities, and devices. Mask live profile/proxy labels too.
 Reload on toggle so navigation and refreshes never flash the original labels.
-Hide sensitive editors while enabled rather than submitting replacement names.
+Apply browser privacy only to the accounts dashboard. Settings and other pages
+keep their normal names and controls; the toggle appears only on the dashboard.
 This is presentation privacy; it does not change stored data or API permissions.
 
 Client-key streamer mode is a SQLite boolean defaulting to false for existing and
