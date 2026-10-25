@@ -161,10 +161,13 @@ func TestStreamerTemplatesHideSensitiveTextAndEditors(t *testing.T) {
 					t.Fatal(err)
 				}
 				body := response.Body.String()
+				if name == "identities.html" && !strings.Contains(body, "/settings/usage-devices/device/revoke") {
+					t.Fatal("device action target was masked")
+				}
 				if strings.Contains(body, sensitive) == enabled {
 					t.Fatalf("privacy=%v body=%s", enabled, body)
 				}
-				if enabled && (strings.Contains(body, `name="confirmation"`) || strings.Contains(body, `/rename"`) || strings.Contains(body, `id="account_labels"`)) {
+				if enabled && (strings.Contains(body, `name="confirmation"`) || strings.Contains(body, `/rename"`) || strings.Contains(body, `id="account_labels"`) || strings.Contains(body, `>Create key</button>`) || strings.Contains(body, `/rotate"`) || strings.Contains(body, `>Create identity and code</button>`)) {
 					t.Fatal("sensitive editor visible")
 				}
 			}

@@ -19,10 +19,10 @@
       <button class="quiet-button" type="submit">Rename</button>
     </form>{% endif %}
     <div class="inline-actions">
-      <form method="post" action="/settings/identities/{{ identity.ID }}/rotate" data-confirm="Replace this identity's enrollment code? Existing devices stay connected.">
+      {% if not streamer_mode %}<form method="post" action="/settings/identities/{{ identity.ID }}/rotate" data-confirm="Replace this identity's enrollment code? Existing devices stay connected.">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <button class="quiet-button" type="submit">Generate new code</button>
-      </form>
+      </form>{% endif %}
       <form method="post" action="/settings/identities/{{ identity.ID }}/delete" data-confirm="Permanently delete this identity, its devices, and all of its usage history?">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <button class="danger-button" type="submit">Delete identity and history</button>
@@ -44,9 +44,11 @@
     </div>
   </article>
   {% empty %}<p class="subtle">No usage identities exist.</p>{% endfor %}
+  {% if not streamer_mode %}
   <form class="account-form" method="post" action="/settings/identities">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
     <label>Identity name <input name="name" maxlength="80" required placeholder="Personal usage" /></label>
     <button class="primary-button" type="submit">Create identity and code</button>
   </form>
+  {% else %}<p class="subtle">Turn off dashboard streamer mode to create or rotate identity codes.</p>{% endif %}
 </section>

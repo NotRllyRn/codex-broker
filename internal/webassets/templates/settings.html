@@ -133,6 +133,7 @@
   {% else %}
   <p class="subtle">No client keys exist.</p>
   {% endif %}
+  {% if not streamer_mode %}
   <form class="account-form" method="post" action="/settings/client-keys">
     <input type="hidden" name="csrf_token" value="{{ csrf }}" />
     <label for="client_key_name">Client name</label>
@@ -146,6 +147,7 @@
     {% include "key_scope_fields.html" %}
     <button class="primary-button" type="submit">Create key</button>
   </form>
+  {% else %}<p class="subtle">Turn off dashboard streamer mode to create and copy a new key.</p>{% endif %}
 </section>
 <section class="detail-section settings-webhooks">
   <h2>Webhook destinations</h2>
