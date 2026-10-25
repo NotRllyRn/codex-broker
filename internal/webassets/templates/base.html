@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="system" data-root-path="{{ root_path }}">
+<html lang="en" data-theme="system" data-root-path="{{ root_path }}" data-streamer-mode="{% if streamer_mode %}on{% else %}off{% endif %}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -22,6 +22,7 @@
         <a href="/settings">Settings</a>
       </nav>
       <div class="top-actions">
+        {% if streamer_dashboard %}<button class="quiet-button" type="button" data-streamer-toggle aria-pressed="{% if streamer_mode %}true{% else %}false{% endif %}">Streamer mode: {% if streamer_mode %}on{% else %}off{% endif %}</button>{% endif %}
         <button
           class="theme-toggle"
           type="button"

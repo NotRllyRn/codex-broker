@@ -99,7 +99,7 @@ func (r *Relay) Authenticate(_ *http.Request, token string) (*gateway.Client, er
 	var authenticated *gateway.Client
 	for _, key := range r.state.Snapshot.Clients {
 		if subtle.ConstantTimeCompare(key.Digest, digest[:]) == 1 {
-			authenticated = &gateway.Client{ID: key.ID, Name: key.Name, Prefix: key.Prefix}
+			authenticated = &gateway.Client{ID: key.ID, Name: key.Name, Prefix: key.Prefix, StreamerMode: key.StreamerMode}
 		}
 	}
 	if authenticated == nil {

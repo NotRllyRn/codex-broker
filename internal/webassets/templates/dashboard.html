@@ -117,7 +117,7 @@
     <label class="profile-picker">
       <span>View account</span>
       <select data-profile-select>
-        {% for profile in profiles %}<option value="{{ profile.ID }}">{{ profile.Label }}</option>{% endfor %}
+        {% for profile in profiles %}<option value="{{ profile.ID }}">{{ profile.Label|private:streamer_mode }}</option>{% endfor %}
       </select>
     </label>
   </header>
@@ -125,8 +125,8 @@
     <header class="usage-heading">
       <div><h3 id="usage-title">Usage</h3><p>Recorded usage · API estimate · UTC days</p></div>
       <div class="usage-controls">
-        <label><select data-usage-identity aria-label="Usage source"><option value="all" selected>Client usage · all identities</option><option value="">Broker proxy · selected account</option>{% for identity in identities %}<option value="{{ identity.ID }}">{{ identity.Name }}</option>{% endfor %}</select></label>
-        <label><select data-usage-device aria-label="Usage device"><option value="all">All devices</option>{% for device in usage_devices %}<option value="{{ device.ID }}" data-identity="{{ device.IdentityID }}">{{ device.Name }} · {{ device.ID|slice:":8" }}</option>{% endfor %}</select></label>
+        <label><select data-usage-identity aria-label="Usage source"><option value="all" selected>Client usage · all identities</option><option value="">Broker proxy · selected account</option>{% for identity in identities %}<option value="{{ identity.ID }}">{{ identity.Name|private:streamer_mode }}</option>{% endfor %}</select></label>
+        <label><select data-usage-device aria-label="Usage device"><option value="all">All devices</option>{% for device in usage_devices %}<option value="{{ device.ID }}" data-identity="{{ device.IdentityID }}">{{ device.Name|private:streamer_mode }} · {{ device.ID|slice:":8"|private:streamer_mode }}</option>{% endfor %}</select></label>
         <label><select data-usage-provider aria-label="Model family (across all providers and agents)"><option value="all">All model families</option><option value="openai" selected>OpenAI / Codex models</option><option value="anthropic">Anthropic models</option><option value="google">Google models</option><option value="other">Other / unknown models</option></select></label>
         <label><select data-usage-model aria-label="Usage model"><option value="all">All models</option></select></label>
         <div class="usage-toggle" role="group" aria-label="Usage metric">
@@ -196,7 +196,7 @@
 <form class="filter-bar" method="get" action="/">
   <label
     ><span>Find account</span
-    ><input type="search" name="q" value="{{ q }}" placeholder="Name or label"
+    ><input type="search" name="q" value="{% if not streamer_mode %}{{ q }}{% endif %}" {% if streamer_mode %}disabled{% endif %} placeholder="Name or label"
   /></label>
   <label
     ><span>Status</span
@@ -233,9 +233,9 @@
     <h2>Attention queue</h2>
     {% if attention %}{% for account in attention %}
     <a href="/accounts/{{ account.public_token }}"
-      ><strong>{{ account.display_name }}</strong
+      ><strong>{{ account.display_name|private:streamer_mode }}</strong
       ><span>{{ account.cycle_label|default:account.overall_state|humanize|title }}</span
-      ><small>{{ account.evidence }}</small></a
+      ><small>{{ account.evidence|private:streamer_mode }}</small></a
     >
     {% endfor %}{% else %}
     <p class="subtle">No account currently needs attention.</p>
@@ -262,10 +262,10 @@
         <div>
           <h2>
             <a href="/accounts/{{ account.public_token }}"
-              >{{ account.display_name }}</a
+              >{{ account.display_name|private:streamer_mode }}</a
             >
           </h2>
-          <p>{{ account.labels|join:", "|default:"No labels" }}</p>
+          <p>{{ account.labels|join:", "|default:"No labels"|private:streamer_mode }}</p>
         </div>
         <span class="status-label"
           >{{ account.cycle_label|default:account.overall_state|humanize|title }}</span

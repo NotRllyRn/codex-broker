@@ -27,6 +27,7 @@ type ClientKey struct {
 	LastUsedAtMS     sql.NullInt64
 	RevokedAtMS      sql.NullInt64
 	Scopes           []LabelScope
+	StreamerMode     bool
 }
 
 func NewClientKeys(database *store.Store) *ClientKeys { return &ClientKeys{database} }
@@ -44,7 +45,7 @@ func (c *ClientKeys) Create(ctx context.Context, displayName string, scopes ...L
 	issued := IssuedClientKey{ID: core.NewID(), Name: name, Token: "cbk_" + core.RandomToken(32), CreatedAtMS: time.Now().UnixMilli()}
 	issued.Prefix = issued.Token[:12]
 	err := c.store.Write(ctx, func(connection store.Executor) error {
-		_, err := connection.ExecContext(ctx, "INSERT INTO client_api_keys VALUES(?,?,?,?,?,NULL,NULL)", issued.ID, issued.Name, issued.Prefix, KeyDigest(issued.Token), issued.CreatedAtMS)
+		_, err := connection.ExecContext(ctx, "INSERT INTO client_api_keys(key_id,name,key_prefix,secret_hash,created_at_ms) VALUES(?,?,?,?,?)", issued.ID, issued.Name, issued.Prefix, KeyDigest(issued.Token), issued.CreatedAtMS)
 		if err != nil {
 			return err
 		}
@@ -57,7 +58,7 @@ func (c *ClientKeys) Authenticate(ctx context.Context, token string) (*ClientKey
 	now := time.Now().UnixMilli()
 	var authenticated *ClientKey
 	err := c.store.Write(ctx, func(connection store.Executor) error {
-		rows, err := connection.QueryContext(ctx, "SELECT key_id,name,key_prefix,secret_hash,created_at_ms,last_used_at_ms,revoked_at_ms FROM client_api_keys WHERE revoked_at_ms IS NULL")
+		rows, err := connection.QueryContext(ctx, "SELECT key_id,name,key_prefix,secret_hash,created_at_ms,last_used_at_ms,revoked_at_ms,streamer_mode FROM client_api_keys WHERE revoked_at_ms IS NULL")
 		if err != nil {
 			return err
 		}
@@ -66,7 +67,7 @@ func (c *ClientKeys) Authenticate(ctx context.Context, token string) (*ClientKey
 		for rows.Next() {
 			var key ClientKey
 			var digest []byte
-			if err := rows.Scan(&key.ID, &key.Name, &key.Prefix, &digest, &key.CreatedAtMS, &key.LastUsedAtMS, &key.RevokedAtMS); err != nil {
+			if err := rows.Scan(&key.ID, &key.Name, &key.Prefix, &digest, &key.CreatedAtMS, &key.LastUsedAtMS, &key.RevokedAtMS, &key.StreamerMode); err != nil {
 				return err
 			}
 			if subtle.ConstantTimeCompare(digest, supplied) == 1 {
@@ -118,7 +119,7 @@ func (c *ClientKeys) DeleteRevoked(ctx context.Context, id string) (bool, error)
 }
 
 func (c *ClientKeys) List(ctx context.Context) ([]ClientKey, error) {
-	rows, err := c.store.DB.QueryContext(ctx, "SELECT key_id,name,key_prefix,created_at_ms,last_used_at_ms,revoked_at_ms FROM client_api_keys ORDER BY created_at_ms,key_id")
+	rows, err := c.store.DB.QueryContext(ctx, "SELECT key_id,name,key_prefix,created_at_ms,last_used_at_ms,revoked_at_ms,streamer_mode FROM client_api_keys ORDER BY created_at_ms,key_id")
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +127,7 @@ func (c *ClientKeys) List(ctx context.Context) ([]ClientKey, error) {
 	var keys []ClientKey
 	for rows.Next() {
 		var key ClientKey
-		if err := rows.Scan(&key.ID, &key.Name, &key.Prefix, &key.CreatedAtMS, &key.LastUsedAtMS, &key.RevokedAtMS); err != nil {
+		if err := rows.Scan(&key.ID, &key.Name, &key.Prefix, &key.CreatedAtMS, &key.LastUsedAtMS, &key.RevokedAtMS, &key.StreamerMode); err != nil {
 			return nil, err
 		}
 		keys = append(keys, key)
@@ -157,4 +158,21 @@ func (c *ClientKeys) List(ctx context.Context) ([]ClientKey, error) {
 		}
 	}
 	return keys, rules.Err()
+}
+
+func (c *ClientKeys) SetStreamerMode(ctx context.Context, id string, enabled bool) error {
+	return c.store.Write(ctx, func(connection store.Executor) error {
+		result, err := connection.ExecContext(ctx, "UPDATE client_api_keys SET streamer_mode=? WHERE key_id=? AND revoked_at_ms IS NULL", enabled, id)
+		if err != nil {
+			return err
+		}
+		count, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if count == 0 {
+			return core.NewError("CLIENT_KEY_NOT_FOUND", "Active client key not found", 404)
+		}
+		return nil
+	})
 }

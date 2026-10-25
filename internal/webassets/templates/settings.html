@@ -79,6 +79,9 @@
     Without label rules, keys can access all accounts, including unlabeled accounts.
     Allow requires any matching allowed label. Block overrides Allow.
     Account label changes update access; offline relays use their last synced scope.
+    Per-key streamer mode defaults to off. Enable it to replace account attribution
+    in proxy response notices with Usage stats, keeping quota information visible.
+    Relay edges apply changes after their next successful sync.
   </p>
   {% if issued_key %}
   <div class="service-alert" role="status">
@@ -98,6 +101,11 @@
       >
       <span>{% if key.restricted %}Label-scoped access{% else %}All accounts{% endif %}</span>
       {% if not key.revoked_at_ms %}
+      <form method="post" action="/settings/client-keys/{{ key.key_id }}/streamer-mode">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <input type="hidden" name="enabled" value="{% if key.streamer_mode %}false{% else %}true{% endif %}" />
+        <button class="quiet-button" type="submit" aria-pressed="{% if key.streamer_mode %}true{% else %}false{% endif %}">Streamer mode: {% if key.streamer_mode %}on{% else %}off{% endif %}</button>
+      </form>
       <details>
         <summary>Edit account access</summary>
         <form class="account-form" method="post" action="/settings/client-keys/{{ key.key_id }}/scopes">

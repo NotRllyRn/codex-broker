@@ -130,3 +130,37 @@ test("usage dashboard scopes identity/device queries and resets device on identi
  assert.equal(find("[data-usage-costs]").hidden,false);
 	assert.equal(new URL(urls.at(-1), "https://test").searchParams.has("identity"), false);
 });
+
+test("streamer preference persists at the root path and masks live labels", async () => {
+ const script = readFileSync(new URL("../internal/webassets/static/app.js", import.meta.url), "utf8");
+ for (const enabled of [false, true]) {
+  let click, reloads = 0, refresh;
+  const node = () => ({ dataset: {}, children: [], append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; } });
+  const nodes = new Map();
+  const find = (selector) => { if (!nodes.has(selector)) nodes.set(selector, node()); return nodes.get(selector); };
+  const select = find("[data-proxy-model]");
+  select.value = "all";
+  select.addEventListener = () => {};
+  const document = { querySelector: () => ({ addEventListener: (_, callback) => { click = callback; } }), createElement: node };
+  const context = { root: { dataset: { streamerMode: enabled ? "on" : "off" } }, rootPath: "/broker", document,
+   location: { protocol: "https:", reload: () => { reloads++; } }, Intl, Date, appPath: (path) => "/broker"+path,
+   relativeTime: () => "just now", setTimeout: (callback) => { refresh = callback; },
+   fetch: async () => ({ ok: true, json: async () => ({ ready: true, active: 1, requests: 2, failovers: 0, usage: [], quota_usage: [],
+    recent_clients: [{ name: "Work laptop", key_prefix: "cbk_example", active: 1, last_seen: new Date().toISOString() }],
+    relays: [{ id: "Example edge", state: "ready", ready: true, connected: true, protocol_version: 5, last_seen: new Date().toISOString() }] }) }) };
+  const preference = script.slice(script.indexOf("const streamerMode ="), script.indexOf("const themeButton ="));
+  runInNewContext(preference, context);
+  click();
+  assert.equal(reloads, 1);
+  assert.equal(document.cookie, `codex-broker.streamer=${enabled ? "off" : "on"}; Path=/broker; Max-Age=31536000; SameSite=Strict; Secure`);
+  document.querySelector = () => ({ querySelector: find, querySelectorAll: () => [] });
+  runInNewContext(script.slice(script.indexOf("const proxyCard =")), context);
+  for (let iteration = 0; iteration < 2; iteration++) {
+   await new Promise(setImmediate);
+   assert.equal(find("[data-proxy-clients]").children[0].children[0].textContent, enabled ? "Client 1" : "Work laptop · cbk_example");
+   assert.equal(find("[data-proxy-relays]").children[0].children[0].textContent, enabled ? "Relay 1" : "Example edge");
+   assert.match(find("[data-proxy-clients]").children[0].children[1].textContent, /1 active/);
+   if (!iteration) await refresh();
+  }
+ }
+});

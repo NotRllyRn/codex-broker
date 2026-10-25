@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 27 {
+		if version != 28 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -413,6 +413,7 @@ func TestRemoveExportsPreservesActiveCredential(t *testing.T) {
 	_, err = database.DB.Exec(`INSERT INTO accounts(account_id,public_token,display_name,enabled,lifecycle_state,created_at_ms,updated_at_ms) VALUES('a','p','Account',1,'ACTIVE',1,1);
  INSERT INTO credential_bundles VALUES('active','a','ACTIVE',1,1,'primary',X'01',X'1234',X'5678','test',1,1,NULL);
  INSERT INTO credential_bundles VALUES('export','a','EXPORT',1,1,'primary',X'02',X'9999',X'8888','test',2,NULL,NULL);
+ ALTER TABLE client_api_keys DROP COLUMN streamer_mode;
  DROP TABLE client_key_labels;
  DROP TABLE usage_reports;
  DROP TABLE identity_usage;
@@ -496,6 +497,10 @@ func TestKeyScopeMigrationPreservesExistingKeys(t *testing.T) {
 		}
 		if name != "Existing" || prefix != "cbk_prefix" || string(digest) != string([]byte{0x12, 0x34}) || created != 11 || used != 22 || revoked.Valid {
 			t.Fatal("migration changed existing key")
+		}
+		var streamer bool
+		if err := migrated.DB.QueryRow("SELECT streamer_mode FROM client_api_keys WHERE key_id='legacy'").Scan(&streamer); err != nil || streamer {
+			t.Fatalf("existing key streamer default=%v err=%v", streamer, err)
 		}
 		var count int
 		if err := migrated.DB.QueryRow("SELECT count(*) FROM client_key_labels").Scan(&count); err != nil || count != 0 {

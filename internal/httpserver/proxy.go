@@ -19,7 +19,7 @@ func (a brokerGatewayAuthority) Authenticate(request *http.Request, token string
 	if err != nil {
 		return nil, err
 	}
-	return &gateway.Client{ID: key.ID, Name: key.Name, Prefix: key.Prefix}, nil
+	return &gateway.Client{ID: key.ID, Name: key.Name, Prefix: key.Prefix, StreamerMode: key.StreamerMode}, nil
 }
 
 func (a brokerGatewayAuthority) Route(ctx context.Context, keyID string, input gateway.RouteRequest) (*gateway.Lease, *gateway.PoolWait, error) {

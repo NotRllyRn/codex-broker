@@ -21,6 +21,12 @@ func newRenderer(directory string) (*renderer, error) {
 			value := strings.NewReplacer("_", " ", "-", " ", ".", " ").Replace(input.String())
 			return pongo2.AsValue(value), nil
 		})
+		_ = pongo2.RegisterFilter("private", func(input, enabled *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
+			if enabled.Bool() {
+				return pongo2.AsValue("Hidden"), nil
+			}
+			return input, nil
+		})
 		_ = pongo2.RegisterFilter("json", func(input, _ *pongo2.Value) (*pongo2.Value, *pongo2.Error) {
 			value, _ := json.MarshalIndent(input.Interface(), "", "  ")
 			return pongo2.AsValue(string(value)), nil
@@ -42,4 +48,11 @@ func (r *renderer) render(writer http.ResponseWriter, status int, name string, c
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.WriteHeader(status)
 	return template.ExecuteWriter(context, writer)
+}
+
+func (s *Server) render(w http.ResponseWriter, request *http.Request, status int, name string, context pongo2.Context) error {
+	context["streamer_dashboard"] = name == "dashboard.html"
+	context["streamer_mode"] = name == "dashboard.html" && cookie(request, "codex-broker.streamer") == "on"
+	noStore(w)
+	return s.renderer.render(w, status, name, context)
 }
