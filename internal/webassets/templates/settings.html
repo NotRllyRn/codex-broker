@@ -56,7 +56,7 @@
   <div class="data-list">
     {% for label in labels %}
     <article>
-      <strong>{{ label.Name }}</strong>
+      <strong>{{ label.Name|private:streamer_mode }}</strong>
       <form method="post" action="/settings/labels/{{ label.ID }}/delete" data-confirm="Delete this label from all accounts?">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <button class="danger-button" type="submit">Delete</button>
@@ -79,25 +79,33 @@
     Without label rules, keys can access all accounts, including unlabeled accounts.
     Allow requires any matching allowed label. Block overrides Allow.
     Account label changes update access; offline relays use their last synced scope.
+    Per-key streamer mode defaults to off. Enable it to replace account attribution
+    in proxy response notices with Usage stats, keeping quota information visible.
+    Relay edges apply changes after their next successful sync.
   </p>
   {% if issued_key %}
   <div class="service-alert" role="status">
     <strong>Copy this key now. It will not be shown again.</strong>
-    <code>{{ issued_key.token }}</code>
+    <code>{{ issued_key.token|private:streamer_mode }}</code>
   </div>
   {% endif %} {% if client_keys %}
   <div class="data-list">
     {% for key in client_keys %}
     <article>
-      <strong>{{ key.name }}</strong
+      <strong>{{ key.name|private:streamer_mode }}</strong
       ><span
-        >{{ key.key_prefix }}… | {% if key.revoked_at_ms %}Revoked{% else %}Active{% endif %}</span
+        >{{ key.key_prefix|private:streamer_mode }}… | {% if key.revoked_at_ms %}Revoked{% else %}Active{% endif %}</span
       >
       <small
         >Created {{ key.created_at_ms }} | Last used {{ key.last_used_at_ms|default_if_none:"never" }}</small
       >
       <span>{% if key.restricted %}Label-scoped access{% else %}All accounts{% endif %}</span>
       {% if not key.revoked_at_ms %}
+      <form method="post" action="/settings/client-keys/{{ key.key_id }}/streamer-mode">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <input type="hidden" name="enabled" value="{% if key.streamer_mode %}false{% else %}true{% endif %}" />
+        <button class="quiet-button" type="submit" aria-pressed="{% if key.streamer_mode %}true{% else %}false{% endif %}">Streamer mode: {% if key.streamer_mode %}on{% else %}off{% endif %}</button>
+      </form>
       <details>
         <summary>Edit account access</summary>
         <form class="account-form" method="post" action="/settings/client-keys/{{ key.key_id }}/scopes">
@@ -149,7 +157,7 @@
   <div class="data-list">
     {% for destination in destinations %}
     <article>
-      <strong>{{ destination.display_name }}</strong
+      <strong>{{ destination.display_name|private:streamer_mode }}</strong
       ><span
         >{{ destination.kind|title }} | {% if destination.enabled %}Enabled{% else %}Disabled{% endif %}</span
       ><small>Created {{ destination.created_at_ms }}</small>

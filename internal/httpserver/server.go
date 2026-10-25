@@ -173,6 +173,7 @@ func (s *Server) routes() {
 	route("POST /settings/labels/{id}/delete", s.labelDelete)
 	route("POST /settings/client-keys", s.clientKeyCreate)
 	route("POST /settings/client-keys/{id}/scopes", s.clientKeyScopes)
+	route("POST /settings/client-keys/{id}/streamer-mode", s.clientKeyStreamerMode)
 	route("POST /settings/client-keys/{id}/revoke", s.clientKeyRevoke)
 	route("POST /settings/client-keys/{id}/delete", s.clientKeyDelete)
 	route("POST /settings/webhooks", s.webhookCreate)
@@ -306,7 +307,11 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Retry-After", strconv.Itoa(wait.RetryAfterSeconds))
 		return writeJSON(w, 429, map[string]any{"status": "wait", "code": "POOL_EXHAUSTED", "next_retry_at": core.ISOTime(&wait.NextRetryAtMS), "retry_after_seconds": wait.RetryAfterSeconds})
 	}
-	return writeJSON(w, 200, map[string]any{"status": "ok", "account_id": lease.AccountID, "account_label": lease.AccountLabel, "access_token": lease.AccessToken, "chatgpt_account_id": lease.ChatGPTAccountID, "expires_at": core.ISOTime(&lease.ExpiresAtMS), "short_remaining_percent": lease.ShortRemainingPercent, "weekly_remaining_percent": lease.WeeklyRemainingPercent, "short_resets_at": isoPointer(lease.ShortResetsAtMS), "weekly_resets_at": isoPointer(lease.WeeklyResetsAtMS)})
+	accountLabel := lease.AccountLabel
+	if key.StreamerMode {
+		accountLabel = "Usage stats"
+	}
+	return writeJSON(w, 200, map[string]any{"status": "ok", "account_id": lease.AccountID, "account_label": accountLabel, "access_token": lease.AccessToken, "chatgpt_account_id": lease.ChatGPTAccountID, "expires_at": core.ISOTime(&lease.ExpiresAtMS), "short_remaining_percent": lease.ShortRemainingPercent, "weekly_remaining_percent": lease.WeeklyRemainingPercent, "short_resets_at": isoPointer(lease.ShortResetsAtMS), "weekly_resets_at": isoPointer(lease.WeeklyResetsAtMS)})
 }
 func isoPointer(value *int64) any {
 	if value == nil {
@@ -421,18 +426,18 @@ func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) error {
 		s.redirect(w, r, "/")
 		return nil
 	}
-	return s.renderer.render(w, 200, "login.html", pongo2.Context{"error": nil, "root_path": s.App.Config.RootPath})
+	return s.render(w, r, 200, "login.html", pongo2.Context{"error": nil, "root_path": s.App.Config.RootPath})
 }
 func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	noStore(w)
 	address := s.clientAddress(r)
 	if !s.loginThrottle.allow(address) {
-		return s.renderer.render(w, 429, "login.html", pongo2.Context{"error": "Login temporarily unavailable. Wait one minute and retry.", "root_path": s.App.Config.RootPath})
+		return s.render(w, r, 429, "login.html", pongo2.Context{"error": "Login temporarily unavailable. Wait one minute and retry.", "root_path": s.App.Config.RootPath})
 	}
 	_ = r.ParseForm()
 	created, err := s.App.Admin.Login(r.Context(), r.Form.Get("password"), truncate(r.UserAgent(), 200))
 	if err != nil {
-		return s.renderer.render(w, 200, "login.html", pongo2.Context{"error": "The password was not accepted", "root_path": s.App.Config.RootPath})
+		return s.render(w, r, 200, "login.html", pongo2.Context{"error": "The password was not accepted", "root_path": s.App.Config.RootPath})
 	}
 	s.loginThrottle.clear(address)
 	secure := s.App.Config.CookieSecure == "true" || (s.App.Config.CookieSecure == "auto" && s.requestScheme(r) == "https")

@@ -340,3 +340,20 @@ npm run check --prefix packages/pi-extension
 
 Codex Broker cannot protect credentials on a compromised broker host or prevent
 a trusted client from copying an already-leased access token.
+
+### Streamer modes
+
+Use **Streamer mode** in the dashboard header to hide account names, emails,
+labels, client names/key prefixes, usage identities, and device names behind
+generic labels. The preference stays in this browser across navigation and
+reloads. Turn it off to restore names and sensitive editors. Usage statistics
+remain visible. This is display privacy; authenticated APIs and downloaded data
+retain their normal contents.
+
+In **Settings → Client access keys**, each active key has its own **Streamer
+mode** toggle, off by default for both existing and new keys. When enabled,
+proxy response notices say **Usage stats** instead of the selected account's
+name, retaining quota percentages and reset times. This also applies to the
+local adapter. It is independent of dashboard streamer mode. Upgrade broker and
+relays together (protocol 5); relay changes apply after their next successful
+snapshot sync, including when a relay is serving from its offline cache.

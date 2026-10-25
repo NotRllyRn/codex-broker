@@ -21,7 +21,7 @@ func (s *Server) identitySettings(w http.ResponseWriter, r *http.Request, code s
 	}
 	c["identity_code"] = code
 	noStore(w)
-	return s.renderer.render(w, 200, "settings.html", c)
+	return s.render(w, r, 200, "settings.html", c)
 }
 
 func (s *Server) identityCreate(w http.ResponseWriter, r *http.Request) error {

@@ -7,6 +7,12 @@ document.querySelectorAll('a[href^="/"], form[action^="/"]').forEach((element) =
 	const attribute = element.hasAttribute("href") ? "href" : "action";
 	element.setAttribute(attribute, appPath(element.getAttribute(attribute)));
 });
+const streamerMode = root.dataset.streamerMode === "on";
+const privateLabel = (value, generic) => streamerMode ? generic : value;
+document.querySelector("[data-streamer-toggle]")?.addEventListener("click", () => {
+	document.cookie = `codex-broker.streamer=${streamerMode ? "off" : "on"}; Path=${rootPath || "/"}; Max-Age=31536000; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
+	location.reload();
+});
 const themeButton = document.querySelector("[data-theme-toggle]");
 const themes = ["system", "light", "dark"];
 const storedTheme = localStorage.getItem("codex-broker.theme");
@@ -196,7 +202,7 @@ if (profileDashboard) {
 			const label = document.createElement("span");
 			const amount = document.createElement("strong");
 			swatch.style.background = colors[index % colors.length];
-			label.textContent = item.label;
+			label.textContent = privateLabel(item.label, "Account");
 			amount.textContent = value(item.tokens);
 			row.append(swatch, label, amount);
 			(index < 5 ? legend : more).append(row);
@@ -207,7 +213,7 @@ if (profileDashboard) {
 	function renderProfile() {
 		const profile = profiles.find((item) => item.id === select.value) || profiles[0];
 		if (!profile) return;
-		profileDashboard.querySelector("[data-profile-subtitle]").textContent = profile.username
+		profileDashboard.querySelector("[data-profile-subtitle]").textContent = !streamerMode && profile.username
 			? `@${profile.username}`
 			: profile.id === "all"
 				? "Combined statistics for every cached account."
@@ -470,10 +476,10 @@ if (proxyCard) {
 			empty.textContent = "No relay heartbeat has been received.";
 			return [empty];
 		}
-		return relays.map((relay) => {
+		return relays.map((relay, index) => {
 			const row = document.createElement("li");
 			const name = document.createElement("span");
-			name.textContent = relay.id;
+			name.textContent = privateLabel(relay.id, `Relay ${index + 1}`);
 			const details = document.createElement("span");
 			const [label, state] = relayState[relay.state] || relayState.offline;
 			details.dataset.relayState = state;
@@ -508,10 +514,10 @@ if (proxyCard) {
 			relaySummary.dataset.relayState = relays.length && readyRelays === relays.length ? "ready" : connectedRelays ? "connected" : "offline";
 			relayList.replaceChildren(...relayRows(relays));
 			proxyCard.querySelector("[data-proxy-totals]").textContent = `${data.active} active · ${data.recent_clients.length} recent clients · ${data.requests} requests · ${data.failovers} failovers`;
-			proxyCard.querySelector("[data-proxy-clients]").replaceChildren(...data.recent_clients.map((client) => {
+			proxyCard.querySelector("[data-proxy-clients]").replaceChildren(...data.recent_clients.map((client, index) => {
 				const row = document.createElement("li");
 				const name = document.createElement("span");
-				name.textContent = `${client.name} · ${client.key_prefix}`;
+				name.textContent = privateLabel(`${client.name} · ${client.key_prefix}`, `Client ${index + 1}`);
 				const activity = document.createElement("span");
 				activity.textContent = `${client.active ? `● ${client.active} active` : "○ idle"} · ${Date.now() - Date.parse(client.last_seen) < 60_000 ? "just now" : relativeTime(client.last_seen)}`;
 				row.append(name, activity);

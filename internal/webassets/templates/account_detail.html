@@ -1,11 +1,11 @@
-{% extends "base.html" %} {% block title %}{{ detail.account.display_name }} |
+{% extends "base.html" %} {% block title %}{{ detail.account.display_name|private:streamer_mode }} |
 Codex Broker{% endblock %} {% block content %}
 <section class="page-heading">
   <a href="/">Back to accounts</a>
   <p class="kicker">Account evidence</p>
-  <h1>{{ detail.account.display_name }}</h1>
+  <h1>{{ detail.account.display_name|private:streamer_mode }}</h1>
   <p>
-    {{ detail.account.upstream_email|default_if_none:"Upstream identity not verified" }}{% if detail.account.upstream_plan %} | {{ detail.account.upstream_plan }}{% endif %}
+    {{ detail.account.upstream_email|default_if_none:"Upstream identity not verified"|private:streamer_mode }}{% if detail.account.upstream_plan %} | {{ detail.account.upstream_plan }}{% endif %}
   </p>
 </section>
 {% if detail.account.quota_blocked %}
@@ -27,7 +27,7 @@ Codex Broker{% endblock %} {% block content %}
       </div>
       <div>
         <dt>Workspace</dt>
-        <dd>{{ detail.account.workspace_constraint|default_if_none:"Not constrained" }}</dd>
+        <dd>{{ detail.account.workspace_constraint|default_if_none:"Not constrained"|private:streamer_mode }}</dd>
       </div>
       <div>
         <dt>Verified</dt>
@@ -86,7 +86,7 @@ Codex Broker{% endblock %} {% block content %}
     </button>
   </form>
 </section>
-<section class="detail-section">
+{% if not streamer_mode %}<section class="detail-section">
   <h2>Labels</h2>
   <p class="subtle">Labels group accounts and control access for scoped client keys.</p>
   <form
@@ -105,6 +105,7 @@ Codex Broker{% endblock %} {% block content %}
     /><button class="quiet-button" type="submit">Save labels</button>
   </form>
 </section>
+{% endif %}
 <section class="detail-section reauth-panel">
   <h2>Replace or repair credentials</h2>
   <p class="subtle">
@@ -153,7 +154,7 @@ Codex Broker{% endblock %} {% block content %}
       ><strong>{{ item.trigger|humanize|title }} pulse</strong
       ><span>{{ item.state|humanize|title }}</span
       ><small
-        >{{ item.created_at }} · {% if item.progress_summary %}{{ item.progress_summary }}{% elif item.error_summary %}{{ item.error_summary }}{% else %}Queued{% endif %}</small
+        >{{ item.created_at }} · {% if item.progress_summary %}{{ item.progress_summary|private:streamer_mode }}{% elif item.error_summary %}{{ item.error_summary|private:streamer_mode }}{% else %}Queued{% endif %}</small
       ></a
     >{% endfor %}
   </div>
@@ -170,7 +171,7 @@ Codex Broker{% endblock %} {% block content %}
       ><strong>{{ item.kind|humanize|title }}</strong
       ><span>{{ item.state|humanize|title }}</span
       ><small
-        >{{ item.created_at }} · {{ item.trigger|humanize|title }} · {% if item.progress_summary %}{{ item.progress_summary }}{% elif item.error_summary %}{{ item.error_summary }}{% else %}Queued{% endif %}</small
+        >{{ item.created_at }} · {{ item.trigger|humanize|title }} · {% if item.progress_summary %}{{ item.progress_summary|private:streamer_mode }}{% elif item.error_summary %}{{ item.error_summary|private:streamer_mode }}{% else %}Queued{% endif %}</small
       ></a
     >{% endfor %}
   </div>
@@ -178,7 +179,7 @@ Codex Broker{% endblock %} {% block content %}
   <p class="subtle">No operations are recorded.</p>
   {% endif %}
 </section>
-<section class="danger-zone">
+{% if not streamer_mode %}<section class="danger-zone">
   <h2>Delete account</h2>
   <p>
     Disables routing and removes the active encrypted credential. Operational
@@ -190,9 +191,9 @@ Codex Broker{% endblock %} {% block content %}
     data-confirm="Delete this account and its credential bundle?"
   >
     <input type="hidden" name="csrf_token" value="{{ csrf }}" /><label
-      >Type <strong>{{ detail.account.display_name }}</strong
+      >Type <strong>{{ detail.account.display_name|private:streamer_mode }}</strong
       ><input name="confirmation" required autocomplete="off" /></label
     ><button class="danger-button" type="submit">Delete account</button>
   </form>
 </section>
-{% endblock %}
+{% endif %}{% endblock %}

@@ -16,7 +16,7 @@
       ><strong>{{ incident.problem_type|humanize|title }}</strong
       ><time>{{ incident.last_seen_at_ms }}</time>
     </header>
-    <p>{{ incident.summary }}</p>
+    <p>{{ incident.summary|private:streamer_mode }}</p>
     <footer>
       {{ incident.occurrence_count }} occurrence{% if incident.occurrence_count != 1 %}s{% endif %}
     </footer>

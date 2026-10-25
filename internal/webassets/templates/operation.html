@@ -8,7 +8,7 @@
 <section class="operation-view" data-operation="{{ operation.operation_id }}" data-state="{{ operation.state }}">
   <span class="status-label">{{ operation.state|humanize|title }}</span>
   <h2>
-    {% if operation.progress_summary %}{{ operation.progress_summary }}{% elif operation.error_summary %}{{ operation.error_summary }}{% else %}Waiting to start{% endif %}
+    {% if operation.progress_summary %}{{ operation.progress_summary|private:streamer_mode }}{% elif operation.error_summary %}{{ operation.error_summary|private:streamer_mode }}{% else %}Waiting to start{% endif %}
   </h2>
   <dl>
     <div>
@@ -70,13 +70,13 @@
   </dl>
   {% if operation.result.prompt %}
   <h2>Prompt</h2>
-  <pre>{{ operation.result.prompt }}</pre>
+  <pre>{{ operation.result.prompt|private:streamer_mode }}</pre>
   <h2>Model response</h2>
-  {% if operation.result.response %}<pre>{{ operation.result.response }}</pre>{% else %}<p class="subtle">No model response was recorded.</p>{% endif %}
+  {% if operation.result.response %}<pre>{{ operation.result.response|private:streamer_mode }}</pre>{% else %}<p class="subtle">No model response was recorded.</p>{% endif %}
   {% endif %}
   {% if operation.error_code %}
   <p class="form-error" role="alert">
-    <strong>{{ operation.error_code }}</strong>: {{ operation.error_summary }}
+    <strong>{{ operation.error_code }}</strong>: {{ operation.error_summary|private:streamer_mode }}
   </p>
   {% endif %}
 </section>

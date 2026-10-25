@@ -104,14 +104,14 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return s.renderer.render(w, 200, "dashboard.html", pongo2.Context{"identities": identities, "usage_devices": devices, "root_path": s.App.Config.RootPath, "pool_usage": poolUsage(accounts), "next_available_reset": nextAvailableReset(accounts, time.Now()), "account_count": len(accounts), "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"AVAILABLE", "HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld, "cycle_spacing": compactDuration(int(cycle.SpacingMS / 1000)), "cycle_next_at": timestampView(cycle.NextPulseAtMS), "cycle_next_ms": cycleNextMS})
+	return s.render(w, r, 200, "dashboard.html", pongo2.Context{"identities": identities, "usage_devices": devices, "root_path": s.App.Config.RootPath, "pool_usage": poolUsage(accounts), "next_available_reset": nextAvailableReset(accounts, time.Now()), "account_count": len(accounts), "accounts": views, "attention": attention, "profiles": profiles, "profiles_json": string(profilesJSON), "status_options": []string{"AVAILABLE", "HEALTHY", "WARNING", "ACTION_REQUIRED", "ERROR", "DISABLED"}, "counts": counts, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured, "dev": os.Getenv("WINDOWKEEPER_ENV") != "production", "q": r.URL.Query().Get("q"), "state_filter": filter, "selected_states": selected, "cycle_enabled": s.App.Config.WindowPulseEnabled, "cycle_ready": cycleReady, "cycle_held": cycleHeld, "cycle_spacing": compactDuration(int(cycle.SpacingMS / 1000)), "cycle_next_at": timestampView(cycle.NextPulseAtMS), "cycle_next_ms": cycleNextMS})
 }
 
 func (s *Server) accountNew(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
 		return err
 	}
-	return s.renderer.render(w, 200, "account_new.html", pongo2.Context{"root_path": s.App.Config.RootPath, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured})
+	return s.render(w, r, 200, "account_new.html", pongo2.Context{"root_path": s.App.Config.RootPath, "csrf": cookie(r, csrfCookie), "vault_configured": s.App.VaultConfigured})
 }
 func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
@@ -134,7 +134,7 @@ func (s *Server) accountCreate(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	noStore(w)
-	return s.renderer.render(w, 200, "login_progress.html", pongo2.Context{"root_path": s.App.Config.RootPath, "account": account, "started": started, "method": method, "csrf": r.Form.Get("csrf_token")})
+	return s.render(w, r, 200, "login_progress.html", pongo2.Context{"root_path": s.App.Config.RootPath, "account": account, "started": started, "method": method, "csrf": r.Form.Get("csrf_token")})
 }
 func (s *Server) accountDetail(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
@@ -144,7 +144,7 @@ func (s *Server) accountDetail(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return s.renderer.render(w, 200, "account_detail.html", pongo2.Context{"root_path": s.App.Config.RootPath, "detail": detail, "csrf": cookie(r, csrfCookie)})
+	return s.render(w, r, 200, "account_detail.html", pongo2.Context{"root_path": s.App.Config.RootPath, "detail": detail, "csrf": cookie(r, csrfCookie)})
 }
 func (s *Server) pulse(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
@@ -189,7 +189,7 @@ func (s *Server) reauthenticate(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	noStore(w)
-	return s.renderer.render(w, 200, "login_progress.html", pongo2.Context{"root_path": s.App.Config.RootPath, "account": detail["account"], "started": started, "method": method, "csrf": r.Form.Get("csrf_token")})
+	return s.render(w, r, 200, "login_progress.html", pongo2.Context{"root_path": s.App.Config.RootPath, "account": detail["account"], "started": started, "method": method, "csrf": r.Form.Get("csrf_token")})
 }
 func (s *Server) labels(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
@@ -248,7 +248,7 @@ func (s *Server) operation(w http.ResponseWriter, r *http.Request) error {
 			operation[strings.TrimSuffix(field, "_ms")] = timestampView(&value)
 		}
 	}
-	return s.renderer.render(w, 200, "operation.html", pongo2.Context{"root_path": s.App.Config.RootPath, "operation": operation, "csrf": cookie(r, csrfCookie)})
+	return s.render(w, r, 200, "operation.html", pongo2.Context{"root_path": s.App.Config.RootPath, "operation": operation, "csrf": cookie(r, csrfCookie)})
 }
 func (s *Server) incidents(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
@@ -258,14 +258,14 @@ func (s *Server) incidents(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return s.renderer.render(w, 200, "incidents.html", pongo2.Context{"root_path": s.App.Config.RootPath, "incidents": values, "csrf": cookie(r, csrfCookie)})
+	return s.render(w, r, 200, "incidents.html", pongo2.Context{"root_path": s.App.Config.RootPath, "incidents": values, "csrf": cookie(r, csrfCookie)})
 }
 func (s *Server) logs(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
 		return err
 	}
 	level, query := r.URL.Query().Get("level"), r.URL.Query().Get("q")
-	return s.renderer.render(w, 200, "logs.html", pongo2.Context{"root_path": s.App.Config.RootPath, "logs": s.App.Logs.Recent(level, query, 100), "log_levels": []string{"DEBUG", "INFO", "WARNING", "ERROR"}, "level": level, "q": query, "csrf": cookie(r, csrfCookie)})
+	return s.render(w, r, 200, "logs.html", pongo2.Context{"root_path": s.App.Config.RootPath, "logs": s.App.Logs.Recent(level, query, 100), "log_levels": []string{"DEBUG", "INFO", "WARNING", "ERROR"}, "level": level, "q": query, "csrf": cookie(r, csrfCookie)})
 }
 func (s *Server) logsExport(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireSession(r); err != nil {
@@ -286,7 +286,7 @@ func compatibilityMap(application *broker.Application) map[string]any {
 func keysView(keys []auth.ClientKey, labels []auth.LabelScope) []map[string]any {
 	result := make([]map[string]any, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, map[string]any{"key_id": key.ID, "name": key.Name, "key_prefix": key.Prefix, "created_at_ms": key.CreatedAtMS, "last_used_at_ms": nullInt(key.LastUsedAtMS), "revoked_at_ms": nullInt(key.RevokedAtMS), "scope_options": scopeOptions(labels, key.Scopes), "restricted": len(key.Scopes) > 0})
+		result = append(result, map[string]any{"key_id": key.ID, "name": key.Name, "streamer_mode": key.StreamerMode, "key_prefix": key.Prefix, "created_at_ms": key.CreatedAtMS, "last_used_at_ms": nullInt(key.LastUsedAtMS), "revoked_at_ms": nullInt(key.RevokedAtMS), "scope_options": scopeOptions(labels, key.Scopes), "restricted": len(key.Scopes) > 0})
 	}
 	return result
 }
@@ -363,7 +363,7 @@ func (s *Server) settings(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	return s.renderer.render(w, 200, "settings.html", context)
+	return s.render(w, r, 200, "settings.html", context)
 }
 func (s *Server) publicEnabled(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
@@ -392,7 +392,7 @@ func (s *Server) clientKeyCreate(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	noStore(w)
-	return s.renderer.render(w, 200, "settings.html", context)
+	return s.render(w, r, 200, "settings.html", context)
 }
 func (s *Server) clientKeyRevoke(w http.ResponseWriter, r *http.Request) error {
 	if err := s.requireForm(r); err != nil {
@@ -586,6 +586,20 @@ func (s *Server) labelDelete(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := s.App.Service.DeleteLabel(r.Context(), r.PathValue("id")); err != nil {
+		return err
+	}
+	s.redirect(w, r, "/settings")
+	return nil
+}
+
+func (s *Server) clientKeyStreamerMode(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireForm(r); err != nil {
+		return err
+	}
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	if err := s.App.ClientKeys.SetStreamerMode(r.Context(), r.PathValue("id"), formBool(r.Form.Get("enabled"))); err != nil {
 		return err
 	}
 	s.redirect(w, r, "/settings")

@@ -23,7 +23,7 @@
     <span>4</span>
     <p>Verify and encrypt</p>
   </div>
-  <p class="kicker">{{ account.display_name }}</p>
+  <p class="kicker">{{ account.display_name|private:streamer_mode }}</p>
   <h1>Complete ChatGPT sign-in once</h1>
   <p class="interaction-status" aria-live="polite">
     One approval creates the managed credential for Codex Broker.
