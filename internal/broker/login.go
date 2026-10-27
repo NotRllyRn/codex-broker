@@ -646,14 +646,6 @@ func (s *Service) StartPublicEnrollment(ctx context.Context, session string, lab
 	if !open {
 		return nil, core.NewError("PUBLIC_ENROLLMENT_CLOSED", "Public enrollment is closed", 404)
 	}
-	var active int
-	now := core.NowMS()
-	if err = s.Store.DB.QueryRowContext(ctx, "SELECT count(*) FROM public_enrollments WHERE state='ACTIVE' AND expires_at_ms>?", now).Scan(&active); err != nil {
-		return nil, err
-	}
-	if active >= s.Config.PublicEnrollmentMaxActive {
-		return nil, core.NewError("PUBLIC_ENROLLMENT_BUSY", "All sign-in slots are busy; try again later", 503)
-	}
 	enrollment := core.NewID()
 	account, err := s.createAccount(ctx, "Pending sign-in "+core.RandomToken(6), labels, "", "CHATGPT_DEVICE_CODE", true)
 	if err != nil {

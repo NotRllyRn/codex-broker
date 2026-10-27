@@ -89,7 +89,7 @@ func TestEnrollmentPageExplainsPrivacyAndUsage(t *testing.T) {
 		_, _ = w.Write([]byte(`{"enabled":true}`))
 	}))
 	defer broker.Close()
-	handler, err := New(config.Config{PublicEnrollmentBrokerURL: broker.URL, PublicEnrollmentKey: strings.Repeat("k", 32), PublicEnrollmentAttemptsPerHour: 3})
+	handler, err := New(config.Config{PublicEnrollmentBrokerURL: broker.URL, PublicEnrollmentKey: strings.Repeat("k", 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestEnrollmentLinksForwardLabels(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"enrollment_id": value, "login_attempt_id": value, "interaction_nonce": value})
 	}))
 	defer broker.Close()
-	handler, err := New(config.Config{PublicEnrollmentBrokerURL: broker.URL, PublicEnrollmentKey: strings.Repeat("k", 32), PublicEnrollmentAttemptsPerHour: 20})
+	handler, err := New(config.Config{PublicEnrollmentBrokerURL: broker.URL, PublicEnrollmentKey: strings.Repeat("k", 32)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,6 +141,14 @@ func TestEnrollmentLinksForwardLabels(t *testing.T) {
 	handler.ServeHTTP(w, httptest.NewRequest("POST", "/start?labels=label,another-label&labels=unknown-label", nil))
 	if w.Code != 200 || len(received.Session) < 32 || strings.Join(received.Labels, ",") != "label,another-label,unknown-label" {
 		t.Fatalf("start=%d body=%+v", w.Code, received)
+	}
+	// Repeated starts from one browser/address must exceed the former hourly limit.
+	for i := 0; i < 25; i++ {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest("POST", "/start", nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("start %d rejected: %d %s", i, w.Code, w.Body.String())
+		}
 	}
 	enabled = false
 	for _, path := range []string{"/label/", "/?labels=label"} {

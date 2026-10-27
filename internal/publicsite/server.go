@@ -92,11 +92,11 @@ func (t *throttle) allow(key string) bool {
 }
 
 type Server struct {
-	config        config.Config
-	client        *http.Client
-	template      *pongo2.Template
-	start, status *throttle
-	mux           *http.ServeMux
+	config   config.Config
+	client   *http.Client
+	template *pongo2.Template
+	status   *throttle
+	mux      *http.ServeMux
 }
 
 func New(settings config.Config) (http.Handler, error) {
@@ -120,7 +120,7 @@ func New(settings config.Config) (http.Handler, error) {
 		}
 		tlsConfig.RootCAs = roots
 	}
-	server := &Server{settings, &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: tlsConfig, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext}}, template, newThrottle(settings.PublicEnrollmentAttemptsPerHour, time.Hour), newThrottle(120, time.Minute), http.NewServeMux()}
+	server := &Server{settings, &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: tlsConfig, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext}}, template, newThrottle(120, time.Minute), http.NewServeMux()}
 	server.routes()
 	return server.headers(server.mux), nil
 }
@@ -247,10 +247,6 @@ func existing(r *http.Request) *Handle {
 func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 	if existing(r) != nil {
 		writeJSON(w, 200, map[string]any{"state": "STARTING"})
-		return
-	}
-	if !s.start.allow(s.throttleKey(r)) {
-		writeJSON(w, 429, map[string]any{"state": "FAILED"})
 		return
 	}
 	tokenBytes := make([]byte, 32)

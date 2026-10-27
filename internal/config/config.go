@@ -16,59 +16,57 @@ import (
 )
 
 type Config struct {
-	DataDir                         string
-	RuntimeDir                      string
-	LogDir                          string
-	Host                            string
-	Port                            int
-	RootPath                        string
-	TrustedProxies                  []netip.Prefix
-	TLSCertFile                     string
-	TLSKeyFile                      string
-	PublicEnrollmentKey             string
-	PublicEnrollmentBrokerURL       string
-	PublicEnrollmentCACert          string
-	PublicEnrollmentHost            string
-	PublicEnrollmentPort            int
-	PublicEnrollmentTLSCertFile     string
-	PublicEnrollmentTLSKeyFile      string
-	PublicEnrollmentMaxActive       int
-	PublicEnrollmentAttemptsPerHour int
-	RelayKey                        string
-	RelayID                         string
-	RelayBrokerURL                  string
-	RelayCACert                     string
-	RelayCacheFile                  string
-	RelayHost                       string
-	RelayPort                       int
-	RelayTLSCertFile                string
-	RelayTLSKeyFile                 string
-	RelaySyncSeconds                int
-	RelayMaxStaleSeconds            int
-	VaultKeyFile                    string
-	VaultKey                        string
-	AdminPasswordFile               string
-	AdminPassword                   string
-	CookieSecure                    string
-	SessionIdleMinutes              int
-	SessionAbsoluteHours            int
-	UsagePollSeconds                int
-	ProfilePollSeconds              int
-	UsageRefreshConcurrency         int
-	WindowPulseEnabled              bool
-	WindowPulsePollSeconds          int
-	WindowPulseRetrySeconds         int
-	WindowPulseConcurrency          int
-	AuthConcurrency                 int
-	ProcessStartConcurrency         int
-	ResetPaddingSeconds             int
-	BrowserOAuthMode                string
-	BrowserOAuthCallbackPorts       []int
-	LoginTimeoutSeconds             int
-	BrowserCallbackMaxBytes         int
-	CodexExecutable                 string
-	CodexVersion                    string
-	LogLevel                        string
+	DataDir                     string
+	RuntimeDir                  string
+	LogDir                      string
+	Host                        string
+	Port                        int
+	RootPath                    string
+	TrustedProxies              []netip.Prefix
+	TLSCertFile                 string
+	TLSKeyFile                  string
+	PublicEnrollmentKey         string
+	PublicEnrollmentBrokerURL   string
+	PublicEnrollmentCACert      string
+	PublicEnrollmentHost        string
+	PublicEnrollmentPort        int
+	PublicEnrollmentTLSCertFile string
+	PublicEnrollmentTLSKeyFile  string
+	RelayKey                    string
+	RelayID                     string
+	RelayBrokerURL              string
+	RelayCACert                 string
+	RelayCacheFile              string
+	RelayHost                   string
+	RelayPort                   int
+	RelayTLSCertFile            string
+	RelayTLSKeyFile             string
+	RelaySyncSeconds            int
+	RelayMaxStaleSeconds        int
+	VaultKeyFile                string
+	VaultKey                    string
+	AdminPasswordFile           string
+	AdminPassword               string
+	CookieSecure                string
+	SessionIdleMinutes          int
+	SessionAbsoluteHours        int
+	UsagePollSeconds            int
+	ProfilePollSeconds          int
+	UsageRefreshConcurrency     int
+	WindowPulseEnabled          bool
+	WindowPulsePollSeconds      int
+	WindowPulseRetrySeconds     int
+	WindowPulseConcurrency      int
+	AuthConcurrency             int
+	ProcessStartConcurrency     int
+	ResetPaddingSeconds         int
+	BrowserOAuthMode            string
+	BrowserOAuthCallbackPorts   []int
+	LoginTimeoutSeconds         int
+	BrowserCallbackMaxBytes     int
+	CodexExecutable             string
+	CodexVersion                string
+	LogLevel                    string
 }
 
 func Load() (Config, error) {
@@ -115,26 +113,24 @@ func Load() (Config, error) {
 		value, min int
 		max        int
 	}{
-		&c.Port:                            {"PORT", 8787, 1, 65535},
-		&c.PublicEnrollmentPort:            {"PUBLIC_ENROLLMENT_PORT", 8788, 1, 65535},
-		&c.PublicEnrollmentMaxActive:       {"PUBLIC_ENROLLMENT_MAX_ACTIVE", 16, 1, 32},
-		&c.PublicEnrollmentAttemptsPerHour: {"PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR", 20, 1, 20},
-		&c.RelayPort:                       {"RELAY_PORT", 8787, 1, 65535},
-		&c.RelaySyncSeconds:                {"RELAY_SYNC_SECONDS", 15, 5, 300},
-		&c.RelayMaxStaleSeconds:            {"RELAY_MAX_STALE_SECONDS", 3600, 30, 86400},
-		&c.SessionIdleMinutes:              {"SESSION_IDLE_MINUTES", 44640, 1, 0},
-		&c.SessionAbsoluteHours:            {"SESSION_ABSOLUTE_HOURS", 2160, 1, 0},
-		&c.UsagePollSeconds:                {"USAGE_POLL_SECONDS", 3600, 60, 0},
-		&c.ProfilePollSeconds:              {"PROFILE_POLL_SECONDS", 21600, 3600, 0},
-		&c.UsageRefreshConcurrency:         {"USAGE_REFRESH_CONCURRENCY", 4, 1, 16},
-		&c.WindowPulsePollSeconds:          {"WINDOW_PULSE_POLL_SECONDS", 60, 10, 0},
-		&c.WindowPulseRetrySeconds:         {"WINDOW_PULSE_RETRY_SECONDS", 900, 60, 0},
-		&c.WindowPulseConcurrency:          {"WINDOW_PULSE_CONCURRENCY", 2, 1, 8},
-		&c.AuthConcurrency:                 {"AUTH_CONCURRENCY", 8, 1, 8},
-		&c.ProcessStartConcurrency:         {"PROCESS_START_CONCURRENCY", 2, 1, 8},
-		&c.ResetPaddingSeconds:             {"RESET_PADDING_SECONDS", 10, 0, 300},
-		&c.LoginTimeoutSeconds:             {"LOGIN_TIMEOUT_SECONDS", 900, 60, 3600},
-		&c.BrowserCallbackMaxBytes:         {"BROWSER_CALLBACK_MAX_BYTES", 16384, 1024, 65536},
+		&c.Port:                    {"PORT", 8787, 1, 65535},
+		&c.PublicEnrollmentPort:    {"PUBLIC_ENROLLMENT_PORT", 8788, 1, 65535},
+		&c.RelayPort:               {"RELAY_PORT", 8787, 1, 65535},
+		&c.RelaySyncSeconds:        {"RELAY_SYNC_SECONDS", 15, 5, 300},
+		&c.RelayMaxStaleSeconds:    {"RELAY_MAX_STALE_SECONDS", 3600, 30, 86400},
+		&c.SessionIdleMinutes:      {"SESSION_IDLE_MINUTES", 44640, 1, 0},
+		&c.SessionAbsoluteHours:    {"SESSION_ABSOLUTE_HOURS", 2160, 1, 0},
+		&c.UsagePollSeconds:        {"USAGE_POLL_SECONDS", 3600, 60, 0},
+		&c.ProfilePollSeconds:      {"PROFILE_POLL_SECONDS", 21600, 3600, 0},
+		&c.UsageRefreshConcurrency: {"USAGE_REFRESH_CONCURRENCY", 4, 1, 16},
+		&c.WindowPulsePollSeconds:  {"WINDOW_PULSE_POLL_SECONDS", 60, 10, 0},
+		&c.WindowPulseRetrySeconds: {"WINDOW_PULSE_RETRY_SECONDS", 900, 60, 0},
+		&c.WindowPulseConcurrency:  {"WINDOW_PULSE_CONCURRENCY", 2, 1, 8},
+		&c.AuthConcurrency:         {"AUTH_CONCURRENCY", 8, 1, 8},
+		&c.ProcessStartConcurrency: {"PROCESS_START_CONCURRENCY", 2, 1, 8},
+		&c.ResetPaddingSeconds:     {"RESET_PADDING_SECONDS", 10, 0, 300},
+		&c.LoginTimeoutSeconds:     {"LOGIN_TIMEOUT_SECONDS", 900, 60, 3600},
+		&c.BrowserCallbackMaxBytes: {"BROWSER_CALLBACK_MAX_BYTES", 16384, 1024, 65536},
 	} {
 		*target, err = envInt(spec.name, spec.value, spec.min, spec.max)
 		if err != nil {

@@ -104,7 +104,7 @@ func loginFixture(t *testing.T, scenario string) (*Service, string) {
 	if err := os.WriteFile(script, []byte(command), 0700); err != nil {
 		t.Fatal(err)
 	}
-	settings := config.Config{RuntimeDir: filepath.Join(root, "run"), CodexExecutable: script, CodexVersion: "test", ProcessStartConcurrency: 2, UsageRefreshConcurrency: 2, WindowPulseConcurrency: 1, AuthConcurrency: 1, LoginTimeoutSeconds: 10, BrowserOAuthMode: "manual", BrowserOAuthCallbackPorts: []int{1455}, BrowserCallbackMaxBytes: 16384, PublicEnrollmentMaxActive: 4}
+	settings := config.Config{RuntimeDir: filepath.Join(root, "run"), CodexExecutable: script, CodexVersion: "test", ProcessStartConcurrency: 2, UsageRefreshConcurrency: 2, WindowPulseConcurrency: 1, AuthConcurrency: 1, LoginTimeoutSeconds: 10, BrowserOAuthMode: "manual", BrowserOAuthCallbackPorts: []int{1455}, BrowserCallbackMaxBytes: 16384}
 	service := NewService(database, settings, secrets, codex.NewRuntimeManager(settings, secrets), events.New(100, 100))
 	t.Cleanup(service.Close)
 	return service, marker
@@ -337,5 +337,19 @@ func TestPublicEnrollmentDuplicateStatus(t *testing.T) {
 	status, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "session", started["interaction_nonce"])
 	if err != nil || status["state"] != "FAILED" || status["error_code"] != "PUBLIC_ACCOUNT_EXISTS" {
 		t.Fatalf("status=%v error=%v", status, err)
+	}
+}
+
+func TestPublicEnrollmentHasNoActiveCap(t *testing.T) {
+	s, _ := loginFixture(t, "success")
+	ctx := context.Background()
+	if err := s.SetPublicEnrollmentOpen(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	// Keep authorization pending while exceeding the former 16-slot cap.
+	for i := 0; i < 20; i++ {
+		if _, err := s.StartPublicEnrollment(ctx, fmt.Sprintf("session-%d", i)); err != nil {
+			t.Fatalf("enrollment %d rejected: %v", i, err)
+		}
 	}
 }

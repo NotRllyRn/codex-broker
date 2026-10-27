@@ -13,7 +13,7 @@ The public process exposes only:
 - `GET /status` — poll the caller's opaque enrollment cookie;
 - `GET /health/live` — process liveness.
 
-It calls narrowly scoped private broker endpoints over authenticated HTTPS. `WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY` is an internal service-to-service secret: visitors never enter or receive it, and it cannot authenticate to `/api/v1/route` or administrator routes. Enrollment secrets are held only in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie and are never placed in a URL. Responses use a restrictive CSP, HSTS, `no-store`, and no referrer. Starts are limited per source address and globally capped; active flows expire with the normal login timeout.
+It calls narrowly scoped private broker endpoints over authenticated HTTPS. `WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY` is an internal service-to-service secret: visitors never enter or receive it, and it cannot authenticate to `/api/v1/route` or administrator routes. Enrollment secrets are held only in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie and are never placed in a URL. Responses use a restrictive CSP, HSTS, `no-store`, and no referrer. Enrollment starts have no per-source attempt limit or global active-flow cap; active flows expire with the normal login timeout.
 
 A successful login verifies the identity returned by Codex, rejects a duplicate managed/pending email, renames the account to the normalized email, and promotes the original credential through the existing encrypted checkpoint path. It does not fork or proactively rotate tokens, or create downloadable auth files. Failed or interrupted placeholder accounts are soft-deleted.
 
@@ -53,7 +53,7 @@ The public process runs read-only with all Linux capabilities dropped and no per
 
 New bootstraps create a separate local `public.crt`/`public.key` so the process can start without sharing the broker's private key. Internet browsers will not trust that local certificate and its names may not match the public hostname. Configure a publicly trusted hostname certificate before exposing port `8788`. Existing deployments must either set the two public certificate paths above or create `deployment/certs/public.crt` and `deployment/certs/public.key`.
 
-If a reverse proxy or CDN fronts the public port, terminate or re-encrypt TLS safely and apply its rate limiting there. The application deliberately does not trust forwarded client-IP headers; without proxy-side limiting, all proxied visitors share one application throttle bucket.
+If a reverse proxy or CDN fronts the public port, terminate or re-encrypt TLS safely and apply its rate limiting there. Forwarded client-IP headers are trusted only from configured trusted proxies. Status polling remains rate limited per enrollment or browser.
 
 ## Enable or disable
 
@@ -86,10 +86,8 @@ Implementation plan: reuse the active login runtime for the bounded usage read, 
 
 ## Configuration
 
-By default, the broker runs up to eight authentication workers and accepts up to
-16 active public enrollments. Attempts beyond the available workers wait in a
-queue; once all 16 enrollment slots are occupied, new starts are rejected until
-capacity becomes available. Authentication workers remain occupied while users
+By default, the broker runs up to eight authentication workers. Additional
+enrollment attempts wait in a queue without an enrollment cap. Authentication workers remain occupied while users
 complete OpenAI authorization, and are shared with administrator sign-ins.
 
 | Variable | Default | Purpose |
@@ -101,8 +99,6 @@ complete OpenAI authorization, and are shared with administrator sign-ins.
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_PORT` | `8788` | Public listener container port. |
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE` | unset | Public listener certificate. |
 | `WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE` | unset | Public listener private key. |
-| `WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR` | `20` | Per-source start limit. |
-| `WINDOWKEEPER_PUBLIC_ENROLLMENT_MAX_ACTIVE` | `16` | Global concurrent enrollment cap, including queued attempts. |
 | `WINDOWKEEPER_AUTH_CONCURRENCY` | `8` | Concurrent authentication workers shared by public enrollment and administrator sign-ins. |
 
 For a non-Compose installation, configure the internal key, broker CA, and TLS files, then run:

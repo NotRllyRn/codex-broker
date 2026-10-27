@@ -124,8 +124,6 @@
             WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE = lib.mapNullable (
               _: "%d/public-tls-key"
             ) cfg.publicEnrollment.tls.keyFile;
-            WINDOWKEEPER_PUBLIC_ENROLLMENT_MAX_ACTIVE = toString cfg.publicEnrollment.maxActive;
-            WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR = toString cfg.publicEnrollment.attemptsPerHour;
           };
 
           # LoadCredential entries: systemd stages each file in $CREDENTIALS_DIRECTORY
@@ -484,16 +482,6 @@
                   default = null;
                   description = "TLS private key for the public listener. Maps to WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE.";
                 };
-              };
-              maxActive = lib.mkOption {
-                type = lib.types.ints.between 1 32;
-                default = 16;
-                description = "Maximum concurrent enrollment attempts (1-32). Maps to WINDOWKEEPER_PUBLIC_ENROLLMENT_MAX_ACTIVE.";
-              };
-              attemptsPerHour = lib.mkOption {
-                type = lib.types.ints.between 1 20;
-                default = 20;
-                description = "Enrollment attempts allowed per hour (1-20). Maps to WINDOWKEEPER_PUBLIC_ENROLLMENT_ATTEMPTS_PER_HOUR.";
               };
             };
           };
