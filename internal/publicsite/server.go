@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/config"
+	"github.com/NotRllyRn/codex-broker/internal/logbook"
 	"github.com/NotRllyRn/codex-broker/internal/webassets"
 	"github.com/flosch/pongo2/v6"
 )
@@ -177,7 +178,13 @@ func (s *Server) call(ctx context.Context, path string, body any, result any) er
 	}
 	defer response.Body.Close()
 	if response.StatusCode >= 400 {
-		return errors.New("broker rejected public enrollment")
+		var problem struct {
+			Detail string `json:"detail"`
+		}
+		if json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&problem) == nil && problem.Detail != "" {
+			return errors.New(problem.Detail)
+		}
+		return errors.New("Broker rejected public enrollment: " + response.Status)
 	}
 	return json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(result)
 }
@@ -261,8 +268,8 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 	for _, value := range r.URL.Query()["labels"] {
 		labels = append(labels, strings.Split(value, ",")...)
 	}
-	if s.call(r.Context(), "/api/private/v1/public-enrollments", map[string]any{"session_token": session, "labels": labels}, &started) != nil {
-		writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE"})
+	if err := s.call(r.Context(), "/api/private/v1/public-enrollments", map[string]any{"session_token": session, "labels": labels}, &started); err != nil {
+		writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE", "error_summary": logbook.Redact(err.Error())})
 		return
 	}
 	handle := Handle{started.EnrollmentID, started.LoginAttemptID, session, started.InteractionNonce}
@@ -285,8 +292,8 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	}
 	body := map[string]string{"enrollment_id": handle.EnrollmentID, "login_attempt_id": handle.LoginAttemptID, "session_token": handle.SessionToken, "interaction_nonce": handle.InteractionNonce}
 	var status map[string]any
-	if s.call(r.Context(), "/api/private/v1/public-enrollments/status", body, &status) != nil {
-		writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE"})
+	if err := s.call(r.Context(), "/api/private/v1/public-enrollments/status", body, &status); err != nil {
+		writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE", "error_summary": logbook.Redact(err.Error())})
 		return
 	}
 	state, _ := status["state"].(string)
@@ -307,6 +314,10 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		status = map[string]any{"state": state, "email": email}
 	} else if state == "FAILED" && status["error_code"] == "PUBLIC_ACCOUNT_EXISTS" {
 		status = map[string]any{"state": state, "error_code": "PUBLIC_ACCOUNT_EXISTS"}
+	} else if state == "FAILED" {
+		code, _ := status["error_code"].(string)
+		summary, _ := status["error_summary"].(string)
+		status = map[string]any{"state": state, "error_code": code, "error_summary": summary}
 	} else {
 		status = map[string]any{"state": state}
 	}

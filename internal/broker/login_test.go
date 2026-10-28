@@ -57,6 +57,10 @@ func TestLoginFakeAppServer(t *testing.T) {
 					}
 					time.Sleep(5 * time.Millisecond)
 				}
+				if strings.HasPrefix(*loginScenario, "error:") {
+					send(map[string]any{"method": "account/login/completed", "params": map[string]any{"loginId": "login", "success": false, "error": strings.TrimPrefix(*loginScenario, "error:")}})
+					return
+				}
 				if *loginScenario != "missing-auth" {
 					_ = os.WriteFile(filepath.Join(os.Getenv("CODEX_HOME"), "auth.json"), loginAuth(), 0600)
 				}
@@ -351,5 +355,39 @@ func TestPublicEnrollmentHasNoActiveCap(t *testing.T) {
 		if _, err := s.StartPublicEnrollment(ctx, fmt.Sprintf("session-%d", i)); err != nil {
 			t.Fatalf("enrollment %d rejected: %v", i, err)
 		}
+	}
+}
+
+func TestPublicEnrollmentUpstreamError(t *testing.T) {
+	for _, detail := range []string{"device auth failed with status 429 Too Many Requests", "Token exchange failed", "", "Failed for sk-abcdefghijklmnopqrstuv"} {
+		t.Run(detail, func(t *testing.T) {
+			ctx := context.Background()
+			s, marker := loginFixture(t, "error:"+detail)
+			if err := s.SetPublicEnrollmentOpen(ctx, true); err != nil {
+				t.Fatal(err)
+			}
+			started, err := s.StartPublicEnrollment(ctx, "session")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(marker, []byte("approve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			waitLoginState(t, s, started["login_attempt_id"], "FAILED_RETRYABLE")
+			status, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "session", started["interaction_nonce"])
+			expected := detail
+			if expected == "" {
+				expected = "ChatGPT sign-in was not approved"
+			}
+			if strings.Contains(expected, "sk-") {
+				expected = "Failed for [REDACTED]"
+			}
+			if err != nil || status["error_summary"] != expected {
+				t.Fatalf("status=%v err=%v", status, err)
+			}
+			if _, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "wrong-session", started["interaction_nonce"]); err == nil {
+				t.Fatal("exposed error to wrong session")
+			}
+		})
 	}
 }

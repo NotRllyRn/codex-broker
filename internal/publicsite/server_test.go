@@ -160,7 +160,7 @@ func TestEnrollmentLinksForwardLabels(t *testing.T) {
 	}
 }
 
-func TestEnrollmentStatusExposesOnlyDuplicateError(t *testing.T) {
+func TestEnrollmentStatusExposesFailureDetails(t *testing.T) {
 	for _, code := range []string{"PUBLIC_ACCOUNT_EXISTS", "LOGIN_FAILED"} {
 		t.Run(code, func(t *testing.T) {
 			broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -176,7 +176,11 @@ func TestEnrollmentStatusExposesOnlyDuplicateError(t *testing.T) {
 			if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
 				t.Fatal(err)
 			}
-			if response.Code != 200 || status["state"] != "FAILED" || (status["error_code"] == "PUBLIC_ACCOUNT_EXISTS") != (code == "PUBLIC_ACCOUNT_EXISTS") || status["error_summary"] != "" {
+			expectedSummary := "internal details"
+			if code == "PUBLIC_ACCOUNT_EXISTS" {
+				expectedSummary = ""
+			}
+			if response.Code != 200 || status["state"] != "FAILED" || status["error_code"] != code || status["error_summary"] != expectedSummary {
 				t.Fatalf("status = %d %s", response.Code, response.Body.String())
 			}
 		})

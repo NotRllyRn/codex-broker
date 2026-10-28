@@ -51,6 +51,8 @@ func TestFakeAppServerProcess(t *testing.T) {
 			_ = encoder.Encode(map[string]any{"method": "turn/completed", "params": map[string]any{"turn": map[string]any{"id": "turn", "status": status, "items": []any{item}, "error": map[string]string{"message": os.Getenv("CODEX_FAKE_PULSE_ERROR")}}}})
 		case "account/rateLimits/read":
 			_ = encoder.Encode(map[string]any{"id": id, "result": map[string]any{"rateLimits": map[string]any{"primary": map[string]any{"usedPercent": 1}}}})
+		case "account/login/start":
+			_ = encoder.Encode(map[string]any{"id": id, "error": map[string]any{"message": "device auth failed with status 429 Too Many Requests"}})
 		case "auth/test":
 			_ = encoder.Encode(map[string]any{"id": id, "error": map[string]any{"message": "authentication required"}})
 		}
@@ -77,5 +79,17 @@ func TestClientProtocolAndAuthClassification(t *testing.T) {
 	}
 	if _, err := client.Request(context.Background(), "auth/test", nil); err == nil || err.Error() != "Codex authentication must be renewed" {
 		t.Fatalf("auth error = %v", err)
+	}
+}
+
+func TestClientPreservesLoginStartError(t *testing.T) {
+	client, err := Spawn(context.Background(), os.Args[0], t.TempDir(), []string{"PATH=" + os.Getenv("PATH"), "CODEX_FAKE_APP_SERVER=1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, err = client.Request(context.Background(), "account/login/start", map[string]any{"type": "chatgptDeviceCode"})
+	if err == nil || err.Error() != "device auth failed with status 429 Too Many Requests" {
+		t.Fatalf("login error=%v", err)
 	}
 }

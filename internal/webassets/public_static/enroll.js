@@ -10,6 +10,20 @@ function show(node) {
 		if (item) item.hidden = item !== node;
 }
 
+function showError(status = {}) {
+	error.querySelector("h2").textContent = "Sign-in did not complete";
+	error.querySelector("p").textContent = "Please let the operator know about this error.";
+	const detail = error.querySelector("[data-error-detail]");
+	detail.textContent = status.error_summary || status.error_code || "Sign-in failed without further details.";
+	detail.hidden = false;
+	if (status.error_code === "PUBLIC_ACCOUNT_EXISTS") {
+		error.querySelector("h2").textContent = "Account already exists";
+		error.querySelector("p").textContent = "This ChatGPT account is already connected to Codex Broker or is being added.";
+		detail.hidden = true;
+	}
+	show(error);
+}
+
 async function poll() {
 	try {
 		const response = await fetch("/status", {
@@ -36,17 +50,13 @@ async function poll() {
 			show(success);
 			return;
 		}
-		if (status.state === "UNAVAILABLE") {
+		if (status.state === "UNAVAILABLE" && !status.error_summary) {
 			setTimeout(poll, 3000);
 			return;
 		}
-		if (status.error_code === "PUBLIC_ACCOUNT_EXISTS") {
-			error.querySelector("h2").textContent = "Account already exists";
-			error.querySelector("p").textContent = "This ChatGPT account is already connected to Codex Broker or is being added.";
-		}
-		show(error);
-	} catch {
-		setTimeout(poll, 3000);
+		showError(status);
+	} catch (failure) {
+		showError({ error_summary: failure.message });
 	}
 }
 
@@ -64,9 +74,9 @@ async function start() {
 		if (label) params.append("labels", label);
 		const response = await fetch(`/start?${params}`, { method: "POST", cache: "no-store" });
 		if (response.ok) poll();
-		else show(error);
-	} catch {
-		setTimeout(start, 3000);
+		else showError(await response.json());
+	} catch (failure) {
+		showError({ error_summary: failure.message });
 	}
 }
 

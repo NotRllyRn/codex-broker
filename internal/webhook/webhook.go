@@ -234,6 +234,8 @@ func eventCode(value string) string {
 	switch value {
 	case "account.enrolled":
 		return "CB-201"
+	case "account.enrollment_failed":
+		return "CB-202"
 	case "incident.opened":
 		return "CB-101"
 	case "incident.updated":

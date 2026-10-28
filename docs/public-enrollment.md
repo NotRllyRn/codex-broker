@@ -80,7 +80,7 @@ Implementation uses the existing public start endpoint and account creation tran
 
 Successful public signups queue an `account.enrolled` webhook (`CB-201`) for every enabled destination configured in **Settings → Webhook destinations**. Generic JSON, Slack, and Discord notifications include the account email, labels still applied when signup completes, and initial short/weekly quota usage and reset times. Generic JSON places these in `data.account_email`, `data.labels`, and `data.usage.short` / `data.usage.weekly` (`used_percent`, `duration_minutes`, `resets_at_s`). Empty labels are an empty array; unavailable usage windows are `null`.
 
-The login process reads usage after verifying the identity, with a five-second timeout, then queues the event in the same transaction that activates the account. This sends the notification as soon as the account is added, without waiting for background usage polling. An unavailable usage read does not block signup: the notification reports unavailable usage and the normal background refresh still runs. Delivery uses the existing signed, persistent webhook queue and retries; the dispatcher normally picks up queued events within two seconds. Failed signups, administrator sign-ins, and reauthentication do not produce enrollment events.
+The login process reads usage after verifying the identity, with a five-second timeout, then queues the event in the same transaction that activates the account. This sends the notification as soon as the account is added, without waiting for background usage polling. An unavailable usage read does not block signup: the notification reports unavailable usage and the normal background refresh still runs. Delivery uses the existing signed, persistent webhook queue and retries; the dispatcher normally picks up queued events within two seconds. Failed public signups queue `account.enrollment_failed` (`CB-202`) to every enabled destination, including the error code/message, enrollment and login attempt IDs, account ID/name, and email when known. These events use the existing webhook queue and retries, with no polling monitor or additional enrollment status. Administrator sign-ins and reauthentication do not produce enrollment events.
 
 Implementation plan: reuse the active login runtime for the bounded usage read, expose transaction-scoped enqueueing in the existing dispatcher, and build a small enrollment payload helper. Keeping event enqueueing and account activation in one transaction prevents committed accounts from losing their notification during a restart, and prevents rolled-back activations from notifying. No migration or new queue is required.
 
@@ -108,3 +108,39 @@ codex-broker public-serve
 ```
 
 Non-loopback binds require the public TLS certificate/key.
+
+## Sign-in errors and device-auth throttling
+
+Failed enrollments display the error message received by the broker, including
+Codex login-start errors and `account/login/completed` errors such as
+`device auth failed with status 429 Too Many Requests`. Messages use existing
+secret redaction and stored-summary length limits, and are rendered as plain
+text. Error details are available only through the enrollment's session and
+interaction nonce. The special **Account already exists** message is preserved.
+Older failures retain their previously stored generic messages.
+
+The public page asks the user to notify the operator. Enrollment-start and
+status-request failures also show available error details; local status
+throttling continues to retry. No automatic upstream login retries are added.
+
+OpenAI's device-auth documentation does not specify a numerical request quota,
+a reset schedule, a confirmed IP/account/client scope, or an authentication
+quota inspection endpoint. ChatGPT usage limits from `account/rateLimits/read`
+are not a device-auth quota monitor. Do not infer the reset time from model
+usage windows or treat a polling interval as a published rate limit.
+
+A passive monitor can inspect stored login outcomes every 5–10 minutes without
+making OpenAI requests. Report the last observed 429 and its timestamp, and
+subsequent successful enrollments as evidence of recovery. Without a subsequent
+real authentication request, recovery remains unknown; the passage of time
+alone must not mark the service recovered. Active device-auth probes add
+requests and cannot be promised to be exempt from throttling.
+
+To stop new enrollment requests during a cooldown, disable public enrollment
+in Settings; this takes effect without restarting. Existing authentication
+workers continue until completion or timeout. Lowering authentication
+concurrency may reduce polling load, but no documented setting guarantees
+avoidance of the upstream limit.
+
+References: [Codex authentication](https://developers.openai.com/codex/auth)
+and [App Server auth endpoints](https://learn.chatgpt.com/docs/app-server#api-overview-1).

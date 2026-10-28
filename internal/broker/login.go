@@ -292,6 +292,7 @@ func (s *Service) runLogin(ctx context.Context, account Account, operation, atte
 		fail(err)
 		return
 	}
+	account.Email = sql.NullString{String: stringValue(observed["email"]), Valid: stringValue(observed["email"]) != ""}
 	if err = s.reservePublicIdentity(ctx, account, attempt, observed); err != nil {
 		fail(err)
 		return
@@ -340,7 +341,11 @@ func (s *Service) waitLogin(ctx context.Context, runtime *codex.Runtime, loginID
 			}
 			success, _ := params["success"].(bool)
 			if !success {
-				return core.NewError("LOGIN_DENIED", "ChatGPT sign-in was not approved", 409)
+				detail := strings.TrimSpace(stringValue(params["error"]))
+				if detail == "" {
+					detail = "ChatGPT sign-in was not approved"
+				}
+				return core.NewError("LOGIN_DENIED", detail, 409)
 			}
 			return nil
 		}
@@ -458,6 +463,19 @@ func (s *Service) failLogin(ctx context.Context, account Account, attempt, opera
 		_ = db.QueryRowContext(ctx, "SELECT count(*) FROM credential_bundles WHERE account_id=? AND state='ACTIVE'", account.ID).Scan(&hasCredential)
 		_ = db.QueryRowContext(ctx, "SELECT count(*) FROM public_enrollments WHERE login_attempt_id=? AND state='ACTIVE'", attempt).Scan(&publicEnrollment)
 		if publicEnrollment > 0 {
+			if s.Webhooks != nil {
+				var enrollment, email string
+				if err := db.QueryRowContext(ctx, "SELECT enrollment_id,COALESCE(observed_email,?) FROM public_enrollments WHERE login_attempt_id=?", account.Email.String, attempt).Scan(&enrollment, &email); err != nil {
+					return err
+				}
+				if _, err := s.Webhooks.EmitTx(ctx, db, "account.enrollment_failed", "account:"+account.PublicID, map[string]any{
+					"account_id": account.PublicID, "account_name": account.DisplayName, "account_email": email,
+					"enrollment_id": enrollment, "login_attempt_id": attempt, "error_code": code, "error_summary": summary,
+					"summary": code + ": " + summary,
+				}, "", ""); err != nil {
+					return err
+				}
+			}
 			_, _ = db.ExecContext(ctx, "UPDATE public_enrollments SET state='FAILED',completed_at_ms=? WHERE login_attempt_id=?", now, attempt)
 			if hasCredential == 0 {
 				_, _ = db.ExecContext(ctx, "UPDATE accounts SET enabled=0,lifecycle_state='DELETED',deleted_at_ms=?,updated_at_ms=? WHERE account_id=?", now, now, account.ID)
@@ -666,9 +684,9 @@ func (s *Service) StartPublicEnrollment(ctx context.Context, session string, lab
 
 func (s *Service) PublicEnrollmentStatus(ctx context.Context, enrollment, attempt, session, nonce string) (map[string]any, error) {
 	var state, loginState string
-	var email, errorCode sql.NullString
+	var email, errorCode, errorSummary sql.NullString
 	var sessionHash, nonceHash []byte
-	err := s.Store.DB.QueryRowContext(ctx, "SELECT p.state,l.state,p.observed_email,p.session_hash,l.interaction_nonce_hash,l.error_code FROM public_enrollments p JOIN login_attempts l USING(login_attempt_id) WHERE p.enrollment_id=? AND p.login_attempt_id=?", enrollment, attempt).Scan(&state, &loginState, &email, &sessionHash, &nonceHash, &errorCode)
+	err := s.Store.DB.QueryRowContext(ctx, "SELECT p.state,l.state,p.observed_email,p.session_hash,l.interaction_nonce_hash,l.error_code,l.error_summary FROM public_enrollments p JOIN login_attempts l USING(login_attempt_id) WHERE p.enrollment_id=? AND p.login_attempt_id=?", enrollment, attempt).Scan(&state, &loginState, &email, &sessionHash, &nonceHash, &errorCode, &errorSummary)
 	if err != nil || !sameDigest(sessionHash, auth.Digest(session)) || !sameDigest(nonceHash, auth.Digest(nonce)) {
 		return nil, core.NewError("PUBLIC_ENROLLMENT_NOT_FOUND", "Sign-in not found", 404)
 	}
@@ -679,7 +697,7 @@ func (s *Service) PublicEnrollmentStatus(ctx context.Context, enrollment, attemp
 		if errorCode.String == "PUBLIC_ACCOUNT_EXISTS" {
 			return map[string]any{"state": "FAILED", "error_code": errorCode.String}, nil
 		}
-		return map[string]any{"state": "FAILED"}, nil
+		return map[string]any{"state": "FAILED", "error_code": errorCode.String, "error_summary": errorSummary.String}, nil
 	}
 	interaction, err := s.Interaction(attempt, session, nonce)
 	if err != nil {

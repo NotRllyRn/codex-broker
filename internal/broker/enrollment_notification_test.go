@@ -124,7 +124,7 @@ func TestPublicEnrollmentNotificationWithoutUsageOrLabels(t *testing.T) {
 	assertEnrollmentPayload(t, s, public, []string{}, false)
 }
 
-func TestFailedPublicEnrollmentDoesNotNotify(t *testing.T) {
+func TestFailedPublicEnrollmentNotifies(t *testing.T) {
 	s, marker := loginFixture(t, "missing-auth")
 	configureEnrollmentWebhooks(t, s)
 	if err := s.SetPublicEnrollmentOpen(t.Context(), true); err != nil {
@@ -139,4 +139,79 @@ func TestFailedPublicEnrollmentDoesNotNotify(t *testing.T) {
 	}
 	waitLoginState(t, s, started["login_attempt_id"], "FAILED_RETRYABLE")
 	assertEnrollmentEventCount(t, s, 0)
+	var count int
+	if err := s.Store.DB.QueryRow("SELECT count(*) FROM webhook_events WHERE event_type='account.enrollment_failed'").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("failure events=%d err=%v", count, err)
+	}
+}
+
+func TestPublicEnrollmentFailureWebhookDetails(t *testing.T) {
+	for _, scenario := range []string{"error:device auth failed with status 429 Too Many Requests", "missing-auth"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, marker := loginFixture(t, scenario)
+			configureEnrollmentWebhooks(t, s)
+			if err := s.SetPublicEnrollmentOpen(t.Context(), true); err != nil {
+				t.Fatal(err)
+			}
+			started, err := s.StartPublicEnrollment(t.Context(), "session")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(marker, []byte("approve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			waitLoginState(t, s, started["login_attempt_id"], "FAILED_RETRYABLE")
+			var raw []byte
+			if err := s.Store.DB.QueryRow("SELECT canonical_body FROM webhook_events WHERE event_type='account.enrollment_failed'").Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			var event struct {
+				Data map[string]any `json:"data"`
+			}
+			if err := json.Unmarshal(raw, &event); err != nil {
+				t.Fatal(err)
+			}
+			email := ""
+			if scenario == "missing-auth" {
+				email = "owner@example.com"
+			}
+			if event.Data["account_email"] != email || event.Data["enrollment_id"] != started["enrollment_id"] || event.Data["login_attempt_id"] != started["login_attempt_id"] || event.Data["error_summary"] == "" || event.Data["account_id"] == "" {
+				t.Fatalf("payload=%s", raw)
+			}
+			if strings.HasPrefix(scenario, "error:") && event.Data["error_summary"] != strings.TrimPrefix(scenario, "error:") {
+				t.Fatalf("error lost: %s", raw)
+			}
+			rows, err := s.Store.DB.Query("SELECT immutable_body FROM webhook_deliveries JOIN webhook_events USING(event_id) WHERE event_type='account.enrollment_failed'")
+			if err != nil {
+				t.Fatal(err)
+			}
+			count := 0
+			for rows.Next() {
+				var body []byte
+				if err := rows.Scan(&body); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(body), event.Data["error_summary"].(string)) || (email != "" && !strings.Contains(string(body), email)) {
+					t.Fatalf("delivery lost details: %s", body)
+				}
+				count++
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil || count != 3 {
+				t.Fatalf("deliveries=%d err=%v", count, err)
+			}
+			var accountID, operation string
+			if err := s.Store.DB.QueryRow("SELECT account_id,operation_id FROM login_attempts WHERE login_attempt_id=?", started["login_attempt_id"]).Scan(&accountID, &operation); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.failLogin(t.Context(), Account{ID: accountID}, started["login_attempt_id"], operation, "FAILED_RETRYABLE", "LOGIN_DENIED", "again"); err != nil {
+				t.Fatal(err)
+			}
+			var events int
+			if err := s.Store.DB.QueryRow("SELECT count(*) FROM webhook_events WHERE event_type='account.enrollment_failed'").Scan(&events); err != nil || events != 1 {
+				t.Fatalf("duplicate events=%d err=%v", events, err)
+			}
+		})
+	}
 }

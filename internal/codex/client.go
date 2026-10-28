@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/logbook"
 )
 
 const MaxFrame = 8 * 1024 * 1024
@@ -173,6 +174,14 @@ func (c *Client) Request(ctx context.Context, method string, params map[string]a
 			return nil, err
 		}
 		if value.Error != nil {
+			if method == "account/login/start" {
+				if upstream, ok := value.Error.(map[string]any); ok {
+					if message, ok := upstream["message"].(string); ok && message != "" {
+						detail, _ := logbook.Redact(message).(string)
+						return nil, core.NewError("CODEX_RPC_REJECTED", detail, 502)
+					}
+				}
+			}
 			text, _ := json.Marshal(value.Error)
 			if authError(string(text)) {
 				return nil, core.NewError("CODEX_AUTH_REQUIRED", "Codex authentication must be renewed", 503)
