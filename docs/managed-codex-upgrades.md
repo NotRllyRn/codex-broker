@@ -117,9 +117,14 @@ response. It catches packaging and basic protocol regressions without secrets.
 This does **not** prove OAuth login, token rotation/persistence, quota reads,
 model availability, or window-pulse generation. Before merge, verify those in
 staging using a separate test account and persistent isolated credential storage.
-Never share or copy production refresh tokens into CI. Authenticated automation
-is a future phase requiring a serialized credential owner and secure persistence
-for rotated tokens; a static reusable Actions secret is not enough.
+Never share or copy production refresh tokens into CI. Unattended authenticated
+automation would require a serialized credential owner and secure persistence
+for rotated tokens; a static reusable Actions secret is not enough. The
+operator-assisted workflow below uses a fresh isolated sign-in.
+
+When asked to test an upgrade PR, use the [device-login and forced-renewal
+workflow](managed-codex-authenticated-check.md). It prints a device code for the
+operator and automatically runs the remaining authenticated checks after sign-in.
 
 Nix CI validates the module using its fixture; it does not provide a new real
 Codex Nix package. Nix operators must supply a package matching the approved
