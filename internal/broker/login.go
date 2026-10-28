@@ -699,6 +699,9 @@ func (s *Service) PublicEnrollmentStatus(ctx context.Context, enrollment, attemp
 		}
 		return map[string]any{"state": "FAILED", "error_code": errorCode.String, "error_summary": errorSummary.String}, nil
 	}
+	if loginState == "VERIFYING_ACCOUNT" || loginState == "CHECKPOINTING_CREDENTIAL" {
+		return map[string]any{"state": "PROCESSING"}, nil
+	}
 	interaction, err := s.Interaction(attempt, session, nonce)
 	if err != nil {
 		return map[string]any{"state": "STARTING"}, nil

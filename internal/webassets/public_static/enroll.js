@@ -31,7 +31,11 @@ async function poll() {
 			cache: "no-store",
 		});
 		const status = await response.json();
-		if (status.state === "STARTING") {
+		if (status.state === "STARTING" || status.state === "PROCESSING") {
+			loading.querySelector("p").textContent = status.state === "PROCESSING"
+				? "Sign-in received—finishing enrollment…"
+				: "Preparing a secure one-time sign-in…";
+			show(loading);
 			setTimeout(poll, 800);
 			return;
 		}

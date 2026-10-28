@@ -391,3 +391,25 @@ func TestPublicEnrollmentUpstreamError(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicEnrollmentProcessingStatus(t *testing.T) {
+	s, _ := loginFixture(t, "success")
+	ctx := t.Context()
+	if err := s.SetPublicEnrollmentOpen(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	started, err := s.StartPublicEnrollment(ctx, "session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitLoginState(t, s, started["login_attempt_id"], "WAITING_FOR_USER")
+	for _, state := range []string{"VERIFYING_ACCOUNT", "CHECKPOINTING_CREDENTIAL"} {
+		if err := s.loginState(ctx, started["login_attempt_id"], state, ""); err != nil {
+			t.Fatal(err)
+		}
+		status, err := s.PublicEnrollmentStatus(ctx, started["enrollment_id"], started["login_attempt_id"], "session", started["interaction_nonce"])
+		if err != nil || status["state"] != "PROCESSING" || len(status) != 1 {
+			t.Fatalf("%s: status=%v err=%v", state, status, err)
+		}
+	}
+}

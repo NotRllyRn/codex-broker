@@ -68,3 +68,26 @@ for (const summary of ["device auth failed with status 429 Too Many Requests", "
     assert.equal(detail.hidden, false);
   });
 }
+
+test("processing replaces sign-in instructions until enrollment completes", async () => {
+  const message = {};
+  const loading = { hidden: true, querySelector: () => message };
+  const steps = { hidden: false }, success = { hidden: true }, email = {};
+  const nodes = { "[data-loading]": loading, "[data-steps]": steps, "[data-success]": success, "[data-email]": email };
+  const root = { querySelector: (selector) => nodes[selector] ??= { addEventListener() {} } };
+  let nextPoll;
+  const states = [{ state: "PROCESSING" }, { state: "COMPLETED", email: "user@example.com" }];
+  await runInNewContext(`${source}\npoll()`, {
+    document: { querySelector: () => root }, location: new URL("https://enroll.example.test/"), URLSearchParams,
+    fetch: async (url) => url.startsWith("/start") ? new Promise(() => {}) : { json: async () => states.shift() },
+    setTimeout: (callback) => { nextPoll = callback; },
+  });
+  assert.equal(steps.hidden, true);
+  assert.equal(loading.hidden, false);
+  assert.equal(success.hidden, true);
+  assert.equal(message.textContent, "Sign-in received—finishing enrollment…");
+  await nextPoll();
+  assert.equal(loading.hidden, true);
+  assert.equal(success.hidden, false);
+  assert.equal(email.textContent, "user@example.com");
+});
