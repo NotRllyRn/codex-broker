@@ -230,8 +230,11 @@ func waitLogin(ctx context.Context, client *codex.Client, loginID string) error 
 				continue
 			}
 			params, _ := message["params"].(map[string]any)
-			if params["loginId"] != loginID || params["success"] != true {
-				return errors.New("device sign-in was rejected or returned an unexpected login ID")
+			if params["loginId"] != loginID {
+				return errors.New("device sign-in returned an unexpected login ID")
+			}
+			if params["success"] != true {
+				return errors.New("device sign-in was rejected or expired; start a new check for a fresh code")
 			}
 			return nil
 		}
