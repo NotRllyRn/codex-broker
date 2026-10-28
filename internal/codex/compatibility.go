@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-const SupportedVersion = "codex-cli 0.164.0"
+const SupportedVersion = "codex-cli 0.165.0"
 
 type Compatibility struct {
 	Compatible                    bool

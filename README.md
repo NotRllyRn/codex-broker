@@ -138,7 +138,7 @@ configure the service with a Codex package pinned to the supported version:
 ```nix
 services.codex-broker = {
   enable = true;
-  codex = myPinnedCodex; # Must provide codex-cli 0.164.0.
+  codex = myPinnedCodex; # Must provide codex-cli 0.165.0.
   vaultKeyFile = "/run/secrets/broker-vault";
   adminPasswordFile = "/run/secrets/admin-credential";
 };
