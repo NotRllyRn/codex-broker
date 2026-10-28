@@ -171,15 +171,25 @@ func run(ctx context.Context, executable, version string, out io.Writer) error {
 	if err := sameIdentity(ctx, client, identity); err != nil {
 		return err
 	}
+	fmt.Fprintln(out, "PASS: renewed credential restored into a fresh process; identity verified")
 	adapter := codex.Adapter{Client: client}
 	limits, err := adapter.RateLimits(ctx)
-	if err != nil || quotaAvailable(limits) != nil {
-		return errors.New("quota read failed or test account has no available quota")
+	if err != nil {
+		return fmt.Errorf("quota read RPC failed: %w", err)
 	}
-	fmt.Fprintln(out, "PASS: renewed credential restored into a fresh process; identity and quota reads")
+	if err := quotaAvailable(limits); err != nil {
+		return fmt.Errorf("quota validation failed: %w", err)
+	}
+	fmt.Fprintln(out, "PASS: live quota read; test account has available quota")
 	pulse, err := adapter.PulseWindows(ctx)
-	if err != nil || pulse.Status != "completed" || pulse.Response == "" || quotaAvailable(pulse.Usage) != nil {
-		return errors.New("window pulse or its quota reread failed")
+	if err != nil {
+		return fmt.Errorf("window pulse failed: %w", err)
+	}
+	if pulse.Status != "completed" || pulse.Response == "" {
+		return errors.New("window pulse returned no completed response")
+	}
+	if err := quotaAvailable(pulse.Usage); err != nil {
+		return fmt.Errorf("post-pulse quota validation failed: %w", err)
 	}
 	fmt.Fprintf(out, "PASS: window pulse completed; model=%s effort=%s duration_ms=%d\n", pulse.Model, pulse.ReasoningEffort, pulse.DurationMS)
 	payload, err = c.capture(client, home)
@@ -325,14 +335,33 @@ func (c check) load() (vault.Payload, error) {
 }
 
 func quotaAvailable(result map[string]any) error {
-	limits, _ := result["rateLimits"].(map[string]any)
+	limits, ok := result["rateLimits"].(map[string]any)
+	if !ok {
+		return errors.New("rateLimits is missing or invalid")
+	}
+	observed := 0
 	for _, key := range []string{"primary", "secondary"} {
-		window, _ := limits[key].(map[string]any)
+		// The protocol permits a missing/null window (for example, a plan with
+		// only a weekly limit). Validate every supplied window, not absent ones.
+		if limits[key] == nil {
+			continue
+		}
+		window, ok := limits[key].(map[string]any)
+		if !ok {
+			return fmt.Errorf("%s window has an invalid shape", key)
+		}
+		observed++
 		used, ok := window["usedPercent"].(float64)
 		reset, resetOK := window["resetsAt"].(float64)
-		if !ok || used < 0 || used >= 100 || !resetOK || reset <= float64(time.Now().Unix()) {
-			return errors.New("quota window missing, invalid, or exhausted")
+		if !ok || used < 0 || used > 100 || !resetOK || reset <= float64(time.Now().Unix()) {
+			return fmt.Errorf("%s window has invalid usage or reset time", key)
 		}
+		if used >= 100 {
+			return fmt.Errorf("%s window is exhausted (100%% used); retry with available quota", key)
+		}
+	}
+	if observed == 0 {
+		return errors.New("no quota windows were returned")
 	}
 	return nil
 }

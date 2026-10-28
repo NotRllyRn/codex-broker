@@ -13,6 +13,31 @@ import (
 	"time"
 )
 
+func TestQuotaWindows(t *testing.T) {
+	window := func(used float64) map[string]any {
+		return map[string]any{"usedPercent": used, "resetsAt": float64(time.Now().Add(time.Hour).Unix())}
+	}
+	for _, tc := range []struct {
+		name    string
+		limits  map[string]any
+		wantErr bool
+	}{
+		{"both available", map[string]any{"primary": window(10), "secondary": window(20)}, false},
+		{"primary only", map[string]any{"primary": window(10), "secondary": nil}, false},
+		{"secondary only", map[string]any{"primary": nil, "secondary": window(20)}, false},
+		{"no windows", map[string]any{}, true},
+		{"exhausted secondary", map[string]any{"primary": window(10), "secondary": window(100)}, true},
+		{"malformed supplied window", map[string]any{"primary": window(10), "secondary": "invalid"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := quotaAvailable(map[string]any{"rateLimits": tc.limits})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("quota validation = %v, want error=%t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestAuthenticatedWorkflow(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("wrapper uses POSIX shell")

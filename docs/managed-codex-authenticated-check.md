@@ -58,8 +58,10 @@ Only pass/fail summaries and token-change booleans are printed. Token values,
 hashes, account identity, and the disposable encryption key are not printed.
 Checkpoint storage is an isolated encrypted file, not the production SQL
 promotion path; broker CI covers database integration. This covers device OAuth,
-not the optional browser callback flow. The account needs available short and
-weekly quota; the successful pulse consumes a small amount of quota.
+not the optional browser callback flow. Every quota window reported for the
+account must have available capacity; absent/null windows are allowed. A
+successful pulse consumes a small amount of quota. RPC failures, invalid quota
+responses, and exhausted windows are reported separately.
 
 Record the PR head SHA, exact CLI version, CI results, authenticated-check result,
 and deployment/recovery readiness before marking the upgrade ready. Do not mark
