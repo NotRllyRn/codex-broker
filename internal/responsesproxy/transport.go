@@ -4,8 +4,10 @@ package responsesproxy
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -34,9 +36,19 @@ func NewClient() *http.Client {
 	}
 }
 
+const IdleReadTimeout = 2 * time.Minute
+
+var ErrIdleReadTimeout = errors.New("upstream response idle read timeout")
+
 func Forward(client *http.Client, source *http.Request, target string, body []byte, token, accountID string) (*http.Response, error) {
-	request, err := http.NewRequestWithContext(source.Context(), source.Method, target, bytes.NewReader(body))
+	return forward(client, source, target, body, token, accountID, IdleReadTimeout)
+}
+
+func forward(client *http.Client, source *http.Request, target string, body []byte, token, accountID string, idleTimeout time.Duration) (*http.Response, error) {
+	ctx, cancel := context.WithCancelCause(source.Context())
+	request, err := http.NewRequestWithContext(ctx, source.Method, target, bytes.NewReader(body))
 	if err != nil {
+		cancel(nil)
 		return nil, err
 	}
 	CopyHeaders(request.Header, source.Header)
@@ -47,7 +59,36 @@ func Forward(client *http.Client, source *http.Request, target string, body []by
 	}
 	// Never let net/http replay inference after a connection failure.
 	request.GetBody = nil
-	return client.Do(request)
+	response, err := client.Do(request)
+	if err != nil {
+		cancel(nil)
+		return nil, err
+	}
+	response.Body = &idleBody{ReadCloser: response.Body, ctx: ctx, cancel: cancel, timeout: idleTimeout}
+	return response, nil
+}
+
+// Time only blocked upstream reads, not downstream writes or total stream duration.
+type idleBody struct {
+	io.ReadCloser
+	ctx     context.Context
+	cancel  context.CancelCauseFunc
+	timeout time.Duration
+}
+
+func (b *idleBody) Read(p []byte) (int, error) {
+	timer := time.AfterFunc(b.timeout, func() { b.cancel(ErrIdleReadTimeout) })
+	n, err := b.ReadCloser.Read(p)
+	timer.Stop()
+	if errors.Is(context.Cause(b.ctx), ErrIdleReadTimeout) {
+		return n, ErrIdleReadTimeout
+	}
+	return n, err
+}
+
+func (b *idleBody) Close() error {
+	b.cancel(nil)
+	return b.ReadCloser.Close()
 }
 
 // CopyHeaders strips credentials, cookies and hop-by-hop headers in both directions.

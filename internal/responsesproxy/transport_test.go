@@ -1,11 +1,14 @@
 package responsesproxy
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHeadersAndRedirects(t *testing.T) {
@@ -84,5 +87,61 @@ func TestCopyResponseFlushesOpaqueSSE(t *testing.T) {
 	CopyResponse(w, &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "Connection": {"X-Remove"}, "X-Remove": {"secret"}}, Body: io.NopCloser(strings.NewReader(body))})
 	if !w.Flushed || w.Body.String() != body || w.Header().Get("X-Remove") != "" {
 		t.Fatalf("response=%v", w)
+	}
+}
+
+func TestForwardIdleReadTimeout(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+	response, err := forward(NewClient(), httptest.NewRequest("POST", "/v1/responses", nil), upstream.URL, nil, "token", "account", 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadAll(response.Body); !errors.Is(err, ErrIdleReadTimeout) {
+		t.Fatalf("read error=%v", err)
+	}
+}
+
+func TestForwardIdleReadAllowsLongActiveStream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for range 20 {
+			_, _ = io.WriteString(w, "data\n")
+			w.(http.Flusher).Flush()
+			time.Sleep(10 * time.Millisecond)
+		}
+	}))
+	defer upstream.Close()
+	response, err := forward(NewClient(), httptest.NewRequest("POST", "/v1/responses", nil), upstream.URL, nil, "token", "account", 100*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestForwardClientCancellationIsNotIdleTimeout(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer upstream.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	response, err := Forward(NewClient(), httptest.NewRequest("POST", "/v1/responses", nil).WithContext(ctx), upstream.URL, nil, "token", "account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	cancel()
+	if _, err := io.ReadAll(response.Body); !errors.Is(err, context.Canceled) || errors.Is(err, ErrIdleReadTimeout) {
+		t.Fatalf("read error=%v", err)
 	}
 }

@@ -162,7 +162,7 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 			break
 		}
 		if err == io.EOF || len(bytes.TrimSpace(frame)) != 0 && !bytes.HasPrefix(bytes.TrimSpace(frame), []byte(":")) {
-			response.Body = io.NopCloser(io.MultiReader(bytes.NewReader(prefix), reader))
+			response.Body = &replayBody{Reader: io.MultiReader(bytes.NewReader(prefix), reader), Closer: response.Body}
 			notify(NoticeNotSSE)
 			CopyResponse(w, response)
 			return NoticeNotSSE, nil
