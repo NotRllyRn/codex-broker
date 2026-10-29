@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -69,12 +70,14 @@ type Metrics interface {
 }
 
 type Engine struct {
-	Authority   Authority
-	Client      *http.Client
-	Metrics     Metrics
-	ScrubPolicy responsesproxy.ScrubPolicy
-	largeOnce   sync.Once
-	largeGate   chan struct{}
+	Authority    Authority
+	Client       *http.Client
+	Metrics      Metrics
+	ScrubPolicy  responsesproxy.ScrubPolicy
+	largeOnce    sync.Once
+	largeGate    chan struct{}
+	Log          func(level, event, message string)
+	unreadyUntil atomic.Int64
 }
 
 func New(authority Authority, metrics Metrics) *Engine {
@@ -177,6 +180,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	for {
 		selected, wait, routeErr := e.Authority.Route(r.Context(), key.ID, input)
 		if routeErr != nil {
+			e.failure(r, requestID, "", key.ID, "route", requestStartedAt, routeErr)
 			return Error(w, 503, "broker_unavailable", "Codex Broker unavailable.")
 		}
 		if wait != nil {
@@ -207,8 +211,12 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		upstreamStartedAt := time.Now().UnixMilli()
 		response, forwardErr := responsesproxy.Forward(e.Client, r, target, body, selected.AccessToken, selected.ChatGPTAccountID)
 		if forwardErr != nil {
+			e.failure(r, requestID, selected.AccountID, key.ID, "upstream_headers", requestStartedAt, forwardErr)
 			return Error(w, 502, "upstream_unavailable", "Upstream request failed.")
 		}
+		response.Body = &observedBody{ReadCloser: response.Body, onError: func(err error) {
+			e.failure(r, requestID, selected.AccountID, key.ID, "upstream_body", requestStartedAt, err)
+		}}
 		responseHeadersAt := time.Now().UnixMilli()
 		if response.StatusCode >= 300 && response.StatusCode < 400 {
 			response.Body.Close()
@@ -252,6 +260,9 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 					options.OnNativeCompactionArmed = e.Metrics.NativeCompactionArmed
 				}
 				if _, copyErr := responsesproxy.CopyNoticeResponse(w, response, notice, nil, observe, options); copyErr != nil {
+					if errors.Is(copyErr, responsesproxy.ErrIdleReadTimeout) {
+						return Error(w, http.StatusGatewayTimeout, "upstream_timeout", "Upstream response stalled.")
+					}
 					return Error(w, http.StatusBadGateway, "invalid_upstream_stream", "Upstream stream validation failed.")
 				}
 				return nil

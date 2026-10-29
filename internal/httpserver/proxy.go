@@ -61,6 +61,9 @@ func (s *Server) proxyGateway() *gateway.Engine {
 	s.gatewayOnce.Do(func() {
 		s.gatewayEngine = gateway.New(brokerGatewayAuthority{s}, &s.proxyStats)
 		s.gatewayEngine.Client = s.proxyClient
+		if s.App.Logs != nil {
+			s.gatewayEngine.Log = s.App.Logs.Log
+		}
 		s.gatewayEngine.ScrubPolicy = s.proxyScrubPolicy
 	})
 	return s.gatewayEngine

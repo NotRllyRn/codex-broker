@@ -230,7 +230,7 @@ func noStore(w http.ResponseWriter) {
 func (s *Server) ready(w http.ResponseWriter, r *http.Request) error {
 	status := 503
 	value := "unavailable"
-	if s.App.Ready {
+	if s.App.Ready && s.proxyGateway().Ready() {
 		status = 200
 		value = "ok"
 	}

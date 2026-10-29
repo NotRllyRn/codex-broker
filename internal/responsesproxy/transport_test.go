@@ -3,6 +3,7 @@ package responsesproxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -91,19 +92,32 @@ func TestCopyResponseFlushesOpaqueSSE(t *testing.T) {
 }
 
 func TestForwardIdleReadTimeout(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-		w.(http.Flusher).Flush()
-		<-r.Context().Done()
-	}))
-	defer upstream.Close()
-	response, err := forward(NewClient(), httptest.NewRequest("POST", "/v1/responses", nil), upstream.URL, nil, "token", "account", 20*time.Millisecond)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	if _, err := io.ReadAll(response.Body); !errors.Is(err, ErrIdleReadTimeout) {
-		t.Fatalf("read error=%v", err)
+	for _, http2 := range []bool{false, true} {
+		for _, prefix := range []string{"", "data: active\n\n"} {
+			t.Run(fmt.Sprintf("http2=%t/streaming=%t", http2, prefix != ""), func(t *testing.T) {
+				upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if (r.ProtoMajor == 2) != http2 {
+						t.Errorf("HTTP version=%s", r.Proto)
+					}
+					w.WriteHeader(200)
+					_, _ = io.WriteString(w, prefix)
+					w.(http.Flusher).Flush()
+					<-r.Context().Done()
+				}))
+				upstream.EnableHTTP2 = http2
+				upstream.StartTLS()
+				defer upstream.Close()
+				response, err := forward(upstream.Client(), httptest.NewRequest("POST", "/v1/responses", nil), upstream.URL, nil, "token", "account", 50*time.Millisecond)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer response.Body.Close()
+				body, err := io.ReadAll(response.Body)
+				if !errors.Is(err, ErrIdleReadTimeout) || string(body) != prefix {
+					t.Fatalf("body=%q read error=%v", body, err)
+				}
+			})
+		}
 	}
 }
 

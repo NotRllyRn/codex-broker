@@ -18,7 +18,7 @@ func NewServer(relay *Relay) *Server {
 	s := &Server{relay: relay, engine: gateway.New(relay, nil), mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	s.mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
-		if relay.Ready() {
+		if relay.Ready() && s.engine.Ready() {
 			write(w, 200, map[string]string{"status": "ok"})
 		} else {
 			write(w, 503, map[string]string{"status": "unavailable"})

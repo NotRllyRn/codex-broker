@@ -22,6 +22,27 @@ generated relay bundle, not primary secrets or data. See
 
 ## Health
 
+Proxy upstream body reads time out after two minutes without receiving bytes.
+This is an idle-read limit, not a total duration limit: active streams can run
+longer, and downstream write time is excluded. A timed-out stream is closed
+without replaying inference. Before response headers have been sent, an idle
+body timeout returns HTTP 504; an already-started stream is aborted.
+
+An upstream timeout makes the broker or relay's `/health/ready` return 503 for
+30 seconds, allowing a health-checking load balancer to use its backup. Each
+new timeout extends the cooldown. Readiness recovers automatically after the
+cooldown so the primary can accept traffic again; this is a passive signal,
+not a guarantee that the next upstream request will succeed. No OpenAI probes
+are sent. Liveness remains independent.
+
+`proxy.failure` logs contain the request, account and client IDs, path, failing
+stage, elapsed time, timeout flag, cooldown, and redacted error. Primary logs
+are stored in `logs/windowkeeper.jsonl`; relay logs go to container output.
+`proxy.ready` records when the cooldown expires. Client cancellations do not
+change readiness. The existing five-minute response-header timeout also
+triggers the cooldown.
+
+
 - `/health/live`: process liveness.
 - `/health/ready`: browser/operator readiness.
 - `/api/v1/health`: client-key-authenticated machine readiness.

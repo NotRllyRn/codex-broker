@@ -1044,3 +1044,34 @@ func TestManualPulseEligibilityAndDeduplication(t *testing.T) {
 		})
 	}
 }
+
+// Exercise the HTTP readiness endpoint after the proxy receives a read timeout.
+func TestProxyIdleTimeoutReadiness(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	s.App.Ready = true
+	ready := func() int {
+		w := httptest.NewRecorder()
+		if err := s.ready(w, httptest.NewRequest("GET", "/health/ready", nil)); err != nil {
+			t.Fatal(err)
+		}
+		return w.Code
+	}
+	if ready() != 200 {
+		t.Fatal("initially unready")
+	}
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(proxyIdleReader{})}, nil
+	})
+	got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`)
+	if got.Code != 504 || ready() != 503 {
+		t.Fatalf("response=%d readiness=%d", got.Code, ready())
+	}
+	logs := s.App.Logs.Recent("ERROR", "proxy.failure", 10)
+	if len(logs) != 1 || !strings.Contains(logs[0]["message"].(string), "stage=upstream_body") {
+		t.Fatalf("logs=%v", logs)
+	}
+}
+
+type proxyIdleReader struct{}
+
+func (proxyIdleReader) Read([]byte) (int, error) { return 0, responsesproxy.ErrIdleReadTimeout }
