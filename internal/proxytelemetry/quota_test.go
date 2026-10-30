@@ -308,3 +308,39 @@ func TestQuotaModelLifetimeSurvivesRestartAndExpiry(t *testing.T) {
 	expectModelQuota(t, reopened, 0, RollingPeriod, "gpt-a", 0, 0, 0)
 	expectModelQuota(t, reopened, 0, LifetimePeriod, "gpt-a", 2, 5, 350)
 }
+
+func TestQuotaIrregularReadsSplitDelayedModelActivityConservatively(t *testing.T) {
+	db, ctx := telemetryFixture(t)
+	// Uneven observations, including a rounded zero-point change, must use
+	// actual activity rather than the polling interval as the denominator.
+	for _, poll := range []struct {
+		id       string
+		at, used int64
+	}{
+		{"manual", 113, 10}, {"scheduled", 900, 14}, {"reset-check", 1600, 16},
+	} {
+		measureQuota(t, db, poll.id, poll.at, poll.used, 20)
+	}
+	for _, response := range []struct {
+		id, model  string
+		start, end int64
+	}{
+		{"long", "gpt-a", 100, 1400}, {"overlap", "gpt-a", 110, 1000}, {"switch", "gpt-b", 1000, 1500},
+	} {
+		value := observation(response.id, response.start, response.end)
+		value.RequestModel, value.ResponseModel = response.model, response.model
+		for range 2 {
+			if _, err := Record(ctx, db, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, period := range []string{RollingPeriod, LifetimePeriod} {
+		// Union [100,1500], never summed stream durations or elapsed poll time.
+		expectQuota(t, db, 0, period, "short", 3, 6, 1400)
+		// First two intervals contain only gpt-a. The third is mixed, so its
+		// entire delta remains unassigned rather than guessing a model share.
+		expectModelQuota(t, db, 0, period, "gpt-a", 2, 4, 800)
+		expectModelQuota(t, db, 0, period, "gpt-b", 0, 0, 0)
+	}
+}

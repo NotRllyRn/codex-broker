@@ -18,7 +18,7 @@ type resetRefresh struct {
 }
 
 // Preserve a reset that has already happened until its delayed read is handled,
-// even if an hourly poll reports the next window before the grace period ends.
+// even if another read reports the next window before the grace period ends.
 func scheduleUsageResets(ctx context.Context, db store.Executor, accountID string, now int64) error {
 	for _, window := range []struct{ kind, column string }{
 		{"short", "short_resets_at_s"}, {"weekly", "weekly_resets_at_s"},
@@ -61,11 +61,10 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 			return err
 		}
 		rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.public_token,r.reason FROM usage_refresh_requests r
-            JOIN accounts a USING(account_id) JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id)
-            WHERE r.due_at_ms<=? AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED'
+            JOIN accounts a USING(account_id) JOIN account_state s USING(account_id)
+            WHERE r.due_at_ms<=? AND r.next_attempt_at_ms<=? AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED'
             AND EXISTS(SELECT 1 FROM credential_bundles b WHERE b.account_id=a.account_id AND b.state='ACTIVE')
-            AND (u.last_attempt_at_ms IS NULL OR u.last_attempt_at_ms<=COALESCE(u.complete_read_at_ms,0) OR u.last_attempt_at_ms<=?)
-            AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, now, now-usageRetryDelay.Milliseconds())
+            AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, now, now)
 		if err != nil {
 			return err
 		}
@@ -90,6 +89,11 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 		for _, item := range candidates {
 			refresh, err := claimUsageRefresh(ctx, db, item.account, item.reason, now)
 			if err != nil {
+				return err
+			}
+			// Keep the retry deadline independent of successful-read timestamps:
+			// partial responses cannot satisfy the request or cause rapid retries.
+			if _, err := db.ExecContext(ctx, "UPDATE usage_refresh_requests SET next_attempt_at_ms=? WHERE account_id=?", now+usageRetryDelay.Milliseconds(), item.account.ID); err != nil {
 				return err
 			}
 			// The durable request owns retries after the reset watermark is claimed.

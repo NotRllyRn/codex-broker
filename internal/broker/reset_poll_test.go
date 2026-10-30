@@ -22,7 +22,7 @@ func claimResets(t *testing.T, service *Service, now int64, want int) []resetRef
 	return claims
 }
 
-func TestResetRefreshWaitsTwoMinutesAndCoalescesWindows(t *testing.T) {
+func TestResetRefreshWaitsForGraceAndCoalescesWindows(t *testing.T) {
 	router, _ := quotaFixture(t)
 	service := router.Service
 	reset := time.Now().Unix()
@@ -57,12 +57,15 @@ func TestResetWindowsRefreshIndependently(t *testing.T) {
 				short, weekly = weekly, short
 			}
 			setResetTimes(t, service, short, weekly)
-			claims := claimResets(t, service, (reset+120)*1000, 1)
+			claims := claimResets(t, service, (reset+60)*1000, 1)
 			if _, err := service.Store.DB.Exec("UPDATE operations SET state='SUCCEEDED' WHERE operation_id=?", claims[0].operation); err != nil {
 				t.Fatal(err)
 			}
-			claimResets(t, service, (reset+719)*1000, 0)
-			claimResets(t, service, (reset+720)*1000, 1)
+			if _, err := service.Store.DB.Exec("DELETE FROM usage_refresh_requests; UPDATE usage_current SET complete_read_at_ms=last_attempt_at_ms"); err != nil {
+				t.Fatal(err)
+			}
+			claimResets(t, service, (reset+644)*1000, 0)
+			claimResets(t, service, (reset+645)*1000, 1)
 		})
 	}
 }
@@ -89,18 +92,21 @@ func TestResetRefreshWaitsForBusyAccount(t *testing.T) {
 func TestPollDuringGraceDoesNotLosePendingReset(t *testing.T) {
 	router, account := quotaFixture(t)
 	service := router.Service
-	reset := time.Now().Unix() - 180
+	reset := time.Now().Unix() - 60
 	setResetTimes(t, service, reset, reset+600)
 	claimResets(t, service, reset*1000, 0)
 	// An earlier read starts during grace, finishes after grace, and reports
 	// the next window. It must not satisfy the delayed fresh read.
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(300), "resetsAt": reset + 18000}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": reset + 600}}
-	if err := service.commitUsage(context.Background(), account, "early", raw, 2*time.Minute, "test", nil, false, false); err != nil {
+	if err := service.commitUsage(context.Background(), account, "early", raw, 40*time.Second, "test", nil, false, false); err != nil {
 		t.Fatal(err)
 	}
-	claimResets(t, service, (reset+60)*1000, 0)
-	claims := claimResets(t, service, (reset+120)*1000, 1)
+	claimResets(t, service, (reset+44)*1000, 0)
+	claims := claimResets(t, service, (reset+60)*1000, 1)
 	if _, err := service.Store.DB.Exec("UPDATE operations SET state='SUCCEEDED' WHERE operation_id=?", claims[0].operation); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Store.DB.Exec("DELETE FROM usage_refresh_requests; UPDATE usage_current SET complete_read_at_ms=last_attempt_at_ms"); err != nil {
 		t.Fatal(err)
 	}
 	claimResets(t, service, (reset+121)*1000, 0)
@@ -115,7 +121,7 @@ func TestFreshPollAfterGraceSatisfiesResetRefresh(t *testing.T) {
 	service := router.Service
 	reset := time.Now().Unix() - 300
 	setResetTimes(t, service, reset, reset+18000)
-	claimResets(t, service, (reset+60)*1000, 0)
+	claimResets(t, service, (reset+44)*1000, 0)
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(300), "resetsAt": reset}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": reset + 18000}}
 	if err := service.commitUsage(context.Background(), account, "hourly", raw, 0, "test", nil, false, false); err != nil {
 		t.Fatal(err)
@@ -138,4 +144,29 @@ func TestResetRefreshSkipsUnknownWindowsAndDisabledAccounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimResets(t, service, now, 1)
+}
+
+func TestManualReadStartedAfterGraceSatisfiesResetQueuedDuringRead(t *testing.T) {
+	router, account := quotaFixture(t)
+	s := router.Service
+	now := time.Now().UnixMilli()
+	reset := now/1000 - 60
+	setResetTimes(t, s, reset, reset+18000)
+	// A manual read already owns the worker when the event loop notices reset.
+	if _, err := s.Store.DB.Exec(`UPDATE account_state SET worker_state='CREDENTIAL_IN_USE'`); err != nil {
+		t.Fatal(err)
+	}
+	claimResets(t, s, now, 0)
+	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(300), "resetsAt": reset + 18000}, "secondary": map[string]any{"usedPercent": int64(40), "windowDurationMins": int64(10080), "resetsAt": reset + 18000}}
+	if err := s.commitUsageAt(context.Background(), account, "manual", raw, 5*time.Second, "test", nil, false, false, now+1000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Store.DB.Exec(`UPDATE account_state SET worker_state='STOPPED'`); err != nil {
+		t.Fatal(err)
+	}
+	claimResets(t, s, now+2000, 0)
+	var pending int
+	if err := s.Store.DB.QueryRow(`SELECT count(*) FROM usage_refresh_requests`).Scan(&pending); err != nil || pending != 0 {
+		t.Fatalf("redundant reset request: %d %v", pending, err)
+	}
 }

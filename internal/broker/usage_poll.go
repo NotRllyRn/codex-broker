@@ -13,7 +13,7 @@ import (
 // before a read can satisfy it; successful reads delete only requests they cover.
 func requestUsageRefresh(ctx context.Context, db store.Executor, accountID, reason string, due int64) error {
 	_, err := db.ExecContext(ctx, `INSERT INTO usage_refresh_requests(account_id,due_at_ms,reason) VALUES(?,?,?)
-        ON CONFLICT(account_id) DO UPDATE SET due_at_ms=max(due_at_ms,excluded.due_at_ms),reason=excluded.reason`, accountID, due, reason)
+        ON CONFLICT(account_id) DO UPDATE SET due_at_ms=max(due_at_ms,excluded.due_at_ms),reason=excluded.reason,next_attempt_at_ms=0`, accountID, due, reason)
 	return err
 }
 

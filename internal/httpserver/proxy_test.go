@@ -140,6 +140,14 @@ func TestProxyFakeAppServer(t *testing.T) {
 		return
 	}
 	decoder, encoder := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
+	pulsed := false
+	usageFixturePath := filepath.Join(filepath.Dir(filepath.Dir(home)), "usage-fixture.json")
+	var usageFixture struct {
+		ResetS int64 `json:"reset_s"`
+		Used   int64 `json:"used"`
+	}
+	usageFixtureJSON, _ := os.ReadFile(usageFixturePath)
+	_ = json.Unmarshal(usageFixtureJSON, &usageFixture)
 	for {
 		var request map[string]any
 		if decoder.Decode(&request) != nil {
@@ -168,8 +176,24 @@ func TestProxyFakeAppServer(t *testing.T) {
 		case "thread/start":
 			result["thread"] = map[string]string{"id": "thread"}
 		case "turn/start":
+			pulsed = true
+			if len(usageFixtureJSON) > 0 {
+				_ = os.WriteFile(usageFixturePath+".pulsed", []byte("1"), 0600)
+			}
 			result["turn"] = map[string]string{"id": "turn"}
 		case "account/rateLimits/read":
+			if len(usageFixtureJSON) > 0 {
+				used := usageFixture.Used
+				reset := usageFixture.ResetS
+				if reset == 0 {
+					reset = time.Now().Add(7 * 24 * time.Hour).Unix()
+				}
+				if pulsed {
+					used = 1
+				}
+				result["rateLimitsByLimitId"] = map[string]any{"codex": map[string]any{"primary": map[string]any{"usedPercent": used, "windowDurationMins": 300, "resetsAt": time.Now().Add(5 * time.Hour).Unix()}, "secondary": map[string]any{"usedPercent": used, "windowDurationMins": 10080, "resetsAt": reset}}}
+				break
+			}
 			result["rateLimitsByLimitId"] = map[string]any{"codex": map[string]any{"primary": map[string]any{"usedPercent": 1, "windowDurationMins": 300, "resetsAt": time.Now().Add(5 * time.Hour).Unix()}, "secondary": map[string]any{"usedPercent": 1, "windowDurationMins": 10080, "resetsAt": time.Now().Add(7 * 24 * time.Hour).Unix()}}}
 		}
 		_ = encoder.Encode(map[string]any{"id": id, "result": result})

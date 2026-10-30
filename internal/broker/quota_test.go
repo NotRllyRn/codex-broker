@@ -119,7 +119,7 @@ func TestQuotaBlockPreservesUnrelatedAccountStatus(t *testing.T) {
 	}
 }
 
-func TestQuotaBlockUnlocksOnEitherReset(t *testing.T) {
+func TestQuotaBlockWaitsForFreshReadAfterEitherReset(t *testing.T) {
 	for _, first := range []string{"short", "weekly"} {
 		t.Run(first, func(t *testing.T) {
 			router, account := quotaFixture(t)
@@ -133,7 +133,7 @@ func TestQuotaBlockUnlocksOnEitherReset(t *testing.T) {
 				t.Fatal(err)
 			}
 			accounts, err := router.accounts(context.Background(), "two", now)
-			if err != nil || !exhausted(accounts[0], now) || exhausted(accounts[0], soon.Int64*1000) {
+			if err != nil || !exhausted(accounts[0], now) || !exhausted(accounts[0], soon.Int64*1000) {
 				t.Fatalf("accounts=%+v err=%v", accounts, err)
 			}
 		})
@@ -155,7 +155,7 @@ func TestFreshUsageReadUnlocksButInflightReadDoesNot(t *testing.T) {
 	if err := router.Store.DB.QueryRow("SELECT count(*) FROM account_quota_blocks").Scan(&blocks); err != nil || blocks != 1 {
 		t.Fatalf("inflight cleared block: %d err=%v", blocks, err)
 	}
-	if _, err := router.Store.DB.Exec("UPDATE account_quota_blocks SET blocked_at_ms=blocked_at_ms-1000"); err != nil {
+	if _, err := router.Store.DB.Exec("UPDATE account_quota_blocks SET blocked_at_ms=blocked_at_ms-45001"); err != nil {
 		t.Fatal(err)
 	}
 	if err := router.Service.commitUsage(ctx, account, "fresh", raw, 0, "test", nil, false, false); err != nil {
@@ -197,5 +197,70 @@ func TestUsageCommitMeasuresActualPollDeltaBeforeReplacingBaseline(t *testing.T)
 		if row.UsedPercent != want || row.ActiveMS != 20*time.Minute.Milliseconds() {
 			t.Fatalf("row=%+v", row)
 		}
+	}
+}
+
+func TestPulseConsumptionCannotBeAttributedToClientModels(t *testing.T) {
+	router, account := quotaFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+	if _, err := router.Store.DB.Exec(`UPDATE usage_current SET complete_read_at_ms=?`, now.Add(-time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := proxytelemetry.Record(ctx, router.Store, gateway.Observation{RequestID: "concurrent", AccountID: account.PublicID, ResponseModel: "example-model", Endpoint: "/v1/responses", TerminalStatus: "completed", UpstreamAttempts: 1, UpstreamStartedAtMS: now.Add(-30 * time.Second).UnixMilli(), TerminalEventAtMS: now.Add(-10 * time.Second).UnixMilli()}); err != nil {
+		t.Fatal(err)
+	}
+	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(85), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}, "secondary": map[string]any{"usedPercent": int64(43), "windowDurationMins": int64(10080), "resetsAt": account.WeeklyReset.Int64}}
+	next := account.WeeklyReset.Int64 * 1000
+	if err := router.Service.commitUsage(ctx, account, "pulse", raw, 0, "test", &next, true, false); err != nil {
+		t.Fatal(err)
+	}
+	totals, err := proxytelemetry.ReadQuotaTotals(ctx, router.Store.DB, 0)
+	if err != nil || len(totals) != 0 {
+		t.Fatalf("pulse consumption attributed to client: %+v %v", totals, err)
+	}
+	var used, read int64
+	if err := router.Store.DB.QueryRow(`SELECT short_used_percent_raw,complete_read_at_ms FROM usage_current WHERE account_id='a'`).Scan(&used, &read); err != nil || used != 85 || read < now.UnixMilli() {
+		t.Fatalf("pulse baseline missing: %d %d %v", used, read, err)
+	}
+}
+
+func TestUsageObservationTimeExcludesCheckpointDelay(t *testing.T) {
+	router, account := quotaFixture(t)
+	ctx := context.Background()
+	now := time.Now()
+	observed := now.Add(-10 * time.Second).UnixMilli()
+	if _, err := router.Store.DB.Exec(`UPDATE usage_current SET complete_read_at_ms=?`, now.Add(-time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	for _, response := range []struct {
+		id       string
+		from, to int64
+	}{
+		{"before", observed - 5000, observed - 1000}, {"checkpoint", observed + 1000, observed + 5000},
+	} {
+		if _, err := proxytelemetry.Record(ctx, router.Store, gateway.Observation{RequestID: response.id, AccountID: account.PublicID, ResponseModel: "example-model", Endpoint: "/v1/responses", TerminalStatus: "completed", UpstreamAttempts: 1, UpstreamStartedAtMS: response.from, TerminalEventAtMS: response.to}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(85), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}, "secondary": map[string]any{"usedPercent": int64(43), "windowDurationMins": int64(10080), "resetsAt": account.WeeklyReset.Int64}}
+	if err := router.Service.commitUsageAt(ctx, account, "read", raw, time.Second, "test", nil, false, false, observed); err != nil {
+		t.Fatal(err)
+	}
+	totals, err := proxytelemetry.ReadQuotaTotals(ctx, router.Store.DB, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(totals) == 0 {
+		t.Fatal("missing measurements")
+	}
+	for _, row := range totals {
+		if row.ActiveMS != 4000 {
+			t.Fatalf("checkpoint activity included: %+v", row)
+		}
+	}
+	var read int64
+	if err := router.Store.DB.QueryRow(`SELECT complete_read_at_ms FROM usage_current WHERE account_id='a'`).Scan(&read); err != nil || read != observed {
+		t.Fatalf("read=%d want=%d err=%v", read, observed, err)
 	}
 }
