@@ -203,6 +203,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		}
 		if strings.HasPrefix(r.URL.Path, "/static/") {
 			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", `"`+dashboardVersion+`"`)
 		}
 		next.ServeHTTP(w, r)
 	})

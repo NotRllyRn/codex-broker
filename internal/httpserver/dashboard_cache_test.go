@@ -175,3 +175,20 @@ func TestResponseCacheCoalescesConcurrentBuilds(t *testing.T) {
 		t.Fatalf("concurrent requests caused %d builds", builds)
 	}
 }
+
+func TestStaticAssetsRevalidate(t *testing.T) {
+	s, _ := proxyFixture(t, 0)
+	handler := s.middleware(s.mux)
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, httptest.NewRequest("GET", "/static/app.js", nil))
+	if first.Code != 200 || first.Header().Get("ETag") == "" {
+		t.Fatal("static asset lacks version validator")
+	}
+	r := httptest.NewRequest("GET", "/static/app.js", nil)
+	r.Header.Set("If-None-Match", first.Header().Get("ETag"))
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != 304 || w.Body.Len() != 0 {
+		t.Fatal("unchanged static asset was downloaded again")
+	}
+}
