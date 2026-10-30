@@ -54,10 +54,10 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO usage_refresh_requests(account_id,due_at_ms,reason)
             SELECT p.account_id,min(p.reset_at_s)*1000+?,'WINDOW_RESET' FROM usage_reset_polls p
             JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state w USING(account_id)
-            WHERE p.reset_at_s<=? AND p.reset_at_s>p.last_polled_reset_at_s
+            WHERE p.reset_at_s<=? AND (p.reset_at_s>p.last_polled_reset_at_s OR COALESCE(u.complete_read_at_ms,0)<p.reset_at_s*1000+?)
             AND (? OR w.cycle_state='IN_CYCLE' OR u.short_used_percent_raw>0 OR u.weekly_used_percent_raw>0
                 OR EXISTS(SELECT 1 FROM account_quota_blocks q WHERE q.account_id=p.account_id)) GROUP BY p.account_id`,
-			usageResetGrace.Milliseconds(), (now-usageResetGrace.Milliseconds())/1000, !s.Config.WindowPulseEnabled); err != nil {
+			usageResetGrace.Milliseconds(), (now-usageResetGrace.Milliseconds())/1000, usageResetGrace.Milliseconds(), !s.Config.WindowPulseEnabled); err != nil {
 			return err
 		}
 		rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.public_token,r.reason FROM usage_refresh_requests r

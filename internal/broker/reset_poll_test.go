@@ -170,3 +170,20 @@ func TestManualReadStartedAfterGraceSatisfiesResetQueuedDuringRead(t *testing.T)
 		t.Fatalf("redundant reset request: %d %v", pending, err)
 	}
 }
+
+func TestLegacyFailedResetIsRecoveredWithoutHourlyPolling(t *testing.T) {
+	router, _ := quotaFixture(t)
+	s := router.Service
+	now := time.Now().UnixMilli()
+	reset := now/1000 - 300
+	setResetTimes(t, s, reset, reset+18000)
+	// The old poller marked resets handled before the read succeeded. Recover
+	// this state when upgrading, even without a persisted event request yet.
+	if _, err := s.Store.DB.Exec(`INSERT INTO usage_reset_polls(account_id,window_kind,reset_at_s,last_polled_reset_at_s) VALUES('a','short',?,?)`, reset, reset); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Store.DB.Exec(`UPDATE usage_current SET short_used_percent_raw=100,complete_read_at_ms=?`, (reset-60)*1000); err != nil {
+		t.Fatal(err)
+	}
+	claimResets(t, s, now, 1)
+}
