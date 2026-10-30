@@ -19,7 +19,7 @@ import (
 func accountView(account broker.AccountSummary) map[string]any {
 	cycleLabel := map[string]string{"HELD": "Held", "RELEASING": "Starting cycle", "IN_CYCLE": "In rotation"}[account.CycleState]
 	if account.QuotaBlocked {
-		cycleLabel = "Usage exhausted"
+		cycleLabel = "Usage check pending"
 	}
 	var gap any
 	if account.CycleGapMS != nil {
@@ -78,7 +78,7 @@ func (s *Server) dashboardView(w http.ResponseWriter, r *http.Request) error {
 	cycleReady, cycleHeld := 0, 0
 	counts := map[string]int{"HEALTHY": 0, "WARNING": 0, "ACTION_REQUIRED": 0, "ERROR": 0, "DISABLED": 0}
 	for _, account := range accounts {
-		if account.CycleState == "IN_CYCLE" && !account.QuotaBlocked {
+		if account.CycleState == "IN_CYCLE" && accountAvailable(account) {
 			cycleReady++
 		} else if account.CycleState == "HELD" || account.CycleState == "RELEASING" {
 			cycleHeld++
@@ -286,7 +286,7 @@ func (s *Server) logsExport(w http.ResponseWriter, r *http.Request) error {
 }
 
 func settingsMap(application *broker.Application) map[string]any {
-	return map[string]any{"usage_poll_seconds": application.Config.UsagePollSeconds, "profile_poll_seconds": application.Config.ProfilePollSeconds, "browser_oauth_mode": application.Config.BrowserOAuthMode}
+	return map[string]any{"usage_poll_seconds": 36, "usage_refresh_per_hour": 100, "profile_poll_seconds": application.Config.ProfilePollSeconds, "browser_oauth_mode": application.Config.BrowserOAuthMode}
 }
 func compatibilityMap(application *broker.Application) map[string]any {
 	return map[string]any{"compatible": application.Compatibility.Compatible, "code": application.Compatibility.Code, "detail": application.Compatibility.Detail}

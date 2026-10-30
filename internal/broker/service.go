@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"math/rand/v2"
 	"sort"
 	"strings"
 	"sync"
@@ -271,9 +270,9 @@ func (s *Service) Accounts(ctx context.Context) ([]AccountSummary, error) {
 		item.ShortResetMS = secondsPointer(shortReset)
 		item.WeeklyPercent = nullableInt(weekly)
 		item.WeeklyResetMS = secondsPointer(weeklyReset)
-		if blocked.Valid && blocked.Int64 > core.NowMS() {
+		if blocked.Valid {
 			item.QuotaBlocked = true
-			item.Evidence = "Upstream usage exhausted; waiting for a window reset or fresh usage poll"
+			item.Evidence = "Upstream quota rejected; usage check pending"
 		}
 		item.LastRefreshMS = nullableInt(last)
 		item.LastRoutedMS = nullableInt(routed)
@@ -338,7 +337,7 @@ func (s *Service) AccountDetail(ctx context.Context, public string) (map[string]
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
-	account["quota_blocked"] = blockedUntil > core.NowMS()
+	account["quota_blocked"] = blockedUntil > 0
 	operations, _ := s.OperationsFor(ctx, a.ID, 20)
 	pulses, _ := s.OperationsForKind(ctx, a.ID, "window.pulse", 100)
 	for _, items := range [][]map[string]any{operations, pulses} {
@@ -594,32 +593,6 @@ func (s *Service) maintenanceLoop(ctx context.Context) {
 		case <-s.stop:
 			return
 		case <-time.After(delay):
-		}
-	}
-}
-func (s *Service) usageLoop(ctx context.Context) {
-	for {
-		delay := time.Duration(s.Config.UsagePollSeconds+rand.IntN(31)) * time.Second
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.stop:
-			return
-		case <-time.After(delay):
-			rows, err := s.Store.DB.QueryContext(ctx, "SELECT public_token FROM accounts a JOIN account_state s USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED'")
-			if err != nil {
-				continue
-			}
-			var values []string
-			for rows.Next() {
-				var value string
-				_ = rows.Scan(&value)
-				values = append(values, value)
-			}
-			rows.Close()
-			for _, value := range values {
-				_, _ = s.Refresh(ctx, value, "SCHEDULED")
-			}
 		}
 	}
 }

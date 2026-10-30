@@ -50,7 +50,7 @@ type Config struct {
 	CookieSecure                string
 	SessionIdleMinutes          int
 	SessionAbsoluteHours        int
-	UsagePollSeconds            int
+	UsagePollSeconds            int // Deprecated: regular usage reads are paced at 100/hour across the pool.
 	ProfilePollSeconds          int
 	UsageRefreshConcurrency     int
 	WindowPulseEnabled          bool

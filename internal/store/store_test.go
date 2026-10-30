@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 28 {
+		if version != 29 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -414,6 +414,8 @@ func TestRemoveExportsPreservesActiveCredential(t *testing.T) {
  INSERT INTO credential_bundles VALUES('active','a','ACTIVE',1,1,'primary',X'01',X'1234',X'5678','test',1,1,NULL);
  INSERT INTO credential_bundles VALUES('export','a','EXPORT',1,1,'primary',X'02',X'9999',X'8888','test',2,NULL,NULL);
  ALTER TABLE client_api_keys DROP COLUMN streamer_mode;
+ DROP TABLE usage_refresh_requests;
+ DROP TABLE usage_poll_state;
  DROP TABLE client_key_labels;
  DROP TABLE usage_reports;
  DROP TABLE identity_usage;

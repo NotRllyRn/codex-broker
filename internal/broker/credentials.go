@@ -274,6 +274,7 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 	case <-ctx.Done():
 		return
 	}
+	var observedAt int64
 	raw, err := s.managed(ctx, account, func(callCtx context.Context, runtime *codex.Runtime) (map[string]any, error) {
 		if manual {
 			identity, err := runtime.Adapter.Account(callCtx, false)
@@ -284,14 +285,17 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 				return nil, err
 			}
 		}
-		return runtime.Adapter.RateLimits(callCtx)
+		raw, err := runtime.Adapter.RateLimits(callCtx)
+		observedAt = core.NowMS()
+		return raw, err
 	})
 	if err != nil {
 		_ = s.recordUsageFailure(ctx, account, operation, start, err)
 		s.refreshProfile(ctx, account)
 		return
 	}
-	if err := s.commitUsage(ctx, account, operation, raw, time.Since(start), "Usage refreshed", nil, false, manual); err != nil {
+	if err := s.commitUsageAt(ctx, account, operation, raw, time.Duration(observedAt-start.UnixMilli())*time.Millisecond, "Usage refreshed", nil, false, manual, observedAt); err != nil {
+		_ = s.recordUsageFailure(ctx, account, operation, start, err)
 		return
 	}
 	s.refreshProfile(ctx, account)
@@ -387,8 +391,13 @@ func pointerAnyFloat(value *float64) any {
 }
 
 func (s *Service) commitUsage(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64, cycleRelease, authVerified bool) error {
+	return s.commitUsageAt(ctx, account, operation, raw, duration, summary, pulseNext, cycleRelease, authVerified, core.NowMS())
+}
+
+// Use the RPC observation time, before credential checkpointing, for both queue
+// ordering and quota activity boundaries. Checkpoint delays are not model work.
+func (s *Service) commitUsageAt(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64, cycleRelease, authVerified bool, now int64) error {
 	usage := NormalizeUsage(raw)
-	now := core.NowMS()
 	snapshot := core.NewID()
 	evidence, _ := json.Marshal(logbook.Redact(raw))
 	shape, _ := json.Marshal(map[string]any{"window_count": 2 + len(usage.Others), "short_duration_minutes": windowDuration(usage.Short), "short_resets_at_s": windowReset(usage.Short), "weekly_duration_minutes": windowDuration(usage.Weekly), "weekly_resets_at_s": windowReset(usage.Weekly)})
@@ -414,18 +423,25 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 			}
 			return proxytelemetry.QuotaWindow{Used: window.UsedPercent, ResetS: window.ResetsAtS}
 		}
-		if err := proxytelemetry.RecordUsage(ctx, db, account.ID, proxytelemetry.QuotaSnapshot{ID: snapshot, AtMS: now, Short: quotaWindow(usage.Short), Weekly: quotaWindow(usage.Weekly)}); err != nil {
-			return err
+		// A broker pulse is untracked model work. Establish its post-read as a
+		// baseline without attributing its consumption to concurrent client work.
+		if !cycleRelease {
+			if err := proxytelemetry.RecordUsage(ctx, db, account.ID, proxytelemetry.QuotaSnapshot{ID: snapshot, AtMS: now, Short: quotaWindow(usage.Short), Weekly: quotaWindow(usage.Weekly)}); err != nil {
+				return err
+			}
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE usage_current SET snapshot_id=?,selected_limit_id=?,short_raw_slot=?,short_used_percent_raw=?,short_duration_minutes=?,short_resets_at_s=?,short_anomaly=?,weekly_raw_slot=?,weekly_used_percent_raw=?,weekly_duration_minutes=?,weekly_resets_at_s=?,weekly_anomaly=?,complete_read_at_ms=?,last_attempt_at_ms=?,stale=0,last_error_code=NULL,last_error_summary=NULL,source='APP_SERVER',state_version=state_version+1 WHERE account_id=?`, snapshot, nullString(usage.SelectedLimitID), ss, su, sd, sr, sa, ws, wu, wd, wr, wa, now, now, account.ID); err != nil {
 			return err
 		}
 		// A read already in flight when quota was rejected must not undo that rejection.
 		if usage.Short != nil && usage.Short.UsedPercent != nil && usage.Weekly != nil && usage.Weekly.UsedPercent != nil {
+			if _, err := db.ExecContext(ctx, "DELETE FROM usage_refresh_requests WHERE account_id=? AND due_at_ms<=?", account.ID, now-duration.Milliseconds()); err != nil {
+				return err
+			}
 			if err := settleUsageResets(ctx, db, account.ID, now-duration.Milliseconds()); err != nil {
 				return err
 			}
-			if _, err := db.ExecContext(ctx, "DELETE FROM account_quota_blocks WHERE account_id=? AND blocked_at_ms<?", account.ID, now-duration.Milliseconds()); err != nil {
+			if _, err := db.ExecContext(ctx, "DELETE FROM account_quota_blocks WHERE account_id=? AND blocked_at_ms<=?", account.ID, now-duration.Milliseconds()-usageResetGrace.Milliseconds()); err != nil {
 				return err
 			}
 		}
@@ -547,7 +563,7 @@ func (s *Service) Pulse(ctx context.Context, public string) (string, error) {
 			return err
 		}
 		var eligible bool
-		err = db.QueryRowContext(ctx, `SELECT a.deleted_at_ms IS NULL AND s.auth_state IN('VERIFIED','AUTH_REQUIRED') AND s.worker_state='STOPPED' AND EXISTS (SELECT 1 FROM credential_bundles b WHERE b.account_id=a.account_id AND b.state='ACTIVE') AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?),u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, now, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
+		err = db.QueryRowContext(ctx, `SELECT a.deleted_at_ms IS NULL AND s.auth_state IN('VERIFIED','AUTH_REQUIRED') AND s.worker_state='STOPPED' AND EXISTS (SELECT 1 FROM credential_bundles b WHERE b.account_id=a.account_id AND b.state='ACTIVE') AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id),u.short_used_percent_raw,u.short_resets_at_s,u.weekly_used_percent_raw,u.weekly_resets_at_s FROM accounts a JOIN account_state s USING(account_id) LEFT JOIN usage_current u USING(account_id) WHERE a.account_id=?`, account.ID).Scan(&eligible, &account.ShortUsed, &account.ShortReset, &account.WeeklyUsed, &account.WeeklyReset)
 		if err != nil {
 			return err
 		}
@@ -602,7 +618,7 @@ func (s *Service) claimCyclePulse(ctx context.Context, now int64) (public, opera
 			return err
 		}
 		var accountID string
-		err = db.QueryRowContext(ctx, `SELECT a.account_id,a.public_token FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?) AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND p.last_attempt_at_ms<=? AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?) AND NOT EXISTS (SELECT 1 FROM relay_reservations rr WHERE rr.account_id=a.account_id AND rr.expires_at_ms>?) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.kind='window.pulse' AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) ORDER BY random() LIMIT 1`, now, now-int64(s.Config.WindowPulseRetrySeconds)*1000, now+1, now, now+1, now, now).Scan(&accountID, &public)
+		err = db.QueryRowContext(ctx, `SELECT a.account_id,a.public_token FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id) AND p.cycle_state='HELD' AND p.last_attempt_at_ms<=? AND COALESCE(u.short_used_percent_raw,0)<100 AND COALESCE(u.weekly_used_percent_raw,0)<100 AND NOT EXISTS (SELECT 1 FROM relay_reservations rr WHERE rr.account_id=a.account_id AND rr.expires_at_ms>?) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.kind='window.pulse' AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED')) ORDER BY random() LIMIT 1`, now-int64(s.Config.WindowPulseRetrySeconds)*1000, now).Scan(&accountID, &public)
 		if err == sql.ErrNoRows {
 			return nil
 		}
@@ -634,6 +650,8 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, manual
 	}
 	started := time.Now()
 	var pulse codex.PulseResult
+	skipped := false
+	var observedAt int64
 	raw, err := s.managed(ctx, account, func(callCtx context.Context, runtime *codex.Runtime) (map[string]any, error) {
 		if manual {
 			identity, err := runtime.Adapter.Account(callCtx, false)
@@ -644,8 +662,33 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, manual
 				return nil, err
 			}
 		}
+		preflightStarted := time.Now()
+		preflight, err := runtime.Adapter.RateLimits(callCtx)
+		if err != nil {
+			return nil, err
+		}
+		usage := NormalizeUsage(preflight)
+		if usage.Short == nil || usage.Short.UsedPercent == nil || usage.Weekly == nil || usage.Weekly.UsedPercent == nil {
+			return nil, core.NewError("USAGE_UNKNOWN", "Usage windows are incomplete", 503)
+		}
+		if err := s.commitUsage(callCtx, account, "", preflight, time.Since(preflightStarted), "Usage checked before pulse", nil, false, manual); err != nil {
+			return nil, err
+		}
+		member := cycleMember{usageReadAtMS: sql.NullInt64{Int64: core.NowMS(), Valid: true}, shortUsed: sql.NullInt64{Int64: *usage.Short.UsedPercent, Valid: true}, weeklyUsed: sql.NullInt64{Int64: *usage.Weekly.UsedPercent, Valid: true}}
+		if usage.Weekly.ResetsAtS != nil {
+			member.weeklyResetS = sql.NullInt64{Int64: *usage.Weekly.ResetsAtS, Valid: true}
+		}
+		if usage.Weekly.DurationMinutes != nil {
+			member.weeklyDurationMinutes = sql.NullInt64{Int64: *usage.Weekly.DurationMinutes, Valid: true}
+		}
+		_, active, _ := usageCycleEvidence(member, core.NowMS())
+		if *usage.Short.UsedPercent >= 100 || *usage.Weekly.UsedPercent >= 100 || (!manual && active) {
+			skipped = true
+			return preflight, nil
+		}
 		var pulseErr error
 		pulse, pulseErr = runtime.Adapter.PulseWindows(callCtx)
+		observedAt = core.NowMS()
 		return pulse.Usage, pulseErr
 	})
 	details, _ := json.Marshal(struct {
@@ -672,6 +715,20 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, manual
 		_ = s.recordUsageFailure(ctx, account, operation, started, err)
 		return
 	}
+	if skipped {
+		if err := s.Store.Write(ctx, func(db store.Executor) error {
+			if _, err := db.ExecContext(ctx, "UPDATE window_pulse_state SET cycle_state='HELD' WHERE account_id=?", account.ID); err != nil {
+				return err
+			}
+			_, err := db.ExecContext(ctx, "UPDATE operations SET state='SUCCEEDED',progress_summary='Pulse skipped after fresh usage check',completed_at_ms=?,state_version=state_version+1 WHERE operation_id=?", core.NowMS(), operation)
+			return err
+		}); err != nil {
+			_ = s.recordUsageFailure(ctx, account, operation, started, err)
+			return
+		}
+		_ = s.QueuePulses(ctx)
+		return
+	}
 	usage := NormalizeUsage(raw)
 	if usage.Weekly == nil || usage.Weekly.ResetsAtS == nil || *usage.Weekly.ResetsAtS*1000 <= core.NowMS() {
 		_ = s.Store.Write(ctx, func(db store.Executor) error {
@@ -682,7 +739,9 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, manual
 		return
 	}
 	next := *usage.Weekly.ResetsAtS * 1000
-	_ = s.commitUsage(ctx, account, operation, raw, time.Since(started), "Weekly cycle started", &next, true, manual)
+	if err := s.commitUsageAt(ctx, account, operation, raw, time.Duration(observedAt-started.UnixMilli())*time.Millisecond, "Weekly cycle started", &next, true, manual, observedAt); err != nil {
+		_ = s.recordUsageFailure(ctx, account, operation, started, err)
+	}
 }
 
 func (s *Service) OpenIncident(ctx context.Context, accountID, kind, severity, summary string) error {

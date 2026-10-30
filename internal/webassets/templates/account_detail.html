@@ -9,7 +9,7 @@ Codex Broker{% endblock %} {% block content %}
   </p>
 </section>
 {% if detail.account.quota_blocked %}
-<p class="subtle">Usage temporarily exhausted upstream. This account is paused until a window resets or a fresh usage poll succeeds. The percentages below are the last reported values.</p>
+<p class="subtle">Usage check pending after an upstream quota rejection. This account is paused until a fresh usage read confirms capacity. The percentages below are the last reported values.</p>
 {% endif %}
 <section class="account-evidence-grid">
   <article>

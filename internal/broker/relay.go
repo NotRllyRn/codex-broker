@@ -84,9 +84,9 @@ func (a *Application) reserveForRelay(ctx context.Context, relayID string, now i
 		if _, err := db.ExecContext(ctx, "DELETE FROM relay_reservations WHERE expires_at_ms<=?", now); err != nil {
 			return err
 		}
-		err := db.QueryRowContext(ctx, `SELECT rr.account_id,rr.permit_epoch FROM relay_reservations rr JOIN window_pulse_state p USING(account_id) JOIN accounts a USING(account_id) JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' WHERE rr.relay_id=? AND rr.expires_at_ms>? AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?) AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?)`, relayID, now, now, now+1, now, now+1, now).Scan(&accountID, &epoch)
+		err := db.QueryRowContext(ctx, `SELECT rr.account_id,rr.permit_epoch FROM relay_reservations rr JOIN window_pulse_state p USING(account_id) JOIN accounts a USING(account_id) JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' WHERE rr.relay_id=? AND rr.expires_at_ms>? AND p.cycle_state='HELD' AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id) AND COALESCE(u.short_used_percent_raw,0)<100 AND COALESCE(u.weekly_used_percent_raw,0)<100`, relayID, now).Scan(&accountID, &epoch)
 		if err == sql.ErrNoRows {
-			err = db.QueryRowContext(ctx, `SELECT a.account_id FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN relay_reservations rr USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND p.cycle_state='HELD' AND p.idle_observation_count>=2 AND rr.account_id IS NULL AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id AND q.retry_at_ms>?) AND NOT (COALESCE(u.short_used_percent_raw,0)>=100 AND COALESCE(u.short_resets_at_s*1000,?)>?) AND NOT (COALESCE(u.weekly_used_percent_raw,0)>=100 AND COALESCE(u.weekly_resets_at_s*1000,?)>?) ORDER BY random() LIMIT 1`, now, now+1, now, now+1, now).Scan(&accountID)
+			err = db.QueryRowContext(ctx, `SELECT a.account_id FROM accounts a JOIN account_state s USING(account_id) JOIN usage_current u USING(account_id) JOIN window_pulse_state p USING(account_id) JOIN credential_bundles b ON b.account_id=a.account_id AND b.state='ACTIVE' LEFT JOIN relay_reservations rr USING(account_id) WHERE a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED' AND p.cycle_state='HELD' AND rr.account_id IS NULL AND NOT EXISTS (SELECT 1 FROM account_quota_blocks q WHERE q.account_id=a.account_id) AND COALESCE(u.short_used_percent_raw,0)<100 AND COALESCE(u.weekly_used_percent_raw,0)<100 ORDER BY random() LIMIT 1`).Scan(&accountID)
 			if err == sql.ErrNoRows {
 				return nil
 			}
@@ -157,12 +157,12 @@ func (r Router) ActivateRelayReserve(ctx context.Context, relayID, publicID, epo
 		if _, err := db.ExecContext(ctx, "UPDATE account_state SET last_routed_at_ms=?,updated_at_ms=?,state_version=state_version+1 WHERE account_id=?", occurredAt, time.Now().UnixMilli(), accountID); err != nil {
 			return err
 		}
+		if err := requestUsageRefresh(ctx, db, accountID, "RELAY_RECONCILE", core.NowMS()+usageResetGrace.Milliseconds()); err != nil {
+			return err
+		}
 		_, err := db.ExecContext(ctx, "DELETE FROM relay_reservations WHERE relay_id=? AND permit_epoch=?", relayID, epoch)
 		return err
 	})
-	if err == nil && accountID != "" {
-		_, _ = r.Service.Refresh(context.WithoutCancel(ctx), publicID, "RELAY_RECONCILE")
-	}
 	return err
 }
 

@@ -107,12 +107,8 @@ func (r Router) Route(ctx context.Context, keyID string, request RouteRequest) (
 	}
 	retry := nextRetry(accounts, now)
 	for _, account := range accounts {
-		if quotaBlocked(account, now) {
-			poll := max(60, r.Service.Config.UsagePollSeconds)
-			if poll == 60 && r.Service.Config.UsagePollSeconds == 0 {
-				poll = 3600
-			}
-			pollAt := now + int64(poll+30)*1000
+		if quotaBlocked(account, now) || exhausted(account, now) && accountReset(account, now) == 0 && (account.ShortReset.Valid || account.WeeklyReset.Valid) {
+			pollAt := now + usageResetGrace.Milliseconds()
 			if retry == 0 || pollAt < retry {
 				retry = pollAt
 			}
@@ -135,6 +131,9 @@ func (r Router) markRouted(ctx context.Context, account Account, now int64) erro
 				return err
 			}
 			if changed, _ := result.RowsAffected(); changed > 0 {
+				if err := requestUsageRefresh(ctx, db, account.ID, "ROTATION", now+usageResetGrace.Milliseconds()); err != nil {
+					return err
+				}
 				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET cadence_anchor_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", started); err != nil {
 					return err
 				}
@@ -169,15 +168,15 @@ func (r Router) accounts(ctx context.Context, keyID string, now int64) ([]Accoun
 }
 
 func exhausted(a Account, now int64) bool {
-	return quotaBlocked(a, now) || a.ShortUsed.Valid && a.ShortUsed.Int64 >= 100 && (!a.ShortReset.Valid || a.ShortReset.Int64*1000 > now) || a.WeeklyUsed.Valid && a.WeeklyUsed.Int64 >= 100 && (!a.WeeklyReset.Valid || a.WeeklyReset.Int64*1000 > now)
+	return quotaBlocked(a, now) || a.ShortUsed.Valid && a.ShortUsed.Int64 >= 100 || a.WeeklyUsed.Valid && a.WeeklyUsed.Int64 >= 100
 }
 
 func quotaBlocked(a Account, now int64) bool {
-	return a.QuotaBlockedUntil.Valid && a.QuotaBlockedUntil.Int64 > now
+	return a.QuotaBlockedUntil.Valid
 }
 
 // A quota rejection is authoritative across every client, even when cached
-// usage percentages say there is capacity. The first known reset allows a probe.
+// usage percentages say there is capacity. A fresh read must confirm capacity.
 func (r Router) blockQuota(ctx context.Context, account Account, now int64) error {
 	retry := int64(math.MaxInt64)
 	for _, reset := range []sql.NullInt64{account.ShortReset, account.WeeklyReset} {
@@ -189,7 +188,10 @@ func (r Router) blockQuota(ctx context.Context, account Account, now int64) erro
 		_, err := db.ExecContext(ctx, `INSERT INTO account_quota_blocks(account_id,blocked_at_ms,retry_at_ms) VALUES(?,?,?)
 			ON CONFLICT(account_id) DO UPDATE SET blocked_at_ms=excluded.blocked_at_ms,retry_at_ms=excluded.retry_at_ms
 			WHERE excluded.blocked_at_ms>=account_quota_blocks.blocked_at_ms`, account.ID, now, retry)
-		return err
+		if err != nil {
+			return err
+		}
+		return requestUsageRefresh(ctx, db, account.ID, "QUOTA_REJECTED", now+usageResetGrace.Milliseconds())
 	})
 	if err == nil && r.Service.Events != nil {
 		r.Service.Events.Publish("account.updated", map[string]any{"resource_id": account.PublicID, "state": "QUOTA_BLOCKED"})

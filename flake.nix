@@ -313,7 +313,7 @@
               pollSeconds = lib.mkOption {
                 type = lib.types.ints.between 60 2147483647;
                 default = 3600;
-                description = "Interval (>=60s) between usage-limit polls. Maps to WINDOWKEEPER_USAGE_POLL_SECONDS.";
+                description = "Deprecated compatibility option; usage refreshes now run at 100/hour across eligible accounts.";
               };
               profilePollSeconds = lib.mkOption {
                 type = lib.types.ints.between 3600 2147483647;
