@@ -289,7 +289,7 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 		return
 	}
 	account = current
-	var observedAt int64
+	var observedAt, readStartedAt int64
 	raw, err := s.managed(ctx, account, func(callCtx context.Context, runtime *codex.Runtime) (map[string]any, error) {
 		if manual {
 			identity, err := runtime.Adapter.Account(callCtx, false)
@@ -300,6 +300,7 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 				return nil, err
 			}
 		}
+		readStartedAt = core.NowMS()
 		raw, err := runtime.Adapter.RateLimits(callCtx)
 		observedAt = core.NowMS()
 		return raw, err
@@ -309,7 +310,7 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 		s.refreshProfile(ctx, account)
 		return
 	}
-	if err := s.commitUsageAt(ctx, account, operation, raw, time.Duration(observedAt-start.UnixMilli())*time.Millisecond, "Usage refreshed", nil, false, manual, observedAt); err != nil {
+	if err := s.commitUsageAt(ctx, account, operation, raw, time.Duration(observedAt-readStartedAt)*time.Millisecond, "Usage refreshed", nil, false, manual, observedAt); err != nil {
 		_ = s.recordUsageFailure(ctx, account, operation, start, err)
 		return
 	}

@@ -21,6 +21,7 @@
 | Older read finishes after a newer one | Reject stale observations transactionally before changing samples or current usage. |
 | Upstream still reports exhausted usage after reset, or omits its reset | Persist a recovery read with five-minute backoff rather than stranding the account or polling rapidly. |
 | Manual refresh races a pulse, credential operation, or another refresh | Recheck eligibility and unfinished operations inside the claim transaction; deduplicate existing refreshes. |
+| Refresh waits behind runtime startup or a usage slot | Use the actual quota RPC start for grace checks, so a fresh read is not mistaken for one begun before the reset/error. |
 | Quota rejection arrives during pulse preparation | Recheck the shared routing block before starting the turn. |
 | Pulse discovers an old weekly window or lacks a reliable weekly reset | Preserve actual start times, do not move cadence backward, and do not pulse without a future weekly reset. |
 | Disabled, deleted, unverified, busy, or credential-less accounts | Scheduler eligibility excludes them and workers recheck eligibility after waiting for a slot; retained event requests can resume after eligibility returns. |
