@@ -51,6 +51,9 @@ func TestStoredModelBreakdownsRespectFiltersAndAvoidDoubleCounting(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
+		if summary.HistorySince != "2026-09-01" {
+			t.Fatalf("history start lost outside selected window: %s", summary.HistorySince)
+		}
 		if len(summary.Models) != 1 || summary.Models[0].ProcessedTokens != tc.tokens || summary.Models[0].CostKnown != tc.known {
 			t.Fatalf("%+v: %+v", tc, summary.Models)
 		}

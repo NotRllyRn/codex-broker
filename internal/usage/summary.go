@@ -109,7 +109,16 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 	until := now.UTC().Format(time.DateOnly)
 	since := now.UTC().AddDate(0, 0, 1-days).Format(time.DateOnly)
 	result := Summary{CCUsage: true, Until: until, Daily: []Day{}, Pricing: PricingStatus{Status: "ccusage"}}
-	rows, err := database.QueryContext(ctx, `SELECT r.day,r.payload FROM usage_reports r JOIN usage_devices d USING(device_id) WHERE (?='all' OR d.identity_id=?) AND (?='all' OR r.device_id=?) AND r.day<=? ORDER BY r.day`, identity, identity, device, device, until)
+	var earliest sql.NullString
+	if err := database.QueryRowContext(ctx, `SELECT min(r.day) FROM usage_reports r JOIN usage_devices d USING(device_id) WHERE (?='all' OR d.identity_id=?) AND (?='all' OR r.device_id=?) AND r.day<=?`, identity, identity, device, device, until).Scan(&earliest); err != nil {
+		return result, err
+	}
+	result.HistorySince = earliest.String
+	lower := since
+	if days == 0 {
+		lower = ""
+	}
+	rows, err := database.QueryContext(ctx, `SELECT r.day,r.payload FROM usage_reports r JOIN usage_devices d USING(device_id) WHERE (?='all' OR d.identity_id=?) AND (?='all' OR r.device_id=?) AND r.day>=? AND r.day<=? ORDER BY r.day`, identity, identity, device, device, lower, until)
 	if err != nil {
 		return result, err
 	}
@@ -123,12 +132,6 @@ func ReadIdentitySummary(ctx context.Context, database *sql.DB, _ RateTable, ide
 		var raw []byte
 		if err := rows.Scan(&day, &raw); err != nil {
 			return result, err
-		}
-		if result.HistorySince == "" {
-			result.HistorySince = day
-		}
-		if days != 0 && day < since {
-			continue
 		}
 		_, report, err := usagereport.Canonical(raw)
 		if err != nil {
