@@ -145,6 +145,7 @@ func TestProxyFakeAppServer(t *testing.T) {
 	var usageFixture struct {
 		ResetS int64 `json:"reset_s"`
 		Used   int64 `json:"used"`
+		Wait   bool  `json:"wait"`
 	}
 	usageFixtureJSON, _ := os.ReadFile(usageFixturePath)
 	_ = json.Unmarshal(usageFixtureJSON, &usageFixture)
@@ -183,6 +184,15 @@ func TestProxyFakeAppServer(t *testing.T) {
 			result["turn"] = map[string]string{"id": "turn"}
 		case "account/rateLimits/read":
 			if len(usageFixtureJSON) > 0 {
+				if usageFixture.Wait && !pulsed {
+					_ = os.WriteFile(usageFixturePath+".reading", []byte("1"), 0600)
+					for {
+						if _, err := os.Stat(usageFixturePath + ".release"); err == nil {
+							break
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+				}
 				used := usageFixture.Used
 				reset := usageFixture.ResetS
 				if reset == 0 {

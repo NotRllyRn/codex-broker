@@ -185,7 +185,9 @@ func TestIncompleteEventReadRetainsRequestWithBackoff(t *testing.T) {
 	}
 	claims := claimResets(t, s, now, 1)
 	raw := map[string]any{"primary": map[string]any{"usedPercent": int64(80), "windowDurationMins": int64(300), "resetsAt": account.ShortReset.Int64}}
-	if err := s.commitUsageAt(ctx, account, claims[0].operation, raw, 0, "partial read", nil, false, false, now+1); err != nil {
+	if err := s.commitUsageAt(ctx, account, claims[0].operation, raw, 0, "partial read", nil, false, false, now+1); err == nil {
+		t.Fatal("partial observation accepted")
+	} else if err := s.recordUsageFailure(ctx, account, claims[0].operation, time.Now(), err); err != nil {
 		t.Fatal(err)
 	}
 	claimResets(t, s, now+15000, 0)

@@ -250,6 +250,14 @@ func (s *Service) Refresh(ctx context.Context, public, trigger string) (string, 
 		if err != sql.ErrNoRows {
 			return err
 		}
+		var eligible bool
+		if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_state WHERE account_id=? AND worker_state='STOPPED' AND (auth_state='VERIFIED' OR (? AND auth_state='AUTH_REQUIRED')))
+            AND NOT EXISTS(SELECT 1 FROM operations WHERE account_id=? AND state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, account.ID, trigger == "USER", account.ID).Scan(&eligible); err != nil {
+			return err
+		}
+		if !eligible {
+			return core.NewError("USAGE_REFRESH_NOT_ELIGIBLE", "Account has another operation or requires credential recovery", 409)
+		}
 		operation, created = core.NewID(), true
 		_, err = db.ExecContext(ctx, "INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", operation, account.ID, "usage.refresh", trigger, "QUEUED", nil, nil, nil, nil, nil, core.NowMS(), nil, nil, nil, nil, 1)
 		return err
@@ -274,6 +282,13 @@ func (s *Service) runRefresh(ctx context.Context, account Account, operation str
 	case <-ctx.Done():
 		return
 	}
+	// Eligibility may change while this job waits for a usage slot.
+	current, err := s.account(ctx, account.PublicID)
+	if err != nil || (!manual && !current.Enabled) || current.WorkerState != "STOPPED" || (current.AuthState != "VERIFIED" && !(manual && current.AuthState == "AUTH_REQUIRED")) {
+		_ = s.FailOperation(context.WithoutCancel(ctx), operation, "USAGE_REFRESH_NOT_ELIGIBLE", "Account is no longer eligible for usage refresh")
+		return
+	}
+	account = current
 	var observedAt int64
 	raw, err := s.managed(ctx, account, func(callCtx context.Context, runtime *codex.Runtime) (map[string]any, error) {
 		if manual {
@@ -398,10 +413,20 @@ func (s *Service) commitUsage(ctx context.Context, account Account, operation st
 // ordering and quota activity boundaries. Checkpoint delays are not model work.
 func (s *Service) commitUsageAt(ctx context.Context, account Account, operation string, raw map[string]any, duration time.Duration, summary string, pulseNext *int64, cycleRelease, authVerified bool, now int64) error {
 	usage := NormalizeUsage(raw)
+	if !completeUsage(usage) {
+		return core.NewError("USAGE_INCOMPLETE", "Usage windows are incomplete or invalid", 503)
+	}
 	snapshot := core.NewID()
 	evidence, _ := json.Marshal(logbook.Redact(raw))
 	shape, _ := json.Marshal(map[string]any{"window_count": 2 + len(usage.Others), "short_duration_minutes": windowDuration(usage.Short), "short_resets_at_s": windowReset(usage.Short), "weekly_duration_minutes": windowDuration(usage.Weekly), "weekly_resets_at_s": windowReset(usage.Weekly)})
 	err := s.Store.Write(ctx, func(db store.Executor) error {
+		var previous sql.NullInt64
+		if err := db.QueryRowContext(ctx, "SELECT complete_read_at_ms FROM usage_current WHERE account_id=?", account.ID).Scan(&previous); err != nil {
+			return err
+		}
+		if previous.Valid && previous.Int64 > now {
+			return core.NewError("USAGE_OBSERVATION_OUTDATED", "A newer usage observation is already stored", 409)
+		}
 		if _, err := db.ExecContext(ctx, "INSERT INTO usage_snapshots VALUES(?,?,?,?,?,?,?,?,?,?,?)", snapshot, account.ID, now-duration.Milliseconds(), now, 1, nullString(usage.SelectedLimitID), string(evidence), string(shape), nil, nil, duration.Milliseconds()); err != nil {
 			return err
 		}
@@ -445,6 +470,17 @@ func (s *Service) commitUsageAt(ctx context.Context, account Account, operation 
 				return err
 			}
 		}
+		// Reporting can lag a reset. Do not strand a still-exhausted account
+		// once the reset watermark is settled, or when its reset is unknown.
+		for _, window := range []*Window{usage.Short, usage.Weekly} {
+			if *window.UsedPercent >= 100 && (window.ResetsAtS == nil || *window.ResetsAtS <= now/1000) {
+				// Recovery backoff must not postpone an already pending quota/reset check.
+				if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO usage_refresh_requests(account_id,due_at_ms,reason) VALUES(?,?,'RESET_UNCONFIRMED')`, account.ID, now+usageRetryDelay.Milliseconds()); err != nil {
+					return err
+				}
+				break
+			}
+		}
 		if err := scheduleUsageResets(ctx, db, account.ID, now); err != nil {
 			return err
 		}
@@ -460,7 +496,7 @@ func (s *Service) commitUsageAt(ctx context.Context, account Account, operation 
 				return err
 			}
 			if cycleRelease {
-				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET cadence_anchor_at_ms=?,state_version=state_version+1 WHERE singleton_id=1", started); err != nil {
+				if _, err := db.ExecContext(ctx, "UPDATE weekly_cycle_state SET cadence_anchor_at_ms=max(COALESCE(cadence_anchor_at_ms,0),?),state_version=state_version+1 WHERE singleton_id=1", started); err != nil {
 					return err
 				}
 			}
@@ -668,8 +704,8 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, manual
 			return nil, err
 		}
 		usage := NormalizeUsage(preflight)
-		if usage.Short == nil || usage.Short.UsedPercent == nil || usage.Weekly == nil || usage.Weekly.UsedPercent == nil {
-			return nil, core.NewError("USAGE_UNKNOWN", "Usage windows are incomplete", 503)
+		if !completeUsage(usage) {
+			return nil, core.NewError("USAGE_UNKNOWN", "Usage windows are incomplete or invalid", 503)
 		}
 		if err := s.commitUsage(callCtx, account, "", preflight, time.Since(preflightStarted), "Usage checked before pulse", nil, false, manual); err != nil {
 			return nil, err
@@ -683,6 +719,17 @@ func (s *Service) runPulse(ctx context.Context, public, operation string, manual
 		}
 		_, active, _ := usageCycleEvidence(member, core.NowMS())
 		if *usage.Short.UsedPercent >= 100 || *usage.Weekly.UsedPercent >= 100 || (!manual && active) {
+			skipped = true
+			return preflight, nil
+		}
+		if usage.Weekly.ResetsAtS == nil || *usage.Weekly.ResetsAtS <= core.NowMS()/1000 {
+			return nil, core.NewError("WINDOW_RESET_UNKNOWN", "The weekly window did not report a future reset", 503)
+		}
+		var blocked bool
+		if err := s.Store.DB.QueryRowContext(callCtx, "SELECT EXISTS(SELECT 1 FROM account_quota_blocks WHERE account_id=?)", account.ID).Scan(&blocked); err != nil {
+			return nil, err
+		}
+		if blocked {
 			skipped = true
 			return preflight, nil
 		}

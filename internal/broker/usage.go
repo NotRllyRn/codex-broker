@@ -37,7 +37,7 @@ func NormalizeUsage(payload map[string]any) Usage {
 		if object == nil {
 			continue
 		}
-		window := Window{Slot: stringValue(object["name"]), UsedPercent: intPointer(object["usedPercent"]), DurationMinutes: intPointer(object["windowDurationMins"]), ResetsAtS: intPointer(object["resetsAt"])}
+		window := Window{Slot: stringValue(object["name"]), UsedPercent: percentPointer(object["usedPercent"]), DurationMinutes: intPointer(object["windowDurationMins"]), ResetsAtS: intPointer(object["resetsAt"])}
 		if window.Slot == "" {
 			window.Slot = fmtInt(index)
 		}
@@ -75,6 +75,23 @@ func NormalizeUsage(payload map[string]any) Usage {
 		}
 	}
 	return usage
+}
+
+// Only a complete, valid observation may replace the shared quota baseline.
+func completeUsage(usage Usage) bool {
+	for _, window := range []*Window{usage.Short, usage.Weekly} {
+		if window == nil || window.UsedPercent == nil || *window.UsedPercent < 0 || *window.UsedPercent > 100 {
+			return false
+		}
+	}
+	return true
+}
+
+func percentPointer(value any) *int64 {
+	if number, ok := value.(float64); ok && (math.IsNaN(number) || number < 0 || number > 100) {
+		return nil
+	}
+	return intPointer(value)
 }
 
 func intPointer(value any) *int64 {

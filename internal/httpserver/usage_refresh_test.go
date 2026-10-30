@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,5 +114,104 @@ func TestScheduledPulsePreflightPreservesExternalWindowAndCadence(t *testing.T) 
 				t.Fatalf("next idle candidate was not pulsed: %v", err)
 			}
 		})
+	}
+}
+
+func TestPulsePreflightRefusesInvalidUsageAndUnknownReset(t *testing.T) {
+	for _, kind := range []string{"negative percentage", "expired reset"} {
+		t.Run(kind, func(t *testing.T) {
+			s, _ := proxyFixture(t, 1)
+			service := s.App.Service
+			root := filepath.Join(service.Config.RuntimeDir, "accounts/account0")
+			if err := os.MkdirAll(root, 0700); err != nil {
+				t.Fatal(err)
+			}
+			fixture := map[string]any{"used": 0, "reset_s": time.Now().Add(-time.Hour).Unix()}
+			if kind == "negative percentage" {
+				fixture["used"] = -1
+				fixture["reset_s"] = time.Now().Add(7 * 24 * time.Hour).Unix()
+			}
+			data, _ := json.Marshal(fixture)
+			path := filepath.Join(root, "usage-fixture.json")
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			operation, err := service.Pulse(context.Background(), "account0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				var state string
+				if err := s.App.Store.DB.QueryRow(`SELECT state FROM operations WHERE operation_id=?`, operation).Scan(&state); err != nil {
+					t.Fatal(err)
+				}
+				if state == "FAILED" {
+					break
+				}
+				if state == "SUCCEEDED" || time.Now().After(deadline) {
+					t.Fatalf("unsafe pulse result: %s", state)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if _, err := os.Stat(path + ".pulsed"); !os.IsNotExist(err) {
+				t.Fatal("pulse ran without reliable usage/reset evidence")
+			}
+		})
+	}
+}
+
+func TestQuotaRejectionDuringPreflightPreventsPulse(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	service := s.App.Service
+	ctx := context.Background()
+	root := filepath.Join(service.Config.RuntimeDir, "accounts/account0")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "usage-fixture.json")
+	if err := os.WriteFile(path, []byte(`{"used":0,"wait":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	defer os.WriteFile(path+".release", []byte("1"), 0600)
+	operation, err := service.Pulse(ctx, "account0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(path + ".reading"); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("preflight did not start")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, _, err := s.App.Router.Route(ctx, key.ID, broker.RouteRequest{FailedAccountID: "account0", FailureKind: "quota"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".release", []byte("1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		var state string
+		if err := s.App.Store.DB.QueryRow(`SELECT state FROM operations WHERE operation_id=?`, operation).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if state == "SUCCEEDED" {
+			break
+		}
+		if state == "FAILED" || time.Now().After(deadline) {
+			t.Fatalf("preflight did not skip pulse cleanly: %s", state)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(path + ".pulsed"); !os.IsNotExist(err) {
+		t.Fatal("pulse ran despite concurrent rejection")
+	}
+	var blocks int
+	if err := s.App.Store.DB.QueryRow(`SELECT count(*) FROM account_quota_blocks`).Scan(&blocks); err != nil || blocks != 1 {
+		t.Fatalf("preflight erased rejection: %d %v", blocks, err)
 	}
 }

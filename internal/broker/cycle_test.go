@@ -292,7 +292,7 @@ func TestUsageCommitPreservesHoldAndCompletesCycleRelease(t *testing.T) {
 	}
 	service := &Service{Store: database, Events: events.New(10, 1)}
 	reset := time.Now().Add(7 * 24 * time.Hour).Unix()
-	raw := map[string]any{"windows": []any{map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(weekMinutes), "resetsAt": reset}}}
+	raw := map[string]any{"windows": []any{map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(300), "resetsAt": reset}, map[string]any{"usedPercent": int64(0), "windowDurationMins": int64(weekMinutes), "resetsAt": reset}}}
 	account := Account{ID: "account", PublicID: "public"}
 	if err := service.commitUsage(ctx, account, "refresh", raw, time.Second, "Usage refreshed", nil, false, false); err != nil {
 		t.Fatal(err)
