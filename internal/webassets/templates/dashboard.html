@@ -193,7 +193,8 @@
   </div>
   <script type="application/json" data-profile-data>{{ profiles_json|safe }}</script>
 </section>
-<form class="filter-bar" method="get" action="/">
+<form class="filter-bar" data-account-filters method="get" action="/">
+  <input type="hidden" name="render" value="1" />
   <label
     ><span>Find account</span
     ><input type="search" name="q" value="{% if not streamer_mode %}{{ q }}{% endif %}" {% if streamer_mode %}disabled{% endif %} placeholder="Name or label"
@@ -232,14 +233,13 @@
   <aside class="orbit-queue">
     <h2>Attention queue</h2>
     {% if attention %}{% for account in attention %}
-    <a href="/accounts/{{ account.public_token }}"
+    <a data-account-state="{{ account.overall_state }}" data-account-available="{% if account.available %}true{% else %}false{% endif %}" data-account-search="{% if not streamer_mode %}{{ account.display_name }} {{ account.labels|join:" " }}{% endif %}" href="/accounts/{{ account.public_token }}"
       ><strong>{{ account.display_name|private:streamer_mode }}</strong
       ><span>{{ account.cycle_label|default:account.overall_state|humanize|title }}</span
       ><small>{{ account.evidence|private:streamer_mode }}</small></a
     >
-    {% endfor %}{% else %}
-    <p class="subtle">No account currently needs attention.</p>
-    {% endif %}
+    {% endfor %}{% endif %}
+    <p class="subtle" data-attention-empty {% if attention %}hidden{% endif %}>No account currently needs attention.</p>
   </aside>
   <div class="orbit-core">
     <p>Routing authority</p>
@@ -248,16 +248,14 @@
     {% include "pool_reset.html" %}
   </div>
   <div class="orbit-accounts">
-    {% if not accounts %}
-    <section class="empty-state">
+    <section class="empty-state" data-accounts-empty {% if accounts %}hidden{% endif %}>
       <p class="kicker">No matching accounts</p>
       <h2>Nothing is on watch.</h2>
       <p>Add an authorized ChatGPT account or clear the active filters.</p>
       <a class="primary-button" href="/accounts/new">Add account</a>
     </section>
-    {% else %}
     {% for account in accounts %}
-    <article class="orbit-account state-{{ account.overall_state|lower }}">
+    <article class="orbit-account state-{{ account.overall_state|lower }}" data-account-state="{{ account.overall_state }}" data-account-available="{% if account.available %}true{% else %}false{% endif %}" data-account-search="{% if not streamer_mode %}{{ account.display_name }} {{ account.labels|join:" " }}{% endif %}">
       <header>
         <div>
           <h2>
@@ -301,7 +299,6 @@
       </footer>
     </article>
     {% endfor %}
-    {% endif %}
   </div>
 </section>
 {% endblock %}

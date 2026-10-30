@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import test from 'node:test';
 const source = readFileSync(new URL('../internal/webassets/static/usage.js', import.meta.url), 'utf8');
-const { cachedInputShare, rankedModels } = runInNewContext(source.replaceAll('export function', 'function') + '\n({cachedInputShare, rankedModels})', { Intl });
+const { cachedInputShare, rankedModels } = runInNewContext(source.replace(/^import .*;\n/gm, '').replaceAll('export function', 'function') + '\n({cachedInputShare, rankedModels})', { Intl });
 
 test('cache share uses total input, handles empty data and real zero reuse', () => {
   assert.equal(cachedInputShare({cached_input: 80, uncached_input: 20}), 0.8);

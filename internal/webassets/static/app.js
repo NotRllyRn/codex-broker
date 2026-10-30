@@ -1,537 +1,586 @@
 import { initUsageDashboard } from "./usage.js";
+import { cachedRequest, clearCache, invalidateCache } from "./cache.js";
 
-const root = document.documentElement;
-const rootPath = root.dataset.rootPath || "";
-const appPath = (path) => `${rootPath}${path}`;
-document.querySelectorAll('a[href^="/"], form[action^="/"]').forEach((element) => {
-	const attribute = element.hasAttribute("href") ? "href" : "action";
-	element.setAttribute(attribute, appPath(element.getAttribute(attribute)));
-});
-const streamerMode = root.dataset.streamerMode === "on";
-const privateLabel = (value, generic) => streamerMode ? generic : value;
-document.querySelector("[data-streamer-toggle]")?.addEventListener("click", () => {
-	document.cookie = `codex-broker.streamer=${streamerMode ? "off" : "on"}; Path=${rootPath || "/"}; Max-Age=31536000; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
-	location.reload();
-});
-const themeButton = document.querySelector("[data-theme-toggle]");
-const themes = ["system", "light", "dark"];
-const storedTheme = localStorage.getItem("codex-broker.theme");
-root.dataset.theme = themes.includes(storedTheme) ? storedTheme : "system";
+export function initApp({ refreshDashboard, toggleStreamer, forceRefresh = false } = {}) {
+	const lifecycle = new AbortController();
+	const timers = new Set(), intervals = new Set(), streams = [];
+	const setTimeout = (fn, ms) => {
+		if (lifecycle.signal.aborted) return;
+		const id = window.setTimeout(() => { timers.delete(id); fn(); }, ms);
+		timers.add(id);
+		return id;
+	};
+	const setInterval = (fn, ms) => { const id = window.setInterval(fn, ms); intervals.add(id); return id; };
+	const EventSource = function(url) { const stream = new window.EventSource(url); streams.push(stream); return stream; };
+	const fetch = (url, options = {}) => window.fetch(url, { ...options, signal: lifecycle.signal });
 
-function updateThemeLabel() {
-	if (themeButton) themeButton.textContent = `Theme: ${root.dataset.theme}`;
-}
-updateThemeLabel();
+	const root = document.documentElement;
+	const rootPath = root.dataset.rootPath || "";
+	const appPath = (path) => `${rootPath}${path}`;
+	document.querySelectorAll('a[href^="/"], form[action^="/"]').forEach((element) => {
+		const attribute = element.hasAttribute("href") ? "href" : "action";
+		element.setAttribute(attribute, appPath(element.getAttribute(attribute)));
+	});
+	document.querySelector('form[action$="/logout"]')?.addEventListener("submit", clearCache);
+	const filters = document.querySelector("[data-account-filters]");
+	function applyFilters() {
+		if (!filters || !refreshDashboard) return;
+		const params = new URLSearchParams(location.search);
+		filters.elements.state_filter.value = params.get("state_filter") ?? "AVAILABLE";
+		filters.elements.q.value = root.dataset.streamerMode === "on" ? "" : params.get("q") || "";
+		const state = filters.elements.state_filter.value;
+		const query = filters.elements.q.value.toLowerCase();
+		for (const node of document.querySelectorAll("[data-account-state]"))
+			node.hidden = (state === "AVAILABLE" ? node.dataset.accountAvailable !== "true" : state && node.dataset.accountState !== state) || !node.dataset.accountSearch.toLowerCase().includes(query);
+		const empty = document.querySelector("[data-accounts-empty]");
+		if (empty) empty.hidden = Boolean(document.querySelector(".orbit-account:not([hidden])"));
+		const attentionEmpty = document.querySelector("[data-attention-empty]");
+		if (attentionEmpty) attentionEmpty.hidden = Boolean(document.querySelector(".orbit-queue [data-account-state]:not([hidden])"));
+	}
+	if (refreshDashboard) filters?.addEventListener("submit", (event) => {
+		event.preventDefault();
+		const params = new URLSearchParams(new FormData(filters));
+		params.delete("render");
+		history.pushState(null, "", `${location.pathname}?${params}`);
+		applyFilters();
+	});
+	window.addEventListener("popstate", applyFilters, { signal: lifecycle.signal });
+	applyFilters();
+	const streamerMode = root.dataset.streamerMode === "on";
+	const privateLabel = (value, generic) => streamerMode ? generic : value;
+	document.querySelector("[data-streamer-toggle]")?.addEventListener("click", () => {
+		if (toggleStreamer) { toggleStreamer(); return; }
+		document.cookie = `codex-broker.streamer=${streamerMode ? "off" : "on"}; Path=${rootPath || "/"}; Max-Age=31536000; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
+		location.reload();
+	});
+	const themeButton = document.querySelector("[data-theme-toggle]");
+	const themes = ["system", "light", "dark"];
+	const storedTheme = localStorage.getItem("codex-broker.theme");
+	root.dataset.theme = themes.includes(storedTheme) ? storedTheme : "system";
 
-themeButton?.addEventListener("click", () => {
-	const next = themes[(themes.indexOf(root.dataset.theme) + 1) % themes.length];
-	root.dataset.theme = next;
-	localStorage.setItem("codex-broker.theme", next);
+	function updateThemeLabel() {
+		if (themeButton) themeButton.textContent = `Theme: ${root.dataset.theme}`;
+	}
 	updateThemeLabel();
-});
 
-for (const node of document.querySelectorAll("time[datetime]")) {
-	const date = new Date(node.dateTime);
-	if (!Number.isNaN(date.getTime())) node.textContent = date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
-}
-
-const countdowns = document.querySelectorAll("[data-countdown]");
-function updateCountdowns() {
-	for (const node of countdowns) {
-		let seconds = Math.max(0, Math.ceil((Number(node.dataset.countdown) - Date.now()) / 1000));
-		if (!seconds) { node.textContent = "Due now"; continue; }
-		const days = Math.floor(seconds / 86400); seconds %= 86400;
-		const hours = Math.floor(seconds / 3600); seconds %= 3600;
-		const minutes = Math.floor(seconds / 60); seconds %= 60;
-		node.textContent = [days && `${days}d`, (days || hours) && `${hours}h`, `${minutes}m`, `${seconds}s`].filter(Boolean).join(" ");
-	}
-}
-updateCountdowns();
-if (countdowns.length) setInterval(updateCountdowns, 1000);
-
-const timestampPattern =
-	/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})|\b(?:\d{13}|\d{10})\b/g;
-const timestampNodes = [];
-const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-while (walker.nextNode()) {
-	if (walker.currentNode.parentElement?.closest("script, style, time[datetime]")) continue;
-	timestampPattern.lastIndex = 0;
-	if (timestampPattern.test(walker.currentNode.data))
-		timestampNodes.push([walker.currentNode, walker.currentNode.data]);
-}
-
-function relativeTime(value) {
-	const milliseconds = /^\d{10}$/.test(value)
-		? Number(value) * 1000
-		: /^\d{13}$/.test(value)
-			? Number(value)
-			: Date.parse(value);
-	if (!Number.isFinite(milliseconds)) return value;
-	const difference = milliseconds - Date.now();
-	const duration = Math.abs(difference);
-	const [amount, unit] =
-		duration >= 86_400_000
-			? [Math.ceil(duration / 86_400_000), "day"]
-			: duration >= 3_600_000
-				? [Math.ceil(duration / 3_600_000), "hour"]
-				: [Math.max(1, Math.ceil(duration / 60_000)), "minute"];
-	return `${amount} ${unit}${amount === 1 ? "" : "s"} ${difference >= 0 ? "left" : "ago"}`;
-}
-
-function updateRelativeTimes() {
-	for (const [node, source] of timestampNodes)
-		node.data = source.replace(timestampPattern, relativeTime);
-}
-updateRelativeTimes();
-setInterval(updateRelativeTimes, 60_000);
-
-document
-	.querySelector("[data-refresh-page]")
-	?.addEventListener("click", () => location.reload());
-
-const profileDashboard = document.querySelector("[data-profile-dashboard]");
-if (profileDashboard) {
-	const profiles = JSON.parse(
-		profileDashboard.querySelector("[data-profile-data]").textContent || "[]",
-	);
-	const select = profileDashboard.querySelector("[data-profile-select]");
-	const loadUsage = initUsageDashboard(profileDashboard.querySelector("[data-usage-dashboard]"), appPath);
-	let pinnedActivityCell;
-	const compact = new Intl.NumberFormat(undefined, {
-		notation: "compact",
-		maximumFractionDigits: 1,
+	themeButton?.addEventListener("click", () => {
+		const next = themes[(themes.indexOf(root.dataset.theme) + 1) % themes.length];
+		root.dataset.theme = next;
+		localStorage.setItem("codex-broker.theme", next);
+		updateThemeLabel();
 	});
-	const integer = new Intl.NumberFormat();
-	const colors = ["#2678d9", "#36a58b", "#8b6fd6", "#e18b38", "#d65370", "#6b8e23", "#2b9eb3", "#b76e9b"];
-	const value = (number, suffix = "") =>
-		number == null ? "—" : `${compact.format(number)}${suffix}`;
 
-	function clearActivityTooltip() {
-		pinnedActivityCell?.classList.remove("is-selected");
-		pinnedActivityCell = undefined;
-		profileDashboard.querySelector("[data-activity-tooltip]").hidden = true;
+	for (const node of document.querySelectorAll("time[datetime]")) {
+		const date = new Date(node.dateTime);
+		if (!Number.isNaN(date.getTime())) node.textContent = date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
 	}
 
-	function renderActivity(profile) {
-		const grid = profileDashboard.querySelector("[data-activity-grid]");
-		const months = profileDashboard.querySelector("[data-activity-months]");
-		const tooltip = profileDashboard.querySelector("[data-activity-tooltip]");
-		clearActivityTooltip();
-		grid.replaceChildren();
-		months.replaceChildren();
-		const byDate = new Map((profile.daily_usage_buckets || []).map((item) => [item.start_date, item.tokens]));
-		const year = new Date().getUTCFullYear();
-		const yearStart = new Date(Date.UTC(year, 0, 1));
-		const yearEnd = new Date(Date.UTC(year, 11, 31));
-		const start = new Date(yearStart);
-		start.setUTCDate(start.getUTCDate() - start.getUTCDay());
-		const end = new Date(yearEnd);
-		end.setUTCDate(end.getUTCDate() + (6 - end.getUTCDay()));
-		const max = Math.max(1, ...byDate.values());
-		const weeks = Math.round((end - start) / 604800000) + 1;
-		grid.style.setProperty("--activity-weeks", weeks);
-		months.style.setProperty("--activity-weeks", weeks);
-		grid.setAttribute("aria-label", `Daily token activity for ${year}`);
-		const formatDate = (date) => date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
-		for (let month = 0; month < 12; month++) {
-			const date = new Date(Date.UTC(year, month, 1));
-			const label = document.createElement("span");
-			label.textContent = date.toLocaleDateString(undefined, { month: "short", timeZone: "UTC" });
-			label.style.gridColumn = String(Math.floor((date - start) / 604800000) + 1);
-			months.append(label);
-		}
-		for (let date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
-			const key = date.toISOString().slice(0, 10);
-			const tokens = byDate.get(key) || 0;
-			const message = `${compact.format(tokens)} tokens on ${formatDate(date)}`;
-			const cell = document.createElement("button");
-			const level = tokens ? Math.max(1, Math.ceil((tokens / max) * 4)) : 0;
-			cell.type = "button";
-			cell.role = "gridcell";
-			cell.className = date.getUTCFullYear() === year ? "" : "is-outside-year";
-			cell.dataset.level = String(level);
-			cell.dataset.activityCell = key;
-			cell.style.gridColumn = String(Math.floor((date - start) / 604800000) + 1);
-			cell.style.gridRow = String(date.getUTCDay() + 1);
-			cell.title = message;
-			cell.setAttribute("aria-label", message);
-			const show = () => {
-				if (pinnedActivityCell && pinnedActivityCell !== cell) pinnedActivityCell.classList.remove("is-selected");
-				cell.classList.add("is-selected");
-				tooltip.textContent = message;
-				tooltip.hidden = false;
-			};
-			cell.addEventListener("mouseenter", () => { if (!pinnedActivityCell) show(); });
-			cell.addEventListener("mouseleave", () => { if (!pinnedActivityCell) { cell.classList.remove("is-selected"); tooltip.hidden = true; } });
-			cell.addEventListener("focus", show);
-			cell.addEventListener("blur", () => { if (!pinnedActivityCell) { cell.classList.remove("is-selected"); tooltip.hidden = true; } });
-			cell.addEventListener("click", (event) => {
-				event.stopPropagation();
-				if (pinnedActivityCell === cell) return clearActivityTooltip();
-				pinnedActivityCell = cell;
-				show();
-			});
-			grid.append(cell);
+	const countdowns = document.querySelectorAll("[data-countdown]");
+	function updateCountdowns() {
+		for (const node of countdowns) {
+			let seconds = Math.max(0, Math.ceil((Number(node.dataset.countdown) - Date.now()) / 1000));
+			if (!seconds) { node.textContent = "Due now"; continue; }
+			const days = Math.floor(seconds / 86400); seconds %= 86400;
+			const hours = Math.floor(seconds / 3600); seconds %= 3600;
+			const minutes = Math.floor(seconds / 60); seconds %= 60;
+			node.textContent = [days && `${days}d`, (days || hours) && `${hours}h`, `${minutes}m`, `${seconds}s`].filter(Boolean).join(" ");
 		}
 	}
+	updateCountdowns();
+	if (countdowns.length) setInterval(updateCountdowns, 1000);
 
-	function renderTokenShare(profile) {
-		const chart = profileDashboard.querySelector("[data-token-share-chart]");
-		const legend = profileDashboard.querySelector("[data-token-share-legend]");
-		const shares = (profile.token_shares || []).filter((item) => item.tokens > 0).sort((a, b) => b.tokens - a.tokens);
-		const total = shares.reduce((sum, item) => sum + item.tokens, 0);
-		let cursor = 0;
-		const segments = shares.map((item, index) => {
-			const start = cursor;
-			cursor += (item.tokens / total) * 100;
-			return `${colors[index % colors.length]} ${start}% ${cursor}%`;
-		});
-		chart.style.background = segments.length ? `conic-gradient(${segments.join(",")})` : "var(--surface-2)";
-		chart.querySelector("[data-token-share-total]").textContent = value(total);
-		const expanded = legend.querySelector("details")?.open || false;
-		legend.replaceChildren();
-		const more = document.createElement("details");
-		more.open = expanded;
-		const summary = document.createElement("summary");
-		summary.textContent = `Show more (${Math.max(0, shares.length - 5)})`;
-		more.append(summary);
-		more.addEventListener("toggle", () => { summary.textContent = more.open ? "Show less" : `Show more (${shares.length - 5})`; });
-		shares.forEach((item, index) => {
-			const row = document.createElement("div");
-			const swatch = document.createElement("i");
-			const label = document.createElement("span");
-			const amount = document.createElement("strong");
-			swatch.style.background = colors[index % colors.length];
-			label.textContent = privateLabel(item.label, "Account");
-			amount.textContent = value(item.tokens);
-			row.append(swatch, label, amount);
-			(index < 5 ? legend : more).append(row);
-		});
-		if (shares.length > 5) legend.append(more);
+	const timestampPattern =
+		/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})|\b(?:\d{13}|\d{10})\b/g;
+	const timestampNodes = [];
+	const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+	while (walker.nextNode()) {
+		if (walker.currentNode.parentElement?.closest("script, style, time[datetime]")) continue;
+		timestampPattern.lastIndex = 0;
+		if (timestampPattern.test(walker.currentNode.data))
+			timestampNodes.push([walker.currentNode, walker.currentNode.data]);
 	}
 
-	function renderProfile() {
-		const profile = profiles.find((item) => item.id === select.value) || profiles[0];
-		if (!profile) return;
-		profileDashboard.querySelector("[data-profile-subtitle]").textContent = !streamerMode && profile.username
-			? `@${profile.username}`
-			: profile.id === "all"
-				? "Combined statistics for every cached account."
-				: "Cached account statistics";
-		const stats = {
-			lifetime_tokens: value(profile.lifetime_tokens),
-			peak_daily_tokens: value(profile.peak_daily_tokens),
-		};
-		for (const [key, formatted] of Object.entries(stats))
-			profileDashboard.querySelectorAll(`[data-profile-stat="${key}"]`).forEach((node) => (node.textContent = formatted));
-		const freshness = profileDashboard.querySelector("[data-profile-freshness]");
-		freshness.textContent = profile.updated_at_ms
-			? `${profile.stale ? "Cached" : "Updated"} ${relativeTime(String(profile.updated_at_ms))}`
-			: "No cached profile data yet.";
-		renderActivity(profile);
-		renderTokenShare(profile);
-		loadUsage(profile.id);
+	function relativeTime(value) {
+		const milliseconds = /^\d{10}$/.test(value)
+			? Number(value) * 1000
+			: /^\d{13}$/.test(value)
+				? Number(value)
+				: Date.parse(value);
+		if (!Number.isFinite(milliseconds)) return value;
+		const difference = milliseconds - Date.now();
+		const duration = Math.abs(difference);
+		const [amount, unit] =
+			duration >= 86_400_000
+				? [Math.ceil(duration / 86_400_000), "day"]
+				: duration >= 3_600_000
+					? [Math.ceil(duration / 3_600_000), "hour"]
+					: [Math.max(1, Math.ceil(duration / 60_000)), "minute"];
+		return `${amount} ${unit}${amount === 1 ? "" : "s"} ${difference >= 0 ? "left" : "ago"}`;
 	}
 
-	select?.addEventListener("change", renderProfile);
-	profileDashboard.addEventListener("click", (event) => {
-		if (!event.target.closest("[data-activity-cell]")) clearActivityTooltip();
-	});
-	renderProfile();
-}
+	function updateRelativeTimes() {
+		for (const [node, source] of timestampNodes)
+			node.data = source.replace(timestampPattern, relativeTime);
+	}
+	updateRelativeTimes();
+	setInterval(updateRelativeTimes, 60_000);
 
-document.querySelectorAll("form[data-confirm]").forEach((form) => {
-	form.addEventListener("submit", (event) => {
-		if (!window.confirm(form.dataset.confirm)) event.preventDefault();
-	});
-});
+	document
+		.querySelector("[data-refresh-page]")
+		?.addEventListener("click", () => refreshDashboard ? refreshDashboard() : location.reload());
 
-function toast(message) {
-	const region = document.querySelector(".toast-region");
-	if (!region) return;
-	const item = document.createElement("div");
-	item.className = "toast";
-	item.textContent = message;
-	region.append(item);
-	setTimeout(() => item.remove(), 5000);
-}
-
-if (document.querySelector(".topbar")) {
-	const stream = new EventSource(appPath("/api/internal/v1/events/state"));
-	[
-		"account.updated",
-		"operation.updated",
-		"incident.updated",
-		"login.updated",
-	].forEach((name) => {
-		stream.addEventListener(name, () =>
-			toast("Committed state changed. Refresh when ready."),
+	const profileDashboard = document.querySelector("[data-profile-dashboard]");
+	if (profileDashboard) {
+		const profiles = JSON.parse(
+			profileDashboard.querySelector("[data-profile-data]").textContent || "[]",
 		);
-	});
-	stream.addEventListener("gap", () =>
-		toast("Live updates skipped. Refresh for current state."),
-	);
-}
-
-const operation = document.querySelector("[data-operation]");
-if (operation && !["SUCCEEDED", "FAILED", "CANCELLED", "AMBIGUOUS"].includes(operation.dataset.state)) {
-	const id = operation.dataset.operation;
-	const poll = async () => {
-		const response = await fetch(appPath(`/api/internal/v1/operations/${id}`), {
-			headers: { Accept: "application/json" },
+		const select = profileDashboard.querySelector("[data-profile-select]");
+		const loadUsage = initUsageDashboard(profileDashboard.querySelector("[data-usage-dashboard]"), appPath, { signal: lifecycle.signal, forceRefresh });
+		let pinnedActivityCell;
+		const compact = new Intl.NumberFormat(undefined, {
+			notation: "compact",
+			maximumFractionDigits: 1,
 		});
-		if (!response.ok) return;
-		const payload = await response.json();
-		if (
-			["SUCCEEDED", "FAILED", "CANCELLED", "AMBIGUOUS"].includes(
-				payload.data.state,
-			)
-		) {
-			location.reload();
-		} else {
-			setTimeout(poll, 1200);
+		const integer = new Intl.NumberFormat();
+		const colors = ["#2678d9", "#36a58b", "#8b6fd6", "#e18b38", "#d65370", "#6b8e23", "#2b9eb3", "#b76e9b"];
+		const value = (number, suffix = "") =>
+			number == null ? "—" : `${compact.format(number)}${suffix}`;
+
+		function clearActivityTooltip() {
+			pinnedActivityCell?.classList.remove("is-selected");
+			pinnedActivityCell = undefined;
+			profileDashboard.querySelector("[data-activity-tooltip]").hidden = true;
 		}
-	};
-	setTimeout(poll, 1200);
-}
 
-const loginProgress = document.querySelector("[data-login-progress]");
-if (loginProgress) {
-	const attempt = loginProgress.dataset.attempt;
-	const account = loginProgress.dataset.account;
-	const nonce = loginProgress.dataset.nonce;
-	const csrf = loginProgress.dataset.csrf;
-	const status = loginProgress.querySelector(".interaction-status");
-	const loading = loginProgress.querySelector("[data-loading]");
-	let interaction;
-
-	const showInteraction = (data) => {
-		interaction = data;
-		loading.hidden = true;
-		if (data.method === "CHATGPT_DEVICE_CODE") {
-			const panel = loginProgress.querySelector("[data-device]");
-			panel.hidden = false;
-			panel.querySelector("[data-verification]").href = data.verification_url;
-			panel.querySelector("[data-code]").textContent = data.user_code;
-			status.textContent = "Enter the one-time code. Codex Broker never logs it.";
-		} else {
-			const panel = loginProgress.querySelector("[data-browser]");
-			panel.hidden = false;
-			panel.querySelector("[data-authorization]").href = data.authorization_url;
-			status.textContent = "Authorize the account in a separate browser tab.";
-		}
-	};
-
-	const pollInteraction = async () => {
-		const response = await fetch(
-			appPath(`/api/internal/v1/login-attempts/${attempt}/interaction`),
-			{
-				headers: { "X-Interaction-Nonce": nonce, Accept: "application/json" },
-				cache: "no-store",
-			},
-		);
-		if (response.status === 404) {
-			setTimeout(pollInteraction, 800);
-			return;
-		}
-		if (!response.ok) {
-			status.textContent =
-				"Sign-in could not start. Return to the dashboard and try again.";
-			loading.hidden = true;
-			return;
-		}
-		const payload = await response.json();
-		showInteraction(payload.data);
-	};
-
-	loginProgress
-		.querySelector("[data-copy-code]")
-		?.addEventListener("click", async () => {
-			await navigator.clipboard.writeText(interaction.user_code);
-			toast("Code copied.");
-		});
-
-	loginProgress
-		.querySelector("[data-forward]")
-		?.addEventListener("click", async (event) => {
-			const button = event.currentTarget;
-			const callbackUrl = loginProgress
-				.querySelector("#callback_url")
-				.value.trim();
-			if (!callbackUrl) {
-				status.textContent = "Paste the complete localhost callback URL first.";
-				return;
+		function renderActivity(profile) {
+			const grid = profileDashboard.querySelector("[data-activity-grid]");
+			const months = profileDashboard.querySelector("[data-activity-months]");
+			const tooltip = profileDashboard.querySelector("[data-activity-tooltip]");
+			clearActivityTooltip();
+			grid.replaceChildren();
+			months.replaceChildren();
+			const byDate = new Map((profile.daily_usage_buckets || []).map((item) => [item.start_date, item.tokens]));
+			const year = new Date().getUTCFullYear();
+			const yearStart = new Date(Date.UTC(year, 0, 1));
+			const yearEnd = new Date(Date.UTC(year, 11, 31));
+			const start = new Date(yearStart);
+			start.setUTCDate(start.getUTCDate() - start.getUTCDay());
+			const end = new Date(yearEnd);
+			end.setUTCDate(end.getUTCDate() + (6 - end.getUTCDay()));
+			const max = Math.max(1, ...byDate.values());
+			const weeks = Math.round((end - start) / 604800000) + 1;
+			grid.style.setProperty("--activity-weeks", weeks);
+			months.style.setProperty("--activity-weeks", weeks);
+			grid.setAttribute("aria-label", `Daily token activity for ${year}`);
+			const formatDate = (date) => date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+			for (let month = 0; month < 12; month++) {
+				const date = new Date(Date.UTC(year, month, 1));
+				const label = document.createElement("span");
+				label.textContent = date.toLocaleDateString(undefined, { month: "short", timeZone: "UTC" });
+				label.style.gridColumn = String(Math.floor((date - start) / 604800000) + 1);
+				months.append(label);
 			}
-			button.disabled = true;
+			for (let date = new Date(start); date <= end; date.setUTCDate(date.getUTCDate() + 1)) {
+				const key = date.toISOString().slice(0, 10);
+				const tokens = byDate.get(key) || 0;
+				const message = `${compact.format(tokens)} tokens on ${formatDate(date)}`;
+				const cell = document.createElement("button");
+				const level = tokens ? Math.max(1, Math.ceil((tokens / max) * 4)) : 0;
+				cell.type = "button";
+				cell.role = "gridcell";
+				cell.className = date.getUTCFullYear() === year ? "" : "is-outside-year";
+				cell.dataset.level = String(level);
+				cell.dataset.activityCell = key;
+				cell.style.gridColumn = String(Math.floor((date - start) / 604800000) + 1);
+				cell.style.gridRow = String(date.getUTCDay() + 1);
+				cell.title = message;
+				cell.setAttribute("aria-label", message);
+				const show = () => {
+					if (pinnedActivityCell && pinnedActivityCell !== cell) pinnedActivityCell.classList.remove("is-selected");
+					cell.classList.add("is-selected");
+					tooltip.textContent = message;
+					tooltip.hidden = false;
+				};
+				cell.addEventListener("mouseenter", () => { if (!pinnedActivityCell) show(); });
+				cell.addEventListener("mouseleave", () => { if (!pinnedActivityCell) { cell.classList.remove("is-selected"); tooltip.hidden = true; } });
+				cell.addEventListener("focus", show);
+				cell.addEventListener("blur", () => { if (!pinnedActivityCell) { cell.classList.remove("is-selected"); tooltip.hidden = true; } });
+				cell.addEventListener("click", (event) => {
+					event.stopPropagation();
+					if (pinnedActivityCell === cell) return clearActivityTooltip();
+					pinnedActivityCell = cell;
+					show();
+				});
+				grid.append(cell);
+			}
+		}
+
+		function renderTokenShare(profile) {
+			const chart = profileDashboard.querySelector("[data-token-share-chart]");
+			const legend = profileDashboard.querySelector("[data-token-share-legend]");
+			const shares = (profile.token_shares || []).filter((item) => item.tokens > 0).sort((a, b) => b.tokens - a.tokens);
+			const total = shares.reduce((sum, item) => sum + item.tokens, 0);
+			let cursor = 0;
+			const segments = shares.map((item, index) => {
+				const start = cursor;
+				cursor += (item.tokens / total) * 100;
+				return `${colors[index % colors.length]} ${start}% ${cursor}%`;
+			});
+			chart.style.background = segments.length ? `conic-gradient(${segments.join(",")})` : "var(--surface-2)";
+			chart.querySelector("[data-token-share-total]").textContent = value(total);
+			const expanded = legend.querySelector("details")?.open || false;
+			legend.replaceChildren();
+			const more = document.createElement("details");
+			more.open = expanded;
+			const summary = document.createElement("summary");
+			summary.textContent = `Show more (${Math.max(0, shares.length - 5)})`;
+			more.append(summary);
+			more.addEventListener("toggle", () => { summary.textContent = more.open ? "Show less" : `Show more (${shares.length - 5})`; });
+			shares.forEach((item, index) => {
+				const row = document.createElement("div");
+				const swatch = document.createElement("i");
+				const label = document.createElement("span");
+				const amount = document.createElement("strong");
+				swatch.style.background = colors[index % colors.length];
+				label.textContent = privateLabel(item.label, "Account");
+				amount.textContent = value(item.tokens);
+				row.append(swatch, label, amount);
+				(index < 5 ? legend : more).append(row);
+			});
+			if (shares.length > 5) legend.append(more);
+		}
+
+		function renderProfile() {
+			const profile = profiles.find((item) => item.id === select.value) || profiles[0];
+			if (!profile) return;
+			profileDashboard.querySelector("[data-profile-subtitle]").textContent = !streamerMode && profile.username
+				? `@${profile.username}`
+				: profile.id === "all"
+					? "Combined statistics for every cached account."
+					: "Cached account statistics";
+			const stats = {
+				lifetime_tokens: value(profile.lifetime_tokens),
+				peak_daily_tokens: value(profile.peak_daily_tokens),
+			};
+			for (const [key, formatted] of Object.entries(stats))
+				profileDashboard.querySelectorAll(`[data-profile-stat="${key}"]`).forEach((node) => (node.textContent = formatted));
+			const freshness = profileDashboard.querySelector("[data-profile-freshness]");
+			freshness.textContent = profile.updated_at_ms
+				? `${profile.stale ? "Cached" : "Updated"} ${relativeTime(String(profile.updated_at_ms))}`
+				: "No cached profile data yet.";
+			renderActivity(profile);
+			renderTokenShare(profile);
+			loadUsage(profile.id);
+		}
+
+		select?.addEventListener("change", renderProfile);
+		profileDashboard.addEventListener("click", (event) => {
+			if (!event.target.closest("[data-activity-cell]")) clearActivityTooltip();
+		});
+		renderProfile();
+	}
+
+	document.querySelectorAll("form[data-confirm]").forEach((form) => {
+		form.addEventListener("submit", (event) => {
+			if (!window.confirm(form.dataset.confirm)) event.preventDefault();
+		});
+	});
+
+	function toast(message) {
+		const region = document.querySelector(".toast-region");
+		if (!region) return;
+		const item = document.createElement("div");
+		item.className = "toast";
+		item.textContent = message;
+		region.append(item);
+		setTimeout(() => item.remove(), 5000);
+	}
+
+	if (document.querySelector(".topbar")) {
+		const stream = new EventSource(appPath("/api/internal/v1/events/state"));
+		[
+			"account.updated",
+			"operation.updated",
+			"incident.updated",
+			"login.updated",
+		].forEach((name) => {
+			stream.addEventListener(name, () =>
+				(invalidateCache(), toast("Committed state changed. Refresh when ready.")),
+			);
+		});
+		stream.addEventListener("gap", () =>
+			(invalidateCache(), toast("Live updates skipped. Refresh for current state.")),
+		);
+	}
+
+	const operation = document.querySelector("[data-operation]");
+	if (operation && !["SUCCEEDED", "FAILED", "CANCELLED", "AMBIGUOUS"].includes(operation.dataset.state)) {
+		const id = operation.dataset.operation;
+		const poll = async () => {
+			const response = await fetch(appPath(`/api/internal/v1/operations/${id}`), {
+				headers: { Accept: "application/json" },
+			});
+			if (!response.ok) return;
+			const payload = await response.json();
+			if (
+				["SUCCEEDED", "FAILED", "CANCELLED", "AMBIGUOUS"].includes(
+					payload.data.state,
+				)
+			) {
+				location.reload();
+			} else {
+				setTimeout(poll, 1200);
+			}
+		};
+		setTimeout(poll, 1200);
+	}
+
+	const loginProgress = document.querySelector("[data-login-progress]");
+	if (loginProgress) {
+		const attempt = loginProgress.dataset.attempt;
+		const account = loginProgress.dataset.account;
+		const nonce = loginProgress.dataset.nonce;
+		const csrf = loginProgress.dataset.csrf;
+		const status = loginProgress.querySelector(".interaction-status");
+		const loading = loginProgress.querySelector("[data-loading]");
+		let interaction;
+
+		const showInteraction = (data) => {
+			interaction = data;
+			loading.hidden = true;
+			if (data.method === "CHATGPT_DEVICE_CODE") {
+				const panel = loginProgress.querySelector("[data-device]");
+				panel.hidden = false;
+				panel.querySelector("[data-verification]").href = data.verification_url;
+				panel.querySelector("[data-code]").textContent = data.user_code;
+				status.textContent = "Enter the one-time code. Codex Broker never logs it.";
+			} else {
+				const panel = loginProgress.querySelector("[data-browser]");
+				panel.hidden = false;
+				panel.querySelector("[data-authorization]").href = data.authorization_url;
+				status.textContent = "Authorize the account in a separate browser tab.";
+			}
+		};
+
+		const pollInteraction = async () => {
 			const response = await fetch(
-				appPath(`/api/internal/v1/login-attempts/${attempt}/browser-callback`),
+				appPath(`/api/internal/v1/login-attempts/${attempt}/interaction`),
 				{
-					method: "POST",
-					headers: {
-						"Content-Type": "application/json",
-						"X-CSRF-Token": csrf,
-						"X-Interaction-Nonce": nonce,
-					},
-					body: JSON.stringify({ callback_url: callbackUrl }),
+					headers: { "X-Interaction-Nonce": nonce, Accept: "application/json" },
+					cache: "no-store",
 				},
 			);
-			loginProgress.querySelector("#callback_url").value = "";
-			if (response.ok) {
-				status.textContent =
-					"Callback forwarded. Verifying the account and credential bundle.";
-			} else {
-				const payload = await response.json();
-				status.textContent =
-					payload.detail || "The callback could not be forwarded.";
-				button.disabled = false;
+			if (response.status === 404) {
+				setTimeout(pollInteraction, 800);
+				return;
 			}
-		});
+			if (!response.ok) {
+				status.textContent =
+					"Sign-in could not start. Return to the dashboard and try again.";
+				loading.hidden = true;
+				return;
+			}
+			const payload = await response.json();
+			showInteraction(payload.data);
+		};
 
-	loginProgress
-		.querySelector("[data-cancel-login]")
-		?.addEventListener("click", async (event) => {
-			event.currentTarget.disabled = true;
-			await fetch(appPath(`/api/internal/v1/login-attempts/${attempt}/cancel`), {
-				method: "POST",
-				headers: { "X-CSRF-Token": csrf },
+		loginProgress
+			.querySelector("[data-copy-code]")
+			?.addEventListener("click", async () => {
+				await navigator.clipboard.writeText(interaction.user_code);
+				toast("Code copied.");
 			});
-			location.assign(appPath("/"));
+
+		loginProgress
+			.querySelector("[data-forward]")
+			?.addEventListener("click", async (event) => {
+				const button = event.currentTarget;
+				const callbackUrl = loginProgress
+					.querySelector("#callback_url")
+					.value.trim();
+				if (!callbackUrl) {
+					status.textContent = "Paste the complete localhost callback URL first.";
+					return;
+				}
+				button.disabled = true;
+				const response = await fetch(
+					appPath(`/api/internal/v1/login-attempts/${attempt}/browser-callback`),
+					{
+						method: "POST",
+						headers: {
+							"Content-Type": "application/json",
+							"X-CSRF-Token": csrf,
+							"X-Interaction-Nonce": nonce,
+						},
+						body: JSON.stringify({ callback_url: callbackUrl }),
+					},
+				);
+				loginProgress.querySelector("#callback_url").value = "";
+				if (response.ok) {
+					status.textContent =
+						"Callback forwarded. Verifying the account and credential bundle.";
+				} else {
+					const payload = await response.json();
+					status.textContent =
+						payload.detail || "The callback could not be forwarded.";
+					button.disabled = false;
+				}
+			});
+
+		loginProgress
+			.querySelector("[data-cancel-login]")
+			?.addEventListener("click", async (event) => {
+				event.currentTarget.disabled = true;
+				await fetch(appPath(`/api/internal/v1/login-attempts/${attempt}/cancel`), {
+					method: "POST",
+					headers: { "X-CSRF-Token": csrf },
+				});
+				location.assign(appPath("/"));
+			});
+
+		const events = new EventSource(appPath("/api/internal/v1/events/state"));
+		events.addEventListener("login.updated", (event) => {
+			let update;
+			try {
+				update = JSON.parse(event.data);
+			} catch {
+				return;
+			}
+			if (update.attempt_id !== attempt) return;
+			if (update.state === "COMPLETED")
+				location.assign(appPath(`/accounts/${account}`));
+			if (
+				[
+					"FAILED_RETRYABLE",
+					"FAILED_ACTION_REQUIRED",
+					"RESTART_REQUIRED",
+					"CANCELLED",
+				].includes(update.state)
+			) {
+				status.textContent = `Sign-in stopped: ${update.error_code || update.state}.`;
+				loading.hidden = true;
+				events.close();
+			}
 		});
-
-	const events = new EventSource(appPath("/api/internal/v1/events/state"));
-	events.addEventListener("login.updated", (event) => {
-		let update;
-		try {
-			update = JSON.parse(event.data);
-		} catch {
-			return;
-		}
-		if (update.attempt_id !== attempt) return;
-		if (update.state === "COMPLETED")
-			location.assign(appPath(`/accounts/${account}`));
-		if (
-			[
-				"FAILED_RETRYABLE",
-				"FAILED_ACTION_REQUIRED",
-				"RESTART_REQUIRED",
-				"CANCELLED",
-			].includes(update.state)
-		) {
-			status.textContent = `Sign-in stopped: ${update.error_code || update.state}.`;
-			loading.hidden = true;
-			events.close();
-		}
-	});
-	pollInteraction();
-}
-
-const proxyCard = document.querySelector("[data-proxy-card]");
-if (proxyCard) {
-	const status = proxyCard.querySelector("[data-proxy-status]");
-	const relaySummary = proxyCard.querySelector("[data-relay-summary]");
-	const relayList = proxyCard.querySelector("[data-proxy-relays]");
-	const modelSelect = proxyCard.querySelector("[data-proxy-model]");
-	const usageNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-	const usageRate = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
-	let usage = [];
-	let quotaUsage = [];
-	const activeDuration = (milliseconds) => {
-		const seconds = Math.round((milliseconds || 0) / 1000);
-		if (seconds < 60) return `${seconds}s`;
-		if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-		return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
-	};
-	function renderUsage() {
-		const selected = usage.find((item) => item.model === modelSelect.value);
-		for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
-			const values = selected?.[panel.dataset.proxyPeriod] || {};
-			const formatted = {
-				active_ms: activeDuration(values.active_ms),
-				total_tokens: usageNumber.format(values.total_tokens || 0),
-				tokens_per_minute: usageRate.format(values.tokens_per_minute || 0),
-				tokens_per_hour: usageNumber.format(values.tokens_per_hour || 0),
-			};
-			for (const node of panel.querySelectorAll("[data-usage]")) node.textContent = formatted[node.dataset.usage];
-		}
-		renderQuotaUsage();
+		pollInteraction();
 	}
-	modelSelect.addEventListener("change", renderUsage);
-	function renderQuotaUsage() {
-		const selected = quotaUsage.find((item) => item.account_id === "all" && item.model === modelSelect.value);
-		for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
-			const period = selected?.[panel.dataset.proxyPeriod] || {};
-			for (const kind of ["short", "weekly"]) {
-				const window = period[kind] || {};
-				panel.querySelector(`[data-quota="${kind}_rate"]`).textContent = window.usage_per_hour == null ? "—" : `${usageRate.format(window.usage_per_hour)} pp/h`;
-				panel.querySelector(`[data-quota="${kind}_time"]`).textContent = window.active_ms ? `${activeDuration(window.active_ms)} · ${window.samples} intervals` : "—";
+
+	const proxyCard = document.querySelector("[data-proxy-card]");
+	if (proxyCard) {
+		const status = proxyCard.querySelector("[data-proxy-status]");
+		const relaySummary = proxyCard.querySelector("[data-relay-summary]");
+		const relayList = proxyCard.querySelector("[data-proxy-relays]");
+		const modelSelect = proxyCard.querySelector("[data-proxy-model]");
+		const usageNumber = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
+		const usageRate = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
+		let usage = [];
+		let quotaUsage = [];
+		const activeDuration = (milliseconds) => {
+			const seconds = Math.round((milliseconds || 0) / 1000);
+			if (seconds < 60) return `${seconds}s`;
+			if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+			return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+		};
+		function renderUsage() {
+			const selected = usage.find((item) => item.model === modelSelect.value);
+			for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
+				const values = selected?.[panel.dataset.proxyPeriod] || {};
+				const formatted = {
+					active_ms: activeDuration(values.active_ms),
+					total_tokens: usageNumber.format(values.total_tokens || 0),
+					tokens_per_minute: usageRate.format(values.tokens_per_minute || 0),
+					tokens_per_hour: usageNumber.format(values.tokens_per_hour || 0),
+				};
+				for (const node of panel.querySelectorAll("[data-usage]")) node.textContent = formatted[node.dataset.usage];
+			}
+			renderQuotaUsage();
+		}
+		modelSelect.addEventListener("change", renderUsage);
+		function renderQuotaUsage() {
+			const selected = quotaUsage.find((item) => item.account_id === "all" && item.model === modelSelect.value);
+			for (const panel of proxyCard.querySelectorAll("[data-proxy-period]")) {
+				const period = selected?.[panel.dataset.proxyPeriod] || {};
+				for (const kind of ["short", "weekly"]) {
+					const window = period[kind] || {};
+					panel.querySelector(`[data-quota="${kind}_rate"]`).textContent = window.usage_per_hour == null ? "—" : `${usageRate.format(window.usage_per_hour)} pp/h`;
+					panel.querySelector(`[data-quota="${kind}_time"]`).textContent = window.active_ms ? `${activeDuration(window.active_ms)} · ${window.samples} intervals` : "—";
+				}
 			}
 		}
-	}
-	const relayState = { ready: ["Ready ●", "ready"], connected: ["Connected ◐", "connected"], offline: ["Offline ○", "offline"] };
-	const relayTime = (value) => Date.now() - Date.parse(value) < 60_000 ? "just now" : relativeTime(value);
-	function relayRows(relays) {
-		if (!relays.length) {
-			const empty = document.createElement("li");
-			empty.className = "proxy-empty";
-			empty.textContent = "No relay heartbeat has been received.";
-			return [empty];
-		}
-		return relays.map((relay, index) => {
-			const row = document.createElement("li");
-			const name = document.createElement("span");
-			name.textContent = privateLabel(relay.id, `Relay ${index + 1}`);
-			const details = document.createElement("span");
-			const [label, state] = relayState[relay.state] || relayState.offline;
-			details.dataset.relayState = state;
-			details.textContent = `${label} · ${relay.connected ? "communicating" : "not communicating"} · heartbeat ${relayTime(relay.last_seen)} · ${relay.cache_generated_at ? `cache ${relayTime(relay.cache_generated_at)}` : "cache unavailable"} · protocol v${relay.protocol_version}`;
-			row.append(name, details);
-			return row;
-		});
-	}
-	async function updateProxy() {
-		try {
-			const response = await fetch(appPath("/api/internal/v1/proxy"), { cache: "no-store" });
-			if (!response.ok) throw new Error("Proxy counters unavailable");
-			const data = await response.json();
-			usage = Array.isArray(data.usage) ? data.usage : [];
-			quotaUsage = Array.isArray(data.quota_usage) ? data.quota_usage : [];
-			const selectedModel = modelSelect.value;
-			const models = [...new Set(["all", ...usage.map((item) => item.model), ...quotaUsage.map((item) => item.model)])];
-			modelSelect.replaceChildren(...models.map((model) => {
-				const option = document.createElement("option");
-				option.value = model;
-				option.textContent = model === "all" ? "All models" : model;
-				return option;
-			}));
-			if (models.includes(selectedModel)) modelSelect.value = selectedModel;
-			renderUsage();
-			const relays = Array.isArray(data.relays) ? data.relays : [];
-			const readyRelays = relays.filter((relay) => relay.ready).length;
-			const connectedRelays = relays.filter((relay) => relay.connected).length;
-			status.textContent = data.ready ? "Ready ●" : "Unavailable ○";
-			status.dataset.ready = String(data.ready);
-			relaySummary.textContent = relays.length ? `${readyRelays}/${relays.length} relay${relays.length === 1 ? "" : "s"} ready` : "No relay edges";
-			relaySummary.dataset.relayState = relays.length && readyRelays === relays.length ? "ready" : connectedRelays ? "connected" : "offline";
-			relayList.replaceChildren(...relayRows(relays));
-			proxyCard.querySelector("[data-proxy-totals]").textContent = `${data.active} active · ${data.recent_clients.length} recent clients · ${data.requests} requests · ${data.failovers} failovers`;
-			proxyCard.querySelector("[data-proxy-clients]").replaceChildren(...data.recent_clients.map((client, index) => {
+		const relayState = { ready: ["Ready ●", "ready"], connected: ["Connected ◐", "connected"], offline: ["Offline ○", "offline"] };
+		const relayTime = (value) => Date.now() - Date.parse(value) < 60_000 ? "just now" : relativeTime(value);
+		function relayRows(relays) {
+			if (!relays.length) {
+				const empty = document.createElement("li");
+				empty.className = "proxy-empty";
+				empty.textContent = "No relay heartbeat has been received.";
+				return [empty];
+			}
+			return relays.map((relay, index) => {
 				const row = document.createElement("li");
 				const name = document.createElement("span");
-				name.textContent = privateLabel(`${client.name} · ${client.key_prefix}`, `Client ${index + 1}`);
-				const activity = document.createElement("span");
-				activity.textContent = `${client.active ? `● ${client.active} active` : "○ idle"} · ${Date.now() - Date.parse(client.last_seen) < 60_000 ? "just now" : relativeTime(client.last_seen)}`;
-				row.append(name, activity);
+				name.textContent = privateLabel(relay.id, `Relay ${index + 1}`);
+				const details = document.createElement("span");
+				const [label, state] = relayState[relay.state] || relayState.offline;
+				details.dataset.relayState = state;
+				details.textContent = `${label} · ${relay.connected ? "communicating" : "not communicating"} · heartbeat ${relayTime(relay.last_seen)} · ${relay.cache_generated_at ? `cache ${relayTime(relay.cache_generated_at)}` : "cache unavailable"} · protocol v${relay.protocol_version}`;
+				row.append(name, details);
 				return row;
-			}));
-		} catch {
-			status.textContent = "Counters unavailable ○";
-			delete status.dataset.ready;
-			relaySummary.textContent = "Relay status unavailable ○";
-			relaySummary.dataset.relayState = "offline";
-			relayList.replaceChildren(...relayRows([]));
-		} finally {
-			setTimeout(updateProxy, 5_000);
+			});
 		}
+		async function updateProxy() {
+			try {
+				const data = await cachedRequest(appPath("/api/internal/v1/proxy"), { signal: lifecycle.signal, force: forceRefresh });
+				forceRefresh = false;
+				usage = Array.isArray(data.usage) ? data.usage : [];
+				quotaUsage = Array.isArray(data.quota_usage) ? data.quota_usage : [];
+				const selectedModel = modelSelect.value;
+				const models = [...new Set(["all", ...usage.map((item) => item.model), ...quotaUsage.map((item) => item.model)])];
+				modelSelect.replaceChildren(...models.map((model) => {
+					const option = document.createElement("option");
+					option.value = model;
+					option.textContent = model === "all" ? "All models" : model;
+					return option;
+				}));
+				if (models.includes(selectedModel)) modelSelect.value = selectedModel;
+				renderUsage();
+				const relays = Array.isArray(data.relays) ? data.relays : [];
+				const readyRelays = relays.filter((relay) => relay.ready).length;
+				const connectedRelays = relays.filter((relay) => relay.connected).length;
+				status.textContent = data.ready ? "Ready ●" : "Unavailable ○";
+				status.dataset.ready = String(data.ready);
+				relaySummary.textContent = relays.length ? `${readyRelays}/${relays.length} relay${relays.length === 1 ? "" : "s"} ready` : "No relay edges";
+				relaySummary.dataset.relayState = relays.length && readyRelays === relays.length ? "ready" : connectedRelays ? "connected" : "offline";
+				relayList.replaceChildren(...relayRows(relays));
+				proxyCard.querySelector("[data-proxy-totals]").textContent = `${data.active} active · ${data.recent_clients.length} recent clients · ${data.requests} requests · ${data.failovers} failovers`;
+				proxyCard.querySelector("[data-proxy-clients]").replaceChildren(...data.recent_clients.map((client, index) => {
+					const row = document.createElement("li");
+					const name = document.createElement("span");
+					name.textContent = privateLabel(`${client.name} · ${client.key_prefix}`, `Client ${index + 1}`);
+					const activity = document.createElement("span");
+					activity.textContent = `${client.active ? `● ${client.active} active` : "○ idle"} · ${Date.now() - Date.parse(client.last_seen) < 60_000 ? "just now" : relativeTime(client.last_seen)}`;
+					row.append(name, activity);
+					return row;
+				}));
+			} catch {
+				status.textContent = "Counters unavailable ○";
+				delete status.dataset.ready;
+				relaySummary.textContent = "Relay status unavailable ○";
+				relaySummary.dataset.relayState = "offline";
+				relayList.replaceChildren(...relayRows([]));
+			} finally {
+				setTimeout(updateProxy, 5_000);
+			}
+		}
+		updateProxy();
 	}
-	updateProxy();
+
+	return () => {
+		lifecycle.abort();
+		for (const id of timers) window.clearTimeout(id);
+		for (const id of intervals) window.clearInterval(id);
+		for (const stream of streams) stream.close();
+	};
 }
+
+if (!document.querySelector("[data-dashboard-shell]")) initApp();

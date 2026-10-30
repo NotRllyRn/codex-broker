@@ -128,11 +128,11 @@ func TestAdminCreatesAndEditsKeyScopes(t *testing.T) {
 		t.Fatalf("delete label=%d %s", got.Code, got.Body.String())
 	}
 	// Dashboard search must find a label as well as an account name.
-	page = request("GET", "/?q=wOrK", nil, true)
+	page = request("GET", "/?render=1&q=wOrK", nil, true)
 	if page.Code != 200 || !strings.Contains(page.Body.String(), `class="orbit-account state-`) {
 		t.Fatalf("label search=%d %s", page.Code, page.Body.String())
 	}
-	page = request("GET", "/?q=unmatched", nil, true)
+	page = request("GET", "/?render=1&q=unmatched", nil, true)
 	if page.Code != 200 || strings.Contains(page.Body.String(), `class="orbit-account state-`) {
 		t.Fatal("search returned nonmatching account")
 	}

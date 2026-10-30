@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Accounts | Codex Broker{% endblock %}
+{% block scripts %}<script type="module" src="{{ root_path }}/static/dashboard.js"></script>{% endblock %}
+{% block content %}
+<section data-dashboard-shell data-cache-scope="{{ cache_scope }}" aria-live="polite">
+  <p>Loading dashboard…</p>
+  <noscript><a href="?render=1">Open dashboard without JavaScript</a></noscript>
+</section>
+{% endblock %}

@@ -25,7 +25,7 @@ func accountView(account broker.AccountSummary) map[string]any {
 	if account.CycleGapMS != nil {
 		gap = compactDuration(int(*account.CycleGapMS / 1000))
 	}
-	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "worker_state": account.WorkerState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "last_routed": timestampView(account.LastRoutedMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence, "cycle_state": account.CycleState, "cycle_label": cycleLabel, "cycle_position": account.CyclePosition, "cycle_size": account.CycleSize, "cycle_gap": gap}
+	return map[string]any{"account_id": account.AccountID, "public_token": account.PublicToken, "display_name": account.DisplayName, "labels": account.Labels, "enabled": account.Enabled, "overall_state": account.OverallState, "auth_state": account.AuthState, "worker_state": account.WorkerState, "usage_state": account.UsageState, "short_percent": account.ShortPercent, "short_reset": timestampView(account.ShortResetMS), "weekly_percent": account.WeeklyPercent, "weekly_reset": timestampView(account.WeeklyResetMS), "last_refresh": timestampView(account.LastRefreshMS), "last_routed": timestampView(account.LastRoutedMS), "active_operation": account.ActiveOperation, "evidence": account.Evidence, "available": accountAvailable(account), "cycle_state": account.CycleState, "cycle_label": cycleLabel, "cycle_position": account.CyclePosition, "cycle_size": account.CycleSize, "cycle_gap": gap}
 }
 
 func timestampView(milliseconds *int64) any {
@@ -36,7 +36,7 @@ func timestampView(milliseconds *int64) any {
 	return *formatted
 }
 
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
+func (s *Server) dashboardView(w http.ResponseWriter, r *http.Request) error {
 	session, err := s.session(r)
 	if err != nil {
 		return err
@@ -52,6 +52,14 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) error {
 	profiles, err := s.App.Service.ProfileDashboard(r.Context())
 	if err != nil {
 		return err
+	}
+	if dashboardStreamer(r) {
+		for i := range profiles {
+			profiles[i].Label, profiles[i].Username = "Hidden", ""
+			for j := range profiles[i].TokenShares {
+				profiles[i].TokenShares[j].Label = "Hidden"
+			}
+		}
 	}
 	profilesJSON, err := json.Marshal(profiles)
 	if err != nil {

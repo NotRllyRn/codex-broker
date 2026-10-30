@@ -11,7 +11,9 @@ No framework migration or background snapshot service is needed.
 2. Cache successful server responses briefly (dashboard/proxy: 5 seconds; usage:
    30 seconds), authenticate before every cache lookup, and return 304 when the
    representation is unchanged. Explicit refresh bypasses both freshness timers.
-   Cache keys include session, CSRF cookie, URL, and streamer preference.
+   Cache keys include session, CSRF cookie, URL, and streamer preference. Browser
+   freshness also respects the server entry's remaining lifetime. Cache compiled
+   embedded templates with Pongo2's existing FromCache method.
 3. Render all account cards once and filter locally, preserving query parameters
    and browser back/forward navigation. Streamer mode swaps the corresponding
    cached view without navigation. Dispose timers, requests, and event streams

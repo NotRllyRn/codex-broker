@@ -41,7 +41,7 @@ func newRenderer(directory string) (*renderer, error) {
 }
 
 func (r *renderer) render(writer http.ResponseWriter, status int, name string, context pongo2.Context) error {
-	template, err := r.templates.FromFile(name)
+	template, err := r.templates.FromCache(name)
 	if err != nil {
 		return err
 	}
@@ -51,8 +51,15 @@ func (r *renderer) render(writer http.ResponseWriter, status int, name string, c
 }
 
 func (s *Server) render(w http.ResponseWriter, request *http.Request, status int, name string, context pongo2.Context) error {
-	context["streamer_dashboard"] = name == "dashboard.html"
-	context["streamer_mode"] = name == "dashboard.html" && cookie(request, "codex-broker.streamer") == "on"
+	context["streamer_dashboard"] = (name == "dashboard.html" || name == "dashboard_shell.html")
+	context["streamer_mode"] = (name == "dashboard.html" || name == "dashboard_shell.html") && dashboardStreamer(request)
 	noStore(w)
 	return s.renderer.render(w, status, name, context)
+}
+
+func dashboardStreamer(r *http.Request) bool {
+	if r.URL.Path == "/api/internal/v1/dashboard/view" {
+		return r.URL.Query().Get("mode") == "on"
+	}
+	return cookie(r, "codex-broker.streamer") == "on"
 }

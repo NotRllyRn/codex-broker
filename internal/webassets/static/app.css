@@ -1552,3 +1552,5 @@ textarea {
 .token-share-legend details summary { cursor: pointer; color: var(--muted); }
 .token-share-legend details[open] summary { margin-bottom: 10px; }
 .token-share-legend details div + div { margin-top: 10px; }
+
+[hidden] { display: none !important; }

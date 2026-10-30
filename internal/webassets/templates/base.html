@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <title>{% block title %}Codex Broker{% endblock %}</title>
     <link rel="stylesheet" href="{{ root_path }}/static/app.css" />
-    <script type="module" src="{{ root_path }}/static/app.js"></script>
+    {% block scripts %}<script type="module" src="{{ root_path }}/static/app.js"></script>{% endblock %}
   </head>
   <body class="{% block body_class %}{% endblock %}">
     <a class="skip-link" href="#main">Skip to content</a>

@@ -137,7 +137,7 @@ func TestDashboardAvailableFilter(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/"+tt.query, nil)
 			request.AddCookie(&http.Cookie{Name: sessionCookie, Value: "dashboard-test"})
 			response := httptest.NewRecorder()
-			if err := server.dashboard(response, request); err != nil {
+			if err := server.dashboardView(response, request); err != nil {
 				t.Fatal(err)
 			}
 			body := response.Body.String()

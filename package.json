@@ -7,6 +7,6 @@
     "test:proxy": "node --test scripts/proxy-usage.test.mjs",
     "check:pi": "npm --workspace @codex-broker/pi-extension run check",
     "test:pi": "npm --workspace @codex-broker/pi-extension test",
-    "test:usage": "node --test scripts/usage-dashboard.test.mjs"
+    "test:usage": "node --test scripts/usage-dashboard.test.mjs scripts/dashboard-cache.test.mjs"
   }
 }

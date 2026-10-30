@@ -1,3 +1,5 @@
+import { cachedRequest } from "./cache.js";
+
 const compact = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 2 });
 const usd = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" });
 const dateLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
@@ -12,7 +14,7 @@ export function rankedModels(models, metric) {
 	return [...models].sort((a, b) => value(b) - value(a) || a.name.localeCompare(b.name));
 }
 
-export function initUsageDashboard(panel, appPath) {
+export function initUsageDashboard(panel, appPath, { signal, forceRefresh = false } = {}) {
 	if (panel.hidden) return () => {};
 	const find = (name) => panel.querySelector(`[data-usage-${name}]`);
 	const content = find("content");
@@ -153,7 +155,8 @@ export function initUsageDashboard(panel, appPath) {
 		renderModels();
 	}
 
-	async function load(nextAccount = account) {
+	async function load(nextAccount = account, force = forceRefresh) {
+		forceRefresh = false;
 		account = nextAccount;
 		controller?.abort();
 		const current = new AbortController();
@@ -166,9 +169,7 @@ export function initUsageDashboard(panel, appPath) {
 			if (provider) query.set("provider", provider.value);
 			if (model) query.set("model", model.value);
 			if (identity?.value) { query.set("identity", identity.value); query.set("device", device.value); }
-			const response = await fetch(appPath(`/api/internal/v1/usage?${query}`), { signal: current.signal });
-			if (!response.ok) throw new Error("Usage could not be loaded. Try refreshing usage.");
-			const result = await response.json();
+			const result = await cachedRequest(appPath(`/api/internal/v1/usage?${query}`), { ttl: 30000, force, signal: signal ? AbortSignal.any([signal, current.signal]) : current.signal });
 			if (current.signal.aborted) return;
 			data = result;
 			if (model) {
@@ -200,6 +201,6 @@ export function initUsageDashboard(panel, appPath) {
 		load();
 	});
 	device?.addEventListener("change", () => load());
-	find("refresh").addEventListener("click", () => load());
+	find("refresh").addEventListener("click", () => load(account, true));
 	return load;
 }
