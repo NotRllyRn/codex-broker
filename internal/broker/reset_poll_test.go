@@ -188,29 +188,33 @@ func TestLegacyFailedResetIsRecoveredWithoutHourlyPolling(t *testing.T) {
 	claimResets(t, s, now, 1)
 }
 
-func TestResetEventsDoNotRestoreRotationOrRelayReads(t *testing.T) {
+func TestRotationAndRelayRefreshGraceAndRetry(t *testing.T) {
 	for _, reason := range []string{"ROTATION", "RELAY_RECONCILE"} {
 		t.Run(reason, func(t *testing.T) {
 			router, account := quotaFixture(t)
 			s := router.Service
 			ctx := context.Background()
 			now := time.Now().UnixMilli()
-			if err := requestUsageRefresh(ctx, s.Store.DB, account.ID, reason, now-1000); err != nil {
+			due := now + usageResetGrace.Milliseconds()
+			if err := requestUsageRefresh(ctx, s.Store.DB, account.ID, reason, due); err != nil {
 				t.Fatal(err)
 			}
-			claimResets(t, s, now, 0)
-			// A paused event must not suppress a later reset observation.
-			setResetTimes(t, s, now/1000-60, now/1000+600)
-			claims := claimResets(t, s, now, 1)
+			claimResets(t, s, due-1, 0)
+			claims := claimResets(t, s, due, 1)
 			var trigger string
-			if err := s.Store.DB.QueryRow(`SELECT trigger FROM operations WHERE operation_id=?`, claims[0].operation).Scan(&trigger); err != nil || trigger != "WINDOW_RESET" {
+			if err := s.Store.DB.QueryRow(`SELECT trigger FROM operations WHERE operation_id=?`, claims[0].operation).Scan(&trigger); err != nil || trigger != reason {
 				t.Fatalf("trigger=%s err=%v", trigger, err)
 			}
+			if _, err := s.Store.DB.Exec(`UPDATE operations SET state='FAILED' WHERE operation_id=?`, claims[0].operation); err != nil {
+				t.Fatal(err)
+			}
+			claimResets(t, s, due+usageRetryDelay.Milliseconds()-1, 0)
+			claimResets(t, &Service{Store: s.Store}, due+usageRetryDelay.Milliseconds(), 1)
 		})
 	}
 }
 
-func TestQuotaRejectionOverridesPausedEvent(t *testing.T) {
+func TestQuotaRejectionTakesPriorityOverActivationEvents(t *testing.T) {
 	router, account := quotaFixture(t)
 	s := router.Service
 	ctx := context.Background()
@@ -221,7 +225,7 @@ func TestQuotaRejectionOverridesPausedEvent(t *testing.T) {
 	if err := router.blockQuota(ctx, account, now); err != nil {
 		t.Fatal(err)
 	}
-	// A later paused relay event cannot overwrite or delay the quota read.
+	// A later relay activation event cannot overwrite or delay the quota read.
 	if err := requestUsageRefresh(ctx, s.Store.DB, account.ID, "RELAY_RECONCILE", now+600000); err != nil {
 		t.Fatal(err)
 	}

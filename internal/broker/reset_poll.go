@@ -64,7 +64,7 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 		}
 		rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.public_token,r.reason FROM usage_refresh_requests r
             JOIN accounts a USING(account_id) JOIN account_state s USING(account_id)
-            WHERE r.reason IN('WINDOW_RESET','QUOTA_REJECTED','RESET_UNCONFIRMED') AND r.due_at_ms<=? AND r.next_attempt_at_ms<=? AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED'
+            WHERE r.due_at_ms<=? AND r.next_attempt_at_ms<=? AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED'
             AND EXISTS(SELECT 1 FROM credential_bundles b WHERE b.account_id=a.account_id AND b.state='ACTIVE')
             AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, now, now)
 		if err != nil {
