@@ -286,7 +286,7 @@ func (s *Server) logsExport(w http.ResponseWriter, r *http.Request) error {
 }
 
 func settingsMap(application *broker.Application) map[string]any {
-	return map[string]any{"usage_poll_seconds": 36, "usage_refresh_per_hour": 100, "profile_poll_seconds": application.Config.ProfilePollSeconds, "browser_oauth_mode": application.Config.BrowserOAuthMode}
+	return map[string]any{"usage_poll_seconds": 90, "usage_refresh_per_hour": 40, "profile_poll_seconds": application.Config.ProfilePollSeconds, "browser_oauth_mode": application.Config.BrowserOAuthMode}
 }
 func compatibilityMap(application *broker.Application) map[string]any {
 	return map[string]any{"compatible": application.Compatibility.Compatible, "code": application.Compatibility.Code, "detail": application.Compatibility.Detail}

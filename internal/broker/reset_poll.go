@@ -4,12 +4,11 @@ import (
 	"context"
 	"time"
 
-	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 )
 
 const usageResetGrace = 45 * time.Second
-const usageRefreshInterval = 36 * time.Second
+const usageRefreshInterval = 90 * time.Second
 const usageRetryDelay = 5 * time.Minute
 
 type resetRefresh struct {
@@ -105,23 +104,6 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 		return nil
 	})
 	return claimed, err
-}
-
-func (s *Service) resetUsageLoop(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	for {
-		if refreshes, err := s.claimResetRefreshes(ctx, core.NowMS()); err == nil {
-			s.startUsageRefreshes(ctx, refreshes)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-s.stop:
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 func (s *Service) startUsageRefreshes(ctx context.Context, refreshes []resetRefresh) {

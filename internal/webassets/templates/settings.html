@@ -14,7 +14,7 @@
     <h2>Usage polling</h2>
     <strong>{{ settings.usage_refresh_per_hour }} refreshes per hour across the pool</strong>
     <p>Profile statistics refresh at most once every {{ settings.profile_poll_seconds }} seconds per account.</p>
-    <p>The oldest successful read among eligible accounts is refreshed every {{ settings.usage_poll_seconds }} seconds.</p>
+    <p>The first four eligible rotation accounts are refreshed round-robin every {{ settings.usage_poll_seconds }} seconds. A separate daily sweep refreshes the least recently read healthy account, with reads spaced evenly across 24 hours.</p>
   </article>
   <article>
     <h2>Browser OAuth</h2>
