@@ -409,7 +409,7 @@
             codex = lib.mkOption {
               type = lib.types.package;
               description = ''
-                The managed `codex` package, pinned to version 0.165.0. Its `bin/codex` executable maps to
+                The managed `codex` package, pinned to version 0.166.0. Its `bin/codex` executable maps to
                 WINDOWKEEPER_CODEX_EXECUTABLE and its version maps to
                 WINDOWKEEPER_CODEX_VERSION.
               '';
@@ -489,8 +489,8 @@
           config = lib.mkIf cfg.enable {
             assertions = [
               {
-                assertion = cfg.codex.version == "0.165.0";
-                message = "services.codex-broker: codex must be pinned to the supported version 0.165.0.";
+                assertion = cfg.codex.version == "0.166.0";
+                message = "services.codex-broker: codex must be pinned to the supported version 0.166.0.";
               }
               {
                 assertion = cfg.dataDir != cfg.runtimeDir;
