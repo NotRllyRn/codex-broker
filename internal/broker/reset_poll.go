@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 )
 
@@ -50,18 +51,20 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 		}
 		// Held accounts with real usage still need their reset observation; idle
 		// rolling windows do not generate background reads.
-		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO usage_refresh_requests(account_id,due_at_ms,reason)
+		if _, err := db.ExecContext(ctx, `INSERT INTO usage_refresh_requests(account_id,due_at_ms,reason)
             SELECT p.account_id,min(p.reset_at_s)*1000+?,'WINDOW_RESET' FROM usage_reset_polls p
             JOIN usage_current u USING(account_id) LEFT JOIN window_pulse_state w USING(account_id)
             WHERE p.reset_at_s<=? AND (p.reset_at_s>p.last_polled_reset_at_s OR COALESCE(u.complete_read_at_ms,0)<p.reset_at_s*1000+?)
             AND (? OR w.cycle_state='IN_CYCLE' OR u.short_used_percent_raw>0 OR u.weekly_used_percent_raw>0
-                OR EXISTS(SELECT 1 FROM account_quota_blocks q WHERE q.account_id=p.account_id)) GROUP BY p.account_id`,
+                OR EXISTS(SELECT 1 FROM account_quota_blocks q WHERE q.account_id=p.account_id)) GROUP BY p.account_id
+            ON CONFLICT(account_id) DO UPDATE SET due_at_ms=excluded.due_at_ms,reason=excluded.reason,next_attempt_at_ms=0
+            WHERE usage_refresh_requests.reason NOT IN('WINDOW_RESET','QUOTA_REJECTED','RESET_UNCONFIRMED')`,
 			usageResetGrace.Milliseconds(), (now-usageResetGrace.Milliseconds())/1000, usageResetGrace.Milliseconds(), !s.Config.WindowPulseEnabled); err != nil {
 			return err
 		}
 		rows, err := db.QueryContext(ctx, `SELECT a.account_id,a.public_token,r.reason FROM usage_refresh_requests r
             JOIN accounts a USING(account_id) JOIN account_state s USING(account_id)
-            WHERE r.due_at_ms<=? AND r.next_attempt_at_ms<=? AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED'
+            WHERE r.reason IN('WINDOW_RESET','QUOTA_REJECTED','RESET_UNCONFIRMED') AND r.due_at_ms<=? AND r.next_attempt_at_ms<=? AND a.enabled=1 AND a.deleted_at_ms IS NULL AND s.auth_state='VERIFIED' AND s.worker_state='STOPPED'
             AND EXISTS(SELECT 1 FROM credential_bundles b WHERE b.account_id=a.account_id AND b.state='ACTIVE')
             AND NOT EXISTS(SELECT 1 FROM operations o WHERE o.account_id=a.account_id AND o.state IN('QUEUED','RUNNING','WAITING_FOR_USER','RETRY_SCHEDULED'))`, now, now)
 		if err != nil {
@@ -104,6 +107,23 @@ func (s *Service) claimResetRefreshes(ctx context.Context, now int64) (claimed [
 		return nil
 	})
 	return claimed, err
+}
+
+func (s *Service) resetUsageLoop(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		if refreshes, err := s.claimResetRefreshes(ctx, core.NowMS()); err == nil {
+			s.startUsageRefreshes(ctx, refreshes)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-s.stop:
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Service) startUsageRefreshes(ctx context.Context, refreshes []resetRefresh) {
