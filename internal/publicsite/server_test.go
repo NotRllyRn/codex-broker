@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -170,8 +172,14 @@ func TestEnrollmentStatusExposesFailureDetails(t *testing.T) {
 			server := &Server{config: config.Config{PublicEnrollmentBrokerURL: broker.URL}, client: broker.Client(), status: newThrottle(10, time.Minute)}
 			value := strings.Repeat("a", 32)
 			request := httptestRequestWithCookie(&http.Cookie{Name: cookieName, Value: (Handle{value, value, value, value}).Encode()})
+			client := &http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString(make([]byte, 24))}
+			request.AddCookie(client)
+			server.starts = map[string]*browserEnrollment{client.Value: {handle: existing(request), expires: time.Now().Add(time.Minute)}}
 			response := httptest.NewRecorder()
 			server.poll(response, request)
+			if len(server.starts) != 0 {
+				t.Fatal("terminal enrollment remained cached")
+			}
 			var status map[string]string
 			if err := json.Unmarshal(response.Body.Bytes(), &status); err != nil {
 				t.Fatal(err)
@@ -184,5 +192,79 @@ func TestEnrollmentStatusExposesFailureDetails(t *testing.T) {
 				t.Fatalf("status = %d %s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestConcurrentBrowserStartsReuseEnrollment(t *testing.T) {
+	var calls atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		value := strings.Repeat("a", 32)
+		_ = json.NewEncoder(w).Encode(map[string]string{"enrollment_id": value, "login_attempt_id": value, "interaction_nonce": value})
+	}))
+	defer broker.Close()
+	server := &Server{config: config.Config{PublicEnrollmentBrokerURL: broker.URL, LoginTimeoutSeconds: 900}, client: broker.Client()}
+	cookie := &http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString(make([]byte, 24))}
+	const tabs = 20
+	responses := make([]*httptest.ResponseRecorder, tabs)
+	var wg sync.WaitGroup
+	for i := range responses {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses[i] = httptest.NewRecorder()
+			server.begin(responses[i], httptestRequestWithCookie(cookie))
+		}()
+	}
+	<-entered
+	close(release)
+	wg.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("broker starts = %d", calls.Load())
+	}
+	first := responses[0].Result().Cookies()[0].Value
+	for _, response := range responses {
+		cookies := response.Result().Cookies()
+		if response.Code != 200 || len(cookies) != 1 || cookies[0].Value != first {
+			t.Fatalf("tab did not receive shared enrollment: %d", response.Code)
+		}
+	}
+	// A different browser at the same address must get its own enrollment.
+	other := &http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString([]byte("abcdefghijklmnopqrstuvwx"))}
+	server.begin(httptest.NewRecorder(), httptestRequestWithCookie(other))
+	if calls.Load() != 2 {
+		t.Fatalf("separate browser starts = %d", calls.Load())
+	}
+	// Expired entries must not prevent a fresh attempt.
+	server.starts[cookie.Value].expires = time.Now().Add(-time.Second)
+	server.begin(httptest.NewRecorder(), httptestRequestWithCookie(cookie))
+	if calls.Load() != 3 {
+		t.Fatalf("starts after expiration = %d", calls.Load())
+	}
+}
+
+func TestFailedBrowserStartCanRetry(t *testing.T) {
+	var calls int
+	broker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer broker.Close()
+	server := &Server{config: config.Config{PublicEnrollmentBrokerURL: broker.URL, LoginTimeoutSeconds: 900}, client: broker.Client()}
+	cookie := &http.Cookie{Name: clientCookieName, Value: base64.RawURLEncoding.EncodeToString(make([]byte, 24))}
+	for range 2 {
+		response := httptest.NewRecorder()
+		server.begin(response, httptestRequestWithCookie(cookie))
+		if response.Code != 503 {
+			t.Fatalf("status = %d", response.Code)
+		}
+	}
+	if calls != 2 || len(server.starts) != 0 {
+		t.Fatal("failed start remained cached")
 	}
 }

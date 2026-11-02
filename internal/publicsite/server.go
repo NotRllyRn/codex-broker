@@ -92,7 +92,15 @@ func (t *throttle) allow(key string) bool {
 	return true
 }
 
+type browserEnrollment struct {
+	done    chan struct{}
+	handle  *Handle
+	expires time.Time
+}
+
 type Server struct {
+	startsMu sync.Mutex
+	starts   map[string]*browserEnrollment
 	config   config.Config
 	client   *http.Client
 	template *pongo2.Template
@@ -121,7 +129,7 @@ func New(settings config.Config) (http.Handler, error) {
 		}
 		tlsConfig.RootCAs = roots
 	}
-	server := &Server{settings, &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: tlsConfig, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext}}, template, newThrottle(120, time.Minute), http.NewServeMux()}
+	server := &Server{config: settings, client: &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{Proxy: nil, TLSClientConfig: tlsConfig, DialContext: (&net.Dialer{Timeout: 3 * time.Second}).DialContext}}, template: template, status: newThrottle(120, time.Minute), mux: http.NewServeMux()}
 	server.routes()
 	return server.headers(server.mux), nil
 }
@@ -256,6 +264,47 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"state": "STARTING"})
 		return
 	}
+	// The page establishes this cookie before its JavaScript starts enrollment.
+	// Coalesce starts even when neither tab has received an enrollment cookie yet.
+	client := clientCookie(r)
+	var entry *browserEnrollment
+	if client != "" {
+		s.startsMu.Lock()
+		if s.starts == nil {
+			s.starts = make(map[string]*browserEnrollment)
+		}
+		for key, cached := range s.starts {
+			if !cached.expires.IsZero() && time.Now().After(cached.expires) {
+				delete(s.starts, key)
+			}
+		}
+		if cached := s.starts[client]; cached != nil {
+			s.startsMu.Unlock()
+			select {
+			case <-r.Context().Done():
+				return
+			case <-cached.done:
+			}
+			if cached.handle == nil {
+				writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE"})
+				return
+			}
+			s.setEnrollmentCookie(w, *cached.handle, int(time.Until(cached.expires).Seconds())+1)
+			writeJSON(w, 200, map[string]any{"state": "STARTING"})
+			return
+		}
+		entry = &browserEnrollment{done: make(chan struct{})}
+		s.starts[client] = entry
+		s.startsMu.Unlock()
+		defer func() {
+			s.startsMu.Lock()
+			if entry.handle == nil {
+				delete(s.starts, client)
+			}
+			close(entry.done)
+			s.startsMu.Unlock()
+		}()
+	}
 	tokenBytes := make([]byte, 32)
 	_, _ = rand.Read(tokenBytes)
 	session := base64.RawURLEncoding.EncodeToString(tokenBytes)
@@ -277,8 +326,17 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 503, map[string]any{"state": "UNAVAILABLE"})
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: handle.Encode(), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: s.config.LoginTimeoutSeconds})
+	if entry != nil {
+		s.startsMu.Lock()
+		entry.handle = &handle
+		entry.expires = time.Now().Add(time.Duration(s.config.LoginTimeoutSeconds) * time.Second)
+		s.startsMu.Unlock()
+	}
+	s.setEnrollmentCookie(w, handle, s.config.LoginTimeoutSeconds)
 	writeJSON(w, 200, map[string]any{"state": "STARTING"})
+}
+func (s *Server) setEnrollmentCookie(w http.ResponseWriter, handle Handle, maxAge int) {
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: handle.Encode(), HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode, Path: "/", MaxAge: maxAge})
 }
 func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 	if !s.status.allow(s.throttleKey(r)) {
@@ -322,6 +380,11 @@ func (s *Server) poll(w http.ResponseWriter, r *http.Request) {
 		status = map[string]any{"state": state}
 	}
 	if state == "COMPLETED" || state == "FAILED" {
+		s.startsMu.Lock()
+		if cached := s.starts[clientCookie(r)]; cached != nil && cached.handle != nil && *cached.handle == *handle {
+			delete(s.starts, clientCookie(r))
+		}
+		s.startsMu.Unlock()
 		http.SetCookie(w, &http.Cookie{Name: cookieName, Path: "/", MaxAge: -1, HttpOnly: true, Secure: true})
 	}
 	writeJSON(w, 200, status)
