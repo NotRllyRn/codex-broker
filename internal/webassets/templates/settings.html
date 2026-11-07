@@ -59,6 +59,13 @@
       <strong>{{ extension.Name }}</strong>
       {% if extension.Description %}<p>{{ extension.Description }}</p>{% endif %}
       <span>{% if extension.Enabled %}Enabled{% else %}Disabled{% endif %}</span>
+      {% if extension.LastError %}
+      <div class="extension-error">
+        <p>Extension reported an error · Last error <time datetime="{{ extension.LastError.At }}">{{ extension.LastError.At }}</time></p>
+        <details><summary>View last error</summary><p>Hook: {{ extension.LastError.Hook }}</p><pre>{{ extension.LastError.Message }}</pre></details>
+      </div>
+      {% endif %}
+      <a href="/logs?q={{ extension.ID|urlencode }}">View logs</a>
       <form method="post" action="/settings/proxy-extensions/{{ extension.ID }}/enabled">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />
         <input type="hidden" name="enabled" value="{% if extension.Enabled %}false{% else %}true{% endif %}" />

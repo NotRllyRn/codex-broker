@@ -7,7 +7,10 @@ import (
 	"github.com/NotRllyRn/codex-broker/extensions/settings"
 )
 
+type LastError struct{ At, Hook, Message string }
+
 type Info struct {
+	LastError             *LastError
 	ID, Name, Description string
 	Enabled               bool
 	Settings              settings.Schema

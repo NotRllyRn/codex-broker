@@ -75,6 +75,7 @@ type Metrics interface {
 type Engine struct {
 	Extensions         *proxyextension.Manager
 	ExtensionError     error
+	ExtensionLog       proxyextension.LogSink
 	ExtensionSettings  func(context.Context) (proxyextension.Configuration, error)
 	DisabledExtensions func(context.Context) (map[string]bool, error)
 	Authority          Authority
@@ -157,7 +158,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	if e.Extensions.Active(disabled) {
 		identity = extensionIdentity(r, body, key.ID, requestID)
 	}
-	ext, err := e.Extensions.Start(r.Context(), identity, disabled)
+	ext, err := e.Extensions.Start(r.Context(), identity, disabled, e.ExtensionLog)
 	if err != nil {
 		return e.extensionFailure(w, err)
 	}

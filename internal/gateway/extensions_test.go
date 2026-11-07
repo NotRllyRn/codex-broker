@@ -61,3 +61,14 @@ func TestInvalidExtensionConfigurationIsUnready(t *testing.T) {
 		t.Fatal("invalid extension configuration reported ready")
 	}
 }
+
+func TestExtensionHeadersRejectTransportInvalidValues(t *testing.T) {
+	for _, header := range []http.Header{{"Invalid Name": {"value"}}, {"π": {"value"}}, {"X-Example": {"value\x00"}}, {"X-Example": {"value\x7f"}}} {
+		if _, err := extensionHeaders(header); err == nil {
+			t.Fatal("accepted invalid header", header)
+		}
+	}
+	if _, err := extensionHeaders(http.Header{"X-Example": {"valid\tvalue"}}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -3,6 +3,9 @@ package relay
 import (
 	"context"
 	"encoding/json"
+	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/relayprotocol"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -18,6 +21,20 @@ type Server struct {
 
 func NewServer(relay *Relay) *Server {
 	s := &Server{relay: relay, engine: gateway.New(relay, nil), mux: http.NewServeMux()}
+	s.engine.ExtensionLog = func(entry proxyextension.LogEntry) {
+		relay.mu.Lock()
+		defer relay.mu.Unlock()
+		entry.RelayID = relay.config.RelayID
+		event := relayprotocol.Event{ID: core.NewID(), RelayID: relay.config.RelayID, Kind: "extension_log", OccurredAtMS: entry.AtMS, ExtensionLog: &entry}
+		if err := relay.queueLocked(event, false); err != nil {
+			slog.Warn("Relay extension log queue is full")
+			return
+		}
+		if err := relay.saveLocked(); err != nil {
+			slog.Error("Relay extension log cache could not be saved")
+		}
+	}
+	s.engine.Extensions.ReportLoadErrors(s.engine.ExtensionLog)
 	s.engine.ExtensionSettings = func(context.Context) (proxyextension.Configuration, error) {
 		relay.mu.RLock()
 		defer relay.mu.RUnlock()

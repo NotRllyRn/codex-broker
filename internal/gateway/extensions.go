@@ -50,12 +50,19 @@ func extensionHeaders(value any) (http.Header, error) {
 		return nil, err
 	}
 	for name, values := range h {
-		if name == "" || strings.ContainsAny(name, "\r\n :\t") {
-			return nil, errors.New("invalid header")
+		if name == "" {
+			return nil, errors.New("invalid header name")
+		}
+		for _, char := range name {
+			if !(char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || strings.ContainsRune("!#$%&'*+-.^_`|~", char)) {
+				return nil, errors.New("invalid header name")
+			}
 		}
 		for _, v := range values {
-			if strings.ContainsAny(v, "\r\n") {
-				return nil, errors.New("invalid header")
+			for i := 0; i < len(v); i++ {
+				if v[i] < 32 && v[i] != '\t' || v[i] == 127 {
+					return nil, errors.New("invalid header value")
+				}
 			}
 		}
 	}
@@ -73,7 +80,15 @@ func extensionRequest(s *proxyextension.Session, name string, r *http.Request, b
 	for k, v := range extra {
 		event[k] = v
 	}
-	if err := s.Emit(name, event); err != nil {
+	if err := s.Transform(name, event, func(candidate map[string]any) error {
+		if err := validateRequest(candidate); err != nil {
+			return err
+		}
+		if name != "request" && candidate["response"] == nil {
+			return validateBody(candidate, responsesproxy.MaxRequest)
+		}
+		return nil
+	}); err != nil {
 		return nil, nil, err
 	}
 	if value := event["response"]; value != nil {
@@ -99,6 +114,61 @@ func extensionRequest(s *proxyextension.Session, name string, r *http.Request, b
 	headers.Del("Content-Length")
 	r.Header = headers
 	return []byte(text), nil, nil
+}
+func validateRequest(event map[string]any) error {
+	if value := event["response"]; value != nil {
+		response, err := localResponse(value)
+		if response != nil {
+			response.Body.Close()
+		}
+		return err
+	}
+	if err := validateBody(event, responsesproxy.MaxInboundRequest); err != nil {
+		return err
+	}
+	_, err := extensionHeaders(event["headers"])
+	return err
+}
+func validateBody(event map[string]any, limit int) error {
+	if value, exists := event["bodyBase64"]; exists && value != nil {
+		encoded, ok := value.(string)
+		if !ok {
+			return errors.New("bodyBase64 must be text or null")
+		}
+		decoded, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return errors.New("invalid base64 body")
+		}
+		if len(decoded) > limit {
+			return errors.New("extension body exceeds limit")
+		}
+		return nil
+	}
+	text, ok := event["body"].(string)
+	if !ok || len(text) > limit {
+		return errors.New("invalid extension body")
+	}
+	return nil
+}
+func validateResponse(event map[string]any) error {
+	raw, _ := json.Marshal(event["status"])
+	var status int
+	if json.Unmarshal(raw, &status) != nil || status < 200 || status > 599 {
+		return errors.New("invalid response status")
+	}
+	if value, ok := event["buffer"]; ok {
+		if _, ok := value.(bool); !ok {
+			return errors.New("buffer must be boolean")
+		}
+	}
+	_, err := extensionHeaders(event["headers"])
+	return err
+}
+func validateWholeResponse(event map[string]any) error {
+	if err := validateResponse(event); err != nil {
+		return err
+	}
+	return validateBody(event, responsesproxy.MaxRequest)
 }
 func localResponse(value any) (*http.Response, error) {
 	raw, err := json.Marshal(value)
@@ -137,7 +207,15 @@ func extensionEvent(s *proxyextension.Session, name string) func(map[string]any)
 	}
 	return func(value map[string]any) (map[string]any, error) {
 		event := map[string]any{"event": value}
-		if err := s.Emit(name, event); err != nil {
+		if err := s.Transform(name, event, func(candidate map[string]any) error {
+			if candidate["event"] == nil {
+				return nil
+			}
+			if _, ok := candidate["event"].(map[string]any); !ok {
+				return errors.New("response event must be an object or null")
+			}
+			return nil
+		}); err != nil {
 			return nil, err
 		}
 		if event["event"] == nil {
@@ -180,8 +258,8 @@ func extensionResponse(s *proxyextension.Session, w http.ResponseWriter, respons
 	if !s.Has("response") && !s.Has("body") {
 		return copyResponse(w)
 	}
-	event := map[string]any{"status": response.StatusCode, "headers": safeHeaders(response.Header), "buffer": s.Has("body")}
-	if err := s.Emit("response", event); err != nil {
+	event := map[string]any{"status": response.StatusCode, "headers": safeHeaders(response.Header), "buffer": false}
+	if err := s.Transform("response", event, validateResponse); err != nil {
 		response.Body.Close()
 		return err
 	}
@@ -225,7 +303,7 @@ func extensionResponse(s *proxyextension.Session, w http.ResponseWriter, respons
 		delete(bodyEvent, "body")
 		bodyEvent["bodyBase64"] = base64.StdEncoding.EncodeToString(b.body.Bytes())
 	}
-	if err = s.Emit("body", bodyEvent); err != nil {
+	if err = s.Transform("body", bodyEvent, validateWholeResponse); err != nil {
 		return err
 	}
 	result, err := localResponse(bodyEvent)

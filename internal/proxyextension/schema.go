@@ -35,7 +35,7 @@ func readSchema(id string, program *goja.Program) (settings.Schema, error) {
 		return schema.Check()
 	})
 	if err != nil {
-		return settings.Schema{}, fmt.Errorf("extension %s has an invalid settings declaration or module initialization", id)
+		return settings.Schema{}, fmt.Errorf("extension %s has an invalid settings declaration or module initialization: %s", id, in.errorText(err))
 	}
 	return schema, nil
 }
@@ -71,10 +71,12 @@ func (m *Manager) RefreshSettings(ctx context.Context, read func(context.Context
 		return err
 	}
 	next := map[string]string{}
+	failures := map[string]error{}
 	for _, entry := range m.List(nil) {
 		values, err := validateSettings(entry.ID, entry.Settings, configuration[entry.ID])
 		if err != nil {
-			return fmt.Errorf("extension %s settings are invalid", entry.ID)
+			failures[entry.ID] = err
+			values = entry.Settings.Defaults()
 		}
 		raw, err := json.Marshal(values)
 		if err != nil {
@@ -83,5 +85,15 @@ func (m *Manager) RefreshSettings(ctx context.Context, read func(context.Context
 		next[entry.ID] = string(raw)
 	}
 	m.configuration = next
+	m.configurationErrors = failures
 	return nil
+}
+
+func (m *Manager) configurationError(id string) error {
+	if m == nil {
+		return nil
+	}
+	m.settingsMu.RLock()
+	defer m.settingsMu.RUnlock()
+	return m.configurationErrors[id]
 }

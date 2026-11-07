@@ -362,7 +362,25 @@ func (s *Server) settingsContext(r *http.Request, issued any) (pongo2.Context, e
 	if err != nil {
 		return nil, err
 	}
-	context := pongo2.Context{"proxy_extensions": s.proxyGateway().Extensions.List(disabled), "proxy_extension_error": s.proxyGateway().ExtensionError != nil, "root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}
+	entries := s.proxyGateway().Extensions.List(disabled)
+	latest, err := proxyextension.LastErrors(r.Context(), s.App.Store)
+	if err != nil {
+		return nil, err
+	}
+	for i := range entries {
+		if entry, ok := latest[entries[i].ID]; ok {
+			live := entries[i].LastError
+			at := int64(0)
+			if live != nil {
+				parsed, _ := time.Parse(time.RFC3339Nano, live.At)
+				at = parsed.UnixMilli()
+			}
+			if live == nil || entry.AtMS >= at {
+				entries[i].LastError = entry.LastError()
+			}
+		}
+	}
+	context := pongo2.Context{"proxy_extensions": entries, "proxy_extension_error": s.proxyGateway().ExtensionError != nil, "root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}
 	if err := s.identityContext(r, context); err != nil {
 		return nil, err
 	}

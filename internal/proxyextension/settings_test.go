@@ -44,10 +44,13 @@ func TestSettingsLifecycle(t *testing.T) {
 	}
 	if err := m.RefreshSettings(t.Context(), func(context.Context) (Configuration, error) {
 		return Configuration{"configurable": settings.Values{"value": false}}, nil
-	}); err == nil {
-		t.Fatal("invalid refresh")
+	}); err != nil {
+		t.Fatal(err)
 	}
-	check("loaded:default,default>updated|updated")
+	event := map[string]any{"body": "unchanged"}
+	if err := s.Emit("request", event); err != nil || event["body"] != "unchanged" || m.latest["configurable"].Hook != "settings" {
+		t.Fatal(event, err)
+	}
 }
 func TestSettingsDiscoveryErrors(t *testing.T) {
 	for _, source := range []string{
@@ -56,7 +59,7 @@ func TestSettingsDiscoveryErrors(t *testing.T) {
 		`export const settings={get fields(){while(true){}}};export default p=>{}`,
 		`throw Error('private');`,
 	} {
-		if _, err := Compile("invalid", source); err == nil || strings.Contains(err.Error(), "private") {
+		if _, err := Compile("invalid", source); err == nil {
 			t.Fatal(err)
 		}
 	}
@@ -155,8 +158,8 @@ func TestSettingsHookFailures(t *testing.T) {
 				}
 				err = s.Emit("request", map[string]any{})
 			}
-			if err == nil || err.Error() != "extension failure hook "+hook+" failed" {
-				t.Fatal(err)
+			if err != nil || !s.instances[0].failed || m.latest["failure"].Hook != hook {
+				t.Fatal("settings failure was not isolated", err)
 			}
 		})
 	}

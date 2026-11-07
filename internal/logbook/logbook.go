@@ -48,7 +48,7 @@ func Open(directory string) (*Book, error) {
 	if info.Size() > 0 {
 		day = info.ModTime().UTC().Format("2006-01-02")
 	}
-	return &Book{directory: directory, file: file, size: info.Size(), day: day}, nil
+	return &Book{directory: directory, file: file, size: info.Size(), day: day, events: recentFiles(directory)}, nil
 }
 
 func repair(path string) error {
@@ -127,10 +127,18 @@ func prune(directory string) error {
 	return nil
 }
 
-func (b *Book) Log(level, event, message string) {
+func (b *Book) Log(level, event, message string) { b.LogFields(level, event, message, nil) }
+
+// LogFields keeps authoritative envelope metadata separate from supplied fields.
+func (b *Book) LogFields(level, event, message string, fields map[string]any) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	entry := Redact(map[string]any{"schema": "codex-broker.log/v1", "ts": time.Now().UTC().Format(time.RFC3339Nano), "level": level, "event": event, "message": message}).(map[string]any)
+	data := map[string]any{}
+	for key, value := range fields {
+		data[key] = value
+	}
+	data["schema"], data["ts"], data["level"], data["event"], data["message"] = "codex-broker.log/v1", time.Now().UTC().Format(time.RFC3339Nano), level, event, message
+	entry := Redact(data).(map[string]any)
 	line, _ := json.Marshal(entry)
 	line = append(line, '\n')
 	day := time.Now().UTC().Format("2006-01-02")
@@ -230,4 +238,71 @@ func Load(path string) ([]map[string]any, error) {
 		}
 	}
 	return result, scanner.Err()
+}
+
+// recentFiles scans newest log files first, keeping at most 2,000 entries.
+func recentFiles(directory string) []map[string]any {
+	entries, _ := os.ReadDir(directory)
+	type source struct {
+		path string
+		at   time.Time
+	}
+	var files []source
+	for _, entry := range entries {
+		name := entry.Name()
+		if name != "windowkeeper.jsonl" && !(strings.HasPrefix(name, "windowkeeper-") && strings.HasSuffix(name, ".jsonl")) {
+			continue
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		files = append(files, source{filepath.Join(directory, name), info.ModTime()})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		activeI, activeJ := filepath.Base(files[i].path) == "windowkeeper.jsonl", filepath.Base(files[j].path) == "windowkeeper.jsonl"
+		if activeI != activeJ {
+			return activeI
+		}
+		return files[i].at.After(files[j].at)
+	})
+	var result []map[string]any
+	for _, source := range files {
+		file, err := os.Open(source.path)
+		if err != nil {
+			continue
+		}
+		// A bounded tail is enough for the dashboard, even when individual records
+		// are tiny. Skip the first partial line when reading from the middle.
+		info, _ := file.Stat()
+		offset := max(int64(0), info.Size()-(8<<20))
+		_, _ = file.Seek(offset, io.SeekStart)
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 4096), 1<<20)
+		var tail []map[string]any
+		if offset > 0 {
+			scanner.Scan()
+		}
+		for scanner.Scan() {
+			var entry map[string]any
+			if json.Unmarshal(scanner.Bytes(), &entry) == nil {
+				tail = append(tail, entry)
+				if len(tail) > 2000 {
+					tail = tail[1:]
+				}
+			}
+		}
+		file.Close()
+		if len(tail) > 2000-len(result) {
+			tail = tail[len(tail)-(2000-len(result)):]
+		}
+		result = append(tail, result...)
+		if len(result) == 2000 {
+			break
+		}
+	}
+	return result
 }

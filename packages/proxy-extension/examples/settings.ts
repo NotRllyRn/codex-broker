@@ -14,7 +14,7 @@ type Values = {enabled: boolean; label: string; weight: number; mode: string};
 const extension: Extension = proxy => {
   let current = proxy.getSettings<Values>();
   proxy.on('settings_loaded', () => { current = proxy.getSettings<Values>(); });
-  proxy.on('settings_changed', () => { current = proxy.getSettings<Values>(); });
+  proxy.on('settings_changed', () => { current = proxy.getSettings<Values>(); proxy.log('info', 'Settings changed'); });
   proxy.on('response', event => current.enabled ? {headers:{...event.headers, 'X-Example':[current.label]}} : undefined);
 };
 export default extension;

@@ -29,7 +29,8 @@ try {
  fields.push({key:'conditional',type:'text',label:'Conditional',default:'hidden',visibleWhen:{key:'boolean',equals:false},group:'Advanced'});
  fields.push({key:'safe',type:'text',label:'<img src=x onerror=alert(1)>',default:'safe'});
  mkdirSync(join(temp,'extensions'));
- writeFileSync(join(temp,'extensions','example.ts'),`export const settings=${JSON.stringify({title:'Example settings',fields})};export default p=>{}`);
+ writeFileSync(join(temp,'extensions','example.ts'),`export const settings=${JSON.stringify({title:'Example settings',fields})};export default p=>p.on('request',()=>({response:{status:200,headers:{},body:'healthy fallback'}}))`);
+ writeFileSync(join(temp,'extensions','broken.ts'),`export default p=>p.on('request',()=>{p.log('info','received request',{responseId:'example'});throw Error('<img src=x onerror=alert(1)> example failure')})`);
  const listener=createServer();await new Promise(resolve=>listener.listen(0,'127.0.0.1',resolve));const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
  broker=spawn(binary,['serve','--port',String(port)], {cwd:temp,env:{
   PATH:process.env.PATH,
@@ -94,8 +95,30 @@ try {
  await panel.locator('[data-extension-status]').filter({hasText:'Settings changed elsewhere'}).waitFor();assert.equal(await panel.getByLabel('text',{exact:true}).inputValue(),'Conflicting draft');
  await page.setViewportSize({width:390,height:844});
  assert.equal(await panel.getByRole('button',{name:'Cancel',exact:true}).isVisible(),true);
+ // Generate a proxy failure using a temporary client key; a later extension
+ // handles locally, so this test never contacts an upstream server.
+ await page.goto(base+'/settings');
+ await page.getByLabel('Client name',{exact:true}).fill('Example device');
+ await page.getByRole('button',{name:'Create key',exact:true}).click();
+ const token=await page.locator('.service-alert code').textContent();
+ const proxied=await page.request.post(base+'/v1/responses',{headers:{Authorization:'Bearer '+token.trim()},data:{input:[]}});
+ assert.equal(proxied.status(),200);assert.equal(await proxied.text(),'healthy fallback');
+ await page.goto(base+'/settings');
+ const card=page.locator('.data-list article').filter({has:page.getByText('broken',{exact:true})});
+ await card.getByText('Extension reported an error',{exact:false}).waitFor();
+ const error=card.locator('.extension-error');
+ assert.ok(await error.locator('time').getAttribute('datetime'));
+ assert.equal(await error.locator('pre').isVisible(),false,'error expanded by default');
+ await error.getByText('View last error',{exact:true}).click();
+ assert.equal(await error.locator('pre').isVisible(),true);
+ assert.ok((await error.locator('pre').textContent()).includes('example failure'));
+ assert.equal(await card.locator('img').count(),0,'error HTML executed');
+ await card.getByRole('link',{name:'View logs',exact:true}).click();
+ await page.getByRole('heading',{name:'Service logs',exact:true}).waitFor();
+ assert.ok((await page.locator('.log-list').textContent()).includes('received request'));
+ assert.ok((await page.locator('.log-list').textContent()).includes('example failure'));
  assert.deepEqual(errors,[]);
- console.log('Extension settings browser regression passed: all controls, cancel, apply, reset, secrets, conflicts, validation, root path, narrow viewport.');
+ console.log('Extension settings browser regression passed: all controls, cancel, apply, reset, secrets, conflicts, validation, root path, narrow viewport, fail-open proxy and collapsed error/log presentation.');
 } finally {
  await browser?.close();
  if(broker && broker.exitCode===null){broker.kill('SIGTERM');await new Promise(resolve=>broker.once('exit',resolve));}

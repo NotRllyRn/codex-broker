@@ -385,19 +385,31 @@ func (r *Relay) flush(ctx context.Context) error {
 	r.flushMu.Lock()
 	defer r.flushMu.Unlock()
 	r.mu.RLock()
-	events := append([]relayprotocol.Event(nil), r.state.Outbox...)
+	var events []relayprotocol.Event
+	for _, event := range r.state.Outbox {
+		// Older primaries keep reconciling usage/failures while diagnostic records
+		// remain durably queued until a supporting primary is synchronized.
+		if event.Kind == "extension_log" && !r.state.Snapshot.ExtensionLogging {
+			continue
+		}
+		events = append(events, event)
+		if len(events) == 32 {
+			break
+		}
+	}
 	r.mu.RUnlock()
 	if len(events) == 0 {
 		return nil
-	}
-	if len(events) > 100 {
-		events = events[:100]
 	}
 	if err := r.call(ctx, http.MethodPost, "/api/private/v1/relay/events", relayprotocol.EventBatch{Events: events}, &struct{}{}); err != nil {
 		return err
 	}
 	r.mu.Lock()
-	r.state.Outbox = append([]relayprotocol.Event(nil), r.state.Outbox[len(events):]...)
+	accepted := map[string]bool{}
+	for _, event := range events {
+		accepted[event.ID] = true
+	}
+	r.state.Outbox = slices.DeleteFunc(r.state.Outbox, func(event relayprotocol.Event) bool { return accepted[event.ID] })
 	err := r.saveLocked()
 	r.mu.Unlock()
 	return err
@@ -466,11 +478,20 @@ func (r *Relay) updateLease(lease gateway.Lease) error {
 }
 func (r *Relay) queueLocked(event relayprotocol.Event, critical bool) error {
 	if len(r.state.Outbox) >= outboxLimit {
-		if !critical {
+		if !critical && event.Kind != "telemetry" {
 			return errors.New("relay reconciliation outbox is full")
 		}
 		index := -1
 		for candidate := range r.state.Outbox {
+			if r.state.Outbox[candidate].Kind == "extension_log" {
+				index = candidate
+				break
+			}
+		}
+		for candidate := range r.state.Outbox {
+			if index >= 0 || !critical {
+				break
+			}
 			if r.state.Outbox[candidate].Kind == "telemetry" {
 				index = candidate
 				break

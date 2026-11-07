@@ -49,7 +49,11 @@ export interface Results {
   body: Partial<Response>;
   finish: void;
 }
+export type LogLevel = "debug" | "info" | "warning" | "warn" | "error";
 export interface ExtensionAPI {
+  /** Persistent, attributed service log. Fields must be JSON. Password settings
+   * and recognized secret fields are redacted; avoid logging transcripts/tokens. */
+  log(level: LogLevel, message: string, fields?: Record<string, unknown>): void;
   /** A cloned snapshot for this invocation. Changes arrive between hooks. */
   getSettings<T = Record<string, unknown>>(): T;
   on<K extends keyof Events>(name: K, handler: (event: Events[K], context: Context) => Results[K] | void): void;

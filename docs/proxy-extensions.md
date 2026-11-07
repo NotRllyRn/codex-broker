@@ -117,7 +117,7 @@ Neither account access tokens nor refresh tokens are part of extension context.
 
 Authentication failures, initial body-size/read failures, invalid correlation IDs,
 and WebSocket upgrade rejection stay outside the extension boundary. Extension
-failures themselves also bypass response hooks to avoid recursion. Non-Responses
+failures skip the affected extension and preserve its input. Non-Responses
 wire protocols are opaque; use `body` for transformations. This API does not add
 agent-session ownership, tool execution loops, arbitrary outbound requests, or
 new transport/endpoint support.
@@ -165,10 +165,11 @@ Hook JSON input/output is capped at 128 MiB, buffered/synthetic responses at
 64 MiB. Existing request, SSE frame and stream-idle limits still apply. Large
 transformations may hit the hook budget before the byte cap. Hooks execute on
 the request path, preserving backpressure; cancellation interrupts JavaScript.
-Errors fail closed with a generic 502 before headers or abort the connection
-after commit. Request-stage failures identify the failing extension/hook in logs;
-client errors never include exception details or request bodies. Streaming-hook
-failures abort the response. Cleanup has a fresh bounded context after cancellation.
+Extension errors are logged and skipped, preserving the input to the failing
+extension for that invocation. Invalid patches are isolated before committing.
+Client responses do not contain exception details. Actual upstream errors and
+resource limits still follow host error handling. Cleanup has a fresh bounded
+context after cancellation. See Failure isolation and extension logs below.
 
 These are trusted operator extensions, not a hostile-code sandbox. Goja shares
 process memory; the byte/time limits are not a hard heap quota, and expensive
@@ -280,8 +281,8 @@ Apply publishes settings to active primary sessions at their next hook boundary.
 Relays receive values through normal authenticated snapshot sync and encrypted
 snapshot storage. Each relay publishes its latest snapshot on the next incoming
 request; active sessions see it at their next hook afterward. Provision matching
-extension schemas on primary and relays. Updating a schema requires a restart;
-remove or migrate incompatible saved values before changing field types/keys.
+extension schemas on primary and relays. Updating a schema requires a restart; incompatible saved values skip that
+extension until the values are reset/migrated to match its new schema.
 Settings persistence does not add durable transcript storage or filesystem access
 to the TypeScript runtime.
 
@@ -295,3 +296,82 @@ install Playwright and its Chromium browser in a temporary directory, then run
 `BROKER_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node scripts/extension-settings.browser.mjs`.
 It checks every control plus Apply/Cancel/Reset, secret redaction/preservation,
 validation feedback, revision conflicts, subpath routing and a narrow viewport.
+
+## Failure isolation and extension logs
+
+Each extension's transformation is transactional for one hook invocation. Broker
+keeps the payload entering that extension, chains its handlers on a candidate,
+and validates returned patches before committing. A throw, timeout, unsupported
+Promise, serialization failure, invalid patch, or unexpected native-extension
+panic discards that extension's candidate and passes the previous payload to the
+next extension. Successful earlier extensions retain their changes. The failed
+extension is skipped for the remainder of this request; a new request tries it
+again. A successful synthetic response still short-circuits normally.
+
+Initialization, module-load and incompatible saved-settings failures isolate the
+affected extension as well. Invalid filename IDs are shown under a stable
+`invalid-…` diagnostic ID. An unreadable/nonexistent configured source directory
+or a failed host configuration/database read remains a host error. Expected
+request-size rejection, authentication, actual upstream failures, cancellation,
+and hard resource limits retain their host behavior. Cleanup handlers get
+independent bounded best-effort calls even after an earlier failure.
+
+Rollback applies to the payload for the failing invocation. It cannot undo logs,
+`updateThread` changes, extension closure state, earlier successful invocations,
+or bytes already sent to the client. A failed streamed-event transformation
+forwards that event's previous value and continues the stream. Whole-body hooks
+still require buffering and retain the existing buffering size cap.
+
+Use the structured logger from any factory or hook:
+
+```typescript
+proxy.log('info', 'Added usage to the answer', { responseId: 'example-response' });
+proxy.log('warning', 'No prior context found', { operation: 'lookup' });
+proxy.log('error', 'Stored context could not be read', { operation: 'read' });
+```
+
+Levels are `debug`, `info`, `warning` (`warn` also works), and `error`. Fields must
+be a JSON object. Broker supplies the extension ID, hook, request/client/native
+thread/turn IDs and UTC timestamp; supplied fields cannot override that envelope.
+`error` logs also update the last-known error, without disabling an otherwise
+successful extension. Automatic failure logs include bounded error/stack details.
+Exception formatting itself is bounded because custom `toString` methods can
+throw or loop. Logging-sink failures do not fail the proxy.
+
+Authored entries are limited to 16 KiB each, 100 entries and 256 KiB total per
+request across extensions; excess entries are dropped with one warning. Oversized
+entries are rejected as invalid API calls; persisted messages/details may be
+truncated further after sanitization. Automatic failures are recorded separately.
+Known password-setting values observed during the request, recognized secret
+keys, token patterns and URL queries are redacted. This is best-effort sanitizing,
+not a guarantee that arbitrary transcript text contains no sensitive data. Avoid
+logging credentials or full conversations.
+
+Entries use the existing `proxy.extension.log` and `proxy.extension.failed` events
+in `<log-dir>/windowkeeper.jsonl`, with existing rotation (25 MiB/daily), archived
+retention (30 days, 1 GiB directory budget), and dashboard/export support. The
+recent dashboard history (up to 2,000 records) is restored from a bounded log tail
+after restart. Settings → Proxy extensions shows the last error time with a
+collapsed “View last error” section and a View logs link. The latest error is
+also retained separately in Broker's SQLite settings table, so log rotation or a
+successful later request does not erase the diagnostic. Reload Settings to see
+new errors. Existing enable/disable and per-extension settings remain independent.
+
+Relays persist sanitized diagnostics in their encrypted outbox and forward them
+to the primary, where they become visible in the same dashboard. Snapshot
+`ExtensionLogging` advertises receiver support: diagnostics remain queued when
+connected to an older primary, while usage/failure reconciliation continues.
+Batches are bounded below the receiver body cap; diagnostic entries are evicted
+before operational records if critical/telemetry events need queue space. Logs
+cannot be guaranteed if disk writes fail or the bounded outbox is exhausted.
+
+This adapts Pi 0.84.4's runner pattern: catch handler exceptions, emit attributed
+errors, and continue processing. Pi exposes `onError`/`emitError` internally;
+interactive mode displays errors, RPC emits `extension_error`, and print mode
+writes errors to stderr. Extensions can use host `console.*` and
+`ctx.ui.notify(message, 'info' | 'warning' | 'error')`; notifications are UI/RPC
+messages. Its inspected ExtensionAPI has no dedicated persistent per-extension
+severity logger. `appendEntry` can persist custom session data, and its full host
+runtime also permits authors to build file logging themselves. Broker's logger
+adds service-oriented persistence and request attribution without introducing
+filesystem access or writing notifications into client model responses.

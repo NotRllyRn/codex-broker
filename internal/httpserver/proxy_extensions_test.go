@@ -142,10 +142,13 @@ func TestProxyExtensionFailureAndAuthentication(t *testing.T) {
 	s, key := proxyFixture(t, 1)
 	calls := 0
 	installProxyExtension(t, s, `export default p=>p.on('request',()=>{throw Error('private payload')})`)
-	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) { calls++; return upstreamResponse(200, "unexpected"), nil })
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		calls++
+		return upstreamResponse(200, proxyUsageStream("response", "completed", 150)), nil
+	})
 	for _, token := range []string{"invalid", key.Token} {
 		result := proxyRequest(s, token, "/v1/responses", `{}`)
-		expected := 502
+		expected := 200
 		if token == "invalid" {
 			expected = 401
 		}
@@ -153,8 +156,11 @@ func TestProxyExtensionFailureAndAuthentication(t *testing.T) {
 			t.Fatal(result.Code, result.Body)
 		}
 	}
-	if calls != 0 {
+	if calls != 1 {
 		t.Fatal(calls)
+	}
+	if latest, err := proxyextension.LastErrors(t.Context(), s.App.Store); err != nil || !strings.Contains(latest["example"].Message, "private payload") {
+		t.Fatal(latest, err)
 	}
 }
 func TestProxyExtensionSettings(t *testing.T) {

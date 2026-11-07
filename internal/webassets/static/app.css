@@ -1566,3 +1566,6 @@ textarea {
 .extension-field .subtle { margin: 0.35rem 0; }
 .extension-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .extension-field input[type="color"].extension-color-picker { width: 3rem; margin-left: 0.5rem; }
+.extension-error { color: var(--bad); min-width: 0; }
+.extension-error pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; overflow: auto; }
+.extension-error summary { cursor: pointer; }

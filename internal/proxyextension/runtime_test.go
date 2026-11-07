@@ -2,7 +2,6 @@ package proxyextension
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -74,8 +73,12 @@ func TestBoundedFailures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := start(t, New(definition(t, name, source)), Context{})
 			before := time.Now()
-			if err := s.Emit("request", map[string]any{}); err == nil || err.Error() != fmt.Sprintf("extension %s hook request failed", name) {
-				t.Fatal(err)
+			event := map[string]any{"body": "unchanged"}
+			if err := s.Emit("request", event); err != nil || event["body"] != "unchanged" || !s.instances[0].failed {
+				t.Fatal(event, err)
+			}
+			if s.manager.latest[name].Hook != "request" {
+				t.Fatal("failure was not recorded")
 			}
 			if time.Since(before) > 2*time.Second {
 				t.Fatal("hook not interrupted")
@@ -87,8 +90,9 @@ func TestBoundedFailures(t *testing.T) {
 	}
 	for _, source := range []string{`export default async p=>{}`, `export default p=>p.on('unknown',()=>{})`, `export default p=>require('fs')`} {
 		m := New(definition(t, "bad", source))
-		if _, err := m.Start(t.Context(), Context{}, nil); err == nil {
-			t.Fatal("accepted invalid factory")
+		session, err := m.Start(t.Context(), Context{}, nil)
+		if err != nil || session.Active() || m.latest["bad"].Hook != "initialize" {
+			t.Fatal("invalid factory was not isolated", err)
 		}
 	}
 }
@@ -134,8 +138,9 @@ func TestAtomicThreadState(t *testing.T) {
 			t.Fatal(e, err)
 		}
 	}
-	if err := start(t, m, Context{}).Emit("request", map[string]any{}); err == nil {
-		t.Fatal("invented thread identity")
+	event := map[string]any{}
+	if err := start(t, m, Context{}).Emit("request", event); err != nil || event["body"] != nil || m.latest["count"].Hook != "request" {
+		t.Fatal("missing identity was not isolated", event, err)
 	}
 }
 func TestLoadOrderAndSettings(t *testing.T) {
@@ -185,8 +190,9 @@ func TestFinishRunsAllHandlersAfterFailure(t *testing.T) {
 func TestThreadUpdateFailures(t *testing.T) {
 	for _, callback := range []string{`null`, `()=>{throw Error('failure')}`, `()=>{while(true){}}`, `async()=>42`} {
 		m := New(definition(t, "state", `export default p=>p.on('request',()=>p.updateThread(`+callback+`))`))
-		if err := start(t, m, Context{ClientID: "client", ThreadID: "thread"}).Emit("request", map[string]any{}); err == nil {
-			t.Fatal("accepted invalid state update", callback)
+		event := map[string]any{}
+		if err := start(t, m, Context{ClientID: "client", ThreadID: "thread"}).Emit("request", event); err != nil || m.latest["state"].Hook != "request" || len(m.state) != 0 {
+			t.Fatal("invalid update was not isolated", callback, event, err)
 		}
 	}
 }

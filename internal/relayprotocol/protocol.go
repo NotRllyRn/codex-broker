@@ -25,6 +25,7 @@ type Lease struct {
 }
 
 type Snapshot struct {
+	ExtensionLogging               bool                         `json:",omitempty"`
 	ExtensionSettings              proxyextension.Configuration `json:",omitempty"`
 	DisabledExtensions             []string                     `json:",omitempty"`
 	ProtocolVersion                int
@@ -48,6 +49,7 @@ type Event struct {
 	ID, RelayID, Kind, AccountID, ClientID, FailureKind, PermitEpoch string
 	OccurredAtMS                                                     int64
 	Observation                                                      *gateway.Observation
+	ExtensionLog                                                     *proxyextension.LogEntry `json:",omitempty"`
 }
 
 type EventBatch struct{ Events []Event }

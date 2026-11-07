@@ -3,6 +3,7 @@ package proxyextension
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,17 +34,22 @@ type Failure struct{ ID, Hook string }
 func (e *Failure) Error() string { return fmt.Sprintf("extension %s hook %s failed", e.ID, e.Hook) }
 
 type Definition struct {
-	ID      string
-	program *goja.Program
-	schema  settings.Schema
+	ID        string
+	program   *goja.Program
+	schema    settings.Schema
+	loadError error
 }
 type Info = extensions.Info
 type Manager struct {
-	definitions   []Definition
-	mu            sync.Mutex
-	state         map[string]string
-	settingsMu    sync.RWMutex
-	configuration map[string]string
+	definitions         []Definition
+	mu                  sync.Mutex
+	state               map[string]string
+	settingsMu          sync.RWMutex
+	configuration       map[string]string
+	configurationErrors map[string]error
+	diagnosticsMu       sync.RWMutex
+	latest              map[string]LogEntry
+	loadReports         sync.Once
 }
 type Context struct {
 	RequestID string `json:"requestId"`
@@ -55,16 +61,24 @@ type instance struct {
 	id       string
 	vm       *goja.Runtime
 	settings string
+	failed   bool
+	hook     string
+	logs     []LogEntry
+	secrets  []string
 	handlers map[string][]goja.Callable
 }
 type Session struct {
-	instances  []*instance
-	ctx        context.Context
-	identity   Context
-	Usage      bool
-	compaction requestsize.Request
-	manager    *Manager
-	native     Configuration
+	nativeFailed       map[string]bool
+	instances          []*instance
+	ctx                context.Context
+	identity           Context
+	Usage              bool
+	compaction         requestsize.Request
+	manager            *Manager
+	native             Configuration
+	sink               LogSink
+	logCount, logBytes int
+	logLimited         bool
 }
 
 // Load reads operator-provisioned files once. There is deliberately no installer,
@@ -85,15 +99,24 @@ func Load(directory string) (*Manager, error) {
 		if len(m.definitions) >= 32 {
 			return nil, errors.New("too many proxy extensions")
 		}
-		source, err := os.ReadFile(filepath.Join(directory, entry.Name()))
-		if err != nil {
-			return nil, err
+		id := strings.TrimSuffix(entry.Name(), ".ts")
+		source, readErr := os.ReadFile(filepath.Join(directory, entry.Name()))
+		def, err := Compile(id, string(source))
+		if readErr != nil {
+			err = readErr
 		}
-		def, err := Compile(strings.TrimSuffix(entry.Name(), ".ts"), string(source))
 		if err != nil {
-			return nil, err
+			if !validID.MatchString(id) || extensions.Builtin(id) {
+				sum := sha256.Sum256([]byte(entry.Name()))
+				id = fmt.Sprintf("invalid-%x", sum[:8])
+			}
+			def = Definition{ID: id, loadError: fmt.Errorf("Extension source %q: %w", entry.Name(), err)}
 		}
 		m.definitions = append(m.definitions, def)
+		if def.loadError != nil {
+			session := &Session{manager: m}
+			session.writeLog(&instance{id: def.ID, hook: "load"}, "ERROR", def.loadError.Error(), nil, true)
+		}
 	}
 	return m, nil
 }
@@ -122,32 +145,65 @@ func (m *Manager) List(disabled map[string]bool) []Info {
 			result = append(result, Info{ID: def.ID, Name: def.ID, Settings: def.schema, Enabled: !disabled[def.ID]})
 		}
 	}
+	if m != nil {
+		m.diagnosticsMu.RLock()
+		for i := range result {
+			if entry, ok := m.latest[result[i].ID]; ok {
+				result[i].LastError = entry.LastError()
+			}
+		}
+		m.diagnosticsMu.RUnlock()
+	}
 	return result
 }
 func (m *Manager) Active(disabled map[string]bool) bool {
 	if m != nil {
 		for _, def := range m.definitions {
-			if !disabled[def.ID] {
+			if !disabled[def.ID] && def.loadError == nil {
 				return true
 			}
 		}
 	}
 	return false
 }
-func (s *Session) Active() bool { return len(s.instances) > 0 }
-func (m *Manager) Start(ctx context.Context, identity Context, disabled map[string]bool) (*Session, error) {
+func (s *Session) Active() bool {
+	for _, in := range s.instances {
+		if !in.failed {
+			return true
+		}
+	}
+	return false
+}
+func (m *Manager) Start(ctx context.Context, identity Context, disabled map[string]bool, sinks ...LogSink) (*Session, error) {
 	s := &Session{ctx: ctx, identity: identity, Usage: !disabled[UsageID], compaction: requestsize.New(!disabled[requestsize.ID]), manager: m, native: Configuration{}}
+	if len(sinks) > 0 {
+		s.sink = sinks[0]
+	}
 	for _, entry := range extensions.Builtins(nil) {
 		s.native[entry.ID] = decodeSettings(m.settingsJSON(entry.ID))
+		if err := m.configurationError(entry.ID); err != nil {
+			if s.nativeFailed == nil {
+				s.nativeFailed = map[string]bool{}
+			}
+			s.nativeFailed[entry.ID] = true
+			s.writeLog(&instance{id: entry.ID, hook: "settings"}, "ERROR", err.Error(), nil, true)
+		}
 	}
 	if m == nil {
 		return s, nil
 	}
+	m.ReportLoadErrors(s.sink)
 	for _, def := range m.definitions {
-		if disabled[def.ID] {
+		if disabled[def.ID] || def.loadError != nil {
 			continue
 		}
 		in := &instance{id: def.ID, vm: goja.New(), settings: m.settingsJSON(def.ID), handlers: map[string][]goja.Callable{}}
+		s.rememberSecrets(in)
+		in.hook = "initialize"
+		if err := m.configurationError(def.ID); err != nil {
+			s.failed(in, "settings", err)
+			continue
+		}
 		vm := in.vm
 		vm.SetMaxCallStackSize(256)
 		err := in.run(ctx, func() error {
@@ -161,6 +217,26 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 				return errors.New("default export must be a factory")
 			}
 			apiObject := vm.NewObject()
+			_ = apiObject.Set("log", func(level, message string, fields any) {
+				raw, err := json.Marshal(map[string]any{"level": level, "message": message, "fields": fields})
+				if err != nil {
+					panic(vm.NewTypeError("log fields must be JSON"))
+				}
+				severity, text, values, err := logFields(string(raw))
+				if err != nil {
+					panic(vm.NewTypeError("invalid log entry: %s", err))
+				}
+				if s.logCount >= MaxRequestLogs || s.logBytes+len(raw) > MaxRequestLogBytes {
+					if !s.logLimited {
+						s.logLimited = true
+						in.logs = append(in.logs, LogEntry{Level: "WARNING", Message: "Extension log limit reached; further authored logs dropped for this request."})
+					}
+					return
+				}
+				s.logCount++
+				s.logBytes += len(raw)
+				in.logs = append(in.logs, LogEntry{Level: severity, Message: text, Fields: values, AtMS: time.Now().UnixMilli()})
+			})
 			_ = apiObject.Set("getSettings", func() goja.Value {
 				value, err := vm.RunString("JSON.parse(" + quote(in.settings) + ")")
 				if err != nil {
@@ -220,12 +296,20 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 			}
 			return synchronous(value)
 		})
+		s.flushLogs(in)
 		if err != nil {
-			return nil, &Failure{ID: def.ID, Hook: "initialize"}
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			s.failed(in, "initialize", err)
+			continue
 		}
 		s.instances = append(s.instances, in)
-		if err := s.emitInstance(in, "settings_loaded", map[string]any{"settings": decodeSettings(in.settings)}); err != nil {
-			return nil, err
+		if err := s.emitInstance(in, "settings_loaded", map[string]any{"settings": decodeSettings(in.settings)}, nil); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			s.failed(in, "settings_loaded", err)
 		}
 	}
 	return s, nil
@@ -250,7 +334,12 @@ func stringify(vm *goja.Runtime, v goja.Value) (string, error) {
 	}
 	return result.String(), nil
 }
-func (in *instance) run(ctx context.Context, fn func() error) error {
+func (in *instance) run(ctx context.Context, fn func() error) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = errors.New("extension host operation panicked")
+		}
+	}()
 	// Join the watchdog before clearing the interrupt; a late interrupt must not
 	// poison a later hook. No goroutine runs JS concurrently with the caller.
 	if err := ctx.Err(); err != nil {
@@ -274,7 +363,7 @@ func (in *instance) run(ctx context.Context, fn func() error) error {
 }
 func (s *Session) Has(name string) bool {
 	for _, in := range s.instances {
-		if len(in.handlers[name]) > 0 {
+		if !in.failed && len(in.handlers[name]) > 0 {
 			return true
 		}
 	}
@@ -283,20 +372,56 @@ func (s *Session) Has(name string) bool {
 
 // Emit chains explicit patches; undefined means unchanged. A response patch
 // short-circuits request processing. Go-owned values never cross into the VM.
-func (s *Session) Emit(name string, event map[string]any) error {
+func (s *Session) Emit(name string, event map[string]any) error { return s.Transform(name, event, nil) }
+
+// Transform commits one extension's patches only after all its handlers and the
+// host validator succeed. A failure preserves earlier extensions' transformations.
+func (s *Session) Transform(name string, event map[string]any, validate func(map[string]any) error) error {
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
 	for _, in := range s.instances {
+		if in.failed {
+			continue
+		}
+		if err := s.manager.configurationError(in.id); err != nil {
+			s.failed(in, "settings", err)
+			continue
+		}
 		if name != "finish" && s.manager != nil {
 			next := s.manager.settingsJSON(in.id)
 			if next != in.settings {
 				previous := decodeSettings(in.settings)
 				in.settings = next
-				if err := s.emitInstance(in, "settings_changed", map[string]any{"settings": decodeSettings(next), "previous": previous}); err != nil {
-					return err
+				s.rememberSecrets(in)
+				if err := s.emitInstance(in, "settings_changed", map[string]any{"settings": decodeSettings(next), "previous": previous}, nil); err != nil {
+					if s.ctx.Err() != nil {
+						return s.ctx.Err()
+					}
+					s.failed(in, "settings_changed", err)
+					continue
 				}
 			}
 		}
-		if err := s.emitInstance(in, name, event); err != nil {
-			return err
+		if len(in.handlers[name]) == 0 {
+			continue
+		}
+		candidate := make(map[string]any, len(event))
+		for key, value := range event {
+			candidate[key] = value
+		}
+		if err := s.emitInstance(in, name, candidate, validate); err != nil {
+			if s.ctx.Err() != nil {
+				return s.ctx.Err()
+			}
+			s.failed(in, name, err)
+			continue
+		}
+		for key := range event {
+			delete(event, key)
+		}
+		for key, value := range candidate {
+			event[key] = value
 		}
 		if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
 			return nil
@@ -304,7 +429,8 @@ func (s *Session) Emit(name string, event map[string]any) error {
 	}
 	return nil
 }
-func (s *Session) emitInstance(in *instance, name string, event map[string]any) error {
+func (s *Session) emitInstance(in *instance, name string, event map[string]any, validate func(map[string]any) error) error {
+	in.hook = name
 	for _, handler := range in.handlers[name] {
 		err := in.run(s.ctx, func() error {
 			raw, err := json.Marshal(event)
@@ -344,10 +470,14 @@ func (s *Session) emitInstance(in *instance, name string, event map[string]any) 
 			for k, v := range patch {
 				event[k] = v
 			}
+			if validate != nil {
+				return validate(event)
+			}
 			return nil
 		})
+		s.flushLogs(in)
 		if err != nil {
-			return &Failure{ID: in.id, Hook: name}
+			return err
 		}
 		if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
 			return nil
@@ -358,11 +488,17 @@ func (s *Session) emitInstance(in *instance, name string, event map[string]any) 
 
 // Finish gets a fresh bounded context so cancellation still permits cleanup.
 func (s *Session) Finish(outcome string) {
+	cleanup := *s
+	cleanup.ctx = context.Background()
 	for _, in := range s.instances {
 		for _, handler := range in.handlers["finish"] {
-			cleanup := &instance{id: in.id, vm: in.vm, handlers: map[string][]goja.Callable{"finish": {handler}}}
-			session := &Session{ctx: context.Background(), identity: s.identity, instances: []*instance{cleanup}}
-			_ = session.Emit("finish", map[string]any{"outcome": outcome})
+			handlers := in.handlers["finish"]
+			in.handlers["finish"] = []goja.Callable{handler}
+			err := cleanup.emitInstance(in, "finish", map[string]any{"outcome": outcome}, nil)
+			in.handlers["finish"] = handlers
+			if err != nil {
+				cleanup.failed(in, "finish", err)
+			}
 		}
 	}
 }
