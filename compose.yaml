@@ -1,105 +1,61 @@
 services:
-  broker:
-    build: .
+  relay:
+    build:
+      context: .
+      target: relay-runtime
+    command:
+      - relay-serve
     init: true
     restart: unless-stopped
-    user: "0:0"
+    user: 0:0
     read_only: true
-    cap_drop: [ALL]
-    cap_add: [CHOWN, SETGID, SETUID]
-    security_opt: [no-new-privileges:true]
-    ports:
-      - "${CODEX_BROKER_BIND_ADDRESS:-0.0.0.0}:${CODEX_BROKER_PORT:-8787}:8787"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - ./deployment/relay/.env
     environment:
-      WINDOWKEEPER_HOST: 0.0.0.0
-      WINDOWKEEPER_COOKIE_SECURE: "true"
-      WINDOWKEEPER_TLS_CERT_FILE: /certs/server.crt
-      WINDOWKEEPER_TLS_KEY_FILE: /certs/server.key
-      WINDOWKEEPER_BROWSER_OAUTH_MODE: ${WINDOWKEEPER_BROWSER_OAUTH_MODE:-manual}
-      WINDOWKEEPER_AUTH_CONCURRENCY: ${WINDOWKEEPER_AUTH_CONCURRENCY:-8}
-      WINDOWKEEPER_USAGE_POLL_SECONDS: ${WINDOWKEEPER_USAGE_POLL_SECONDS:-3600}
-      WINDOWKEEPER_PROFILE_POLL_SECONDS: ${WINDOWKEEPER_PROFILE_POLL_SECONDS:-21600}
-      WINDOWKEEPER_WINDOW_PULSE_ENABLED: ${WINDOWKEEPER_WINDOW_PULSE_ENABLED:-true}
-      WINDOWKEEPER_WINDOW_PULSE_POLL_SECONDS: ${WINDOWKEEPER_WINDOW_PULSE_POLL_SECONDS:-60}
-      WINDOWKEEPER_WINDOW_PULSE_RETRY_SECONDS: ${WINDOWKEEPER_WINDOW_PULSE_RETRY_SECONDS:-900}
-      WINDOWKEEPER_WINDOW_PULSE_CONCURRENCY: ${WINDOWKEEPER_WINDOW_PULSE_CONCURRENCY:-2}
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY: ${WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY:?Run scripts/bootstrap.sh first}
-      WINDOWKEEPER_RELAY_KEY: ${WINDOWKEEPER_RELAY_KEY:-}
-      WINDOWKEEPER_VAULT_KEY: ${WINDOWKEEPER_VAULT_KEY:?Run scripts/bootstrap.sh first}
-      WINDOWKEEPER_ADMIN_PASSWORD: ${WINDOWKEEPER_ADMIN_PASSWORD:?Run scripts/bootstrap.sh first}
+      WINDOWKEEPER_RELAY_HOST: 0.0.0.0
+      WINDOWKEEPER_RELAY_PORT: "8787"
+      WINDOWKEEPER_RELAY_CACHE_FILE: /data/cache.enc
+      WINDOWKEEPER_RELAY_CA_CERT: /certs/broker-ca.crt
+      WINDOWKEEPER_RELAY_TLS_CERT_FILE: /certs/relay.crt
+      WINDOWKEEPER_RELAY_TLS_KEY_FILE: /certs/relay.key
     volumes:
-      - broker-data:/data
-      - ./deployment/certs/server.crt:/certs/server.crt:ro
-      - ./deployment/certs/server.key:/certs/server.key:ro
+      - relay-data:/data
+      - ./deployment/relay/ca.crt:/certs/broker-ca.crt:ro
+      - ./deployment/relay/relay.crt:/certs/relay.crt:ro
+      - ./deployment/relay/relay.key:/certs/relay.key:ro
     tmpfs:
-      - /run/windowkeeper:uid=10001,gid=10001,mode=0700,size=512m
-      - /tmp:uid=10001,gid=10001,mode=0700,size=128m
-    healthcheck:
-      test:
-        [
-          CMD,
-          python,
-          -c,
-          "import socket; socket.create_connection(('127.0.0.1', 8787), 2).close()",
-        ]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 15s
-    networks:
-      default:
-        aliases: [codex-broker]
-    deploy:
-      resources:
-        limits:
-          memory: 1g
-          cpus: "2.0"
-
-  public-enrollment:
-    build: .
-    command: ["public-serve"]
-    restart: unless-stopped
-    depends_on:
-      broker:
-        condition: service_healthy
-    environment:
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY: ${WINDOWKEEPER_PUBLIC_ENROLLMENT_KEY:?Run scripts/bootstrap.sh first}
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_BROKER_URL: https://codex-broker:8787
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_CA_CERT: /certs/broker-ca.crt
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_HOST: 0.0.0.0
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_PORT: "8788"
-      WINDOWKEEPER_TRUSTED_PROXIES: ${CODEX_BROKER_PUBLIC_TRUSTED_PROXIES:-}
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_CERT_FILE: /certs/public.crt
-      WINDOWKEEPER_PUBLIC_ENROLLMENT_TLS_KEY_FILE: /certs/public.key
-    ports:
-      - "${CODEX_BROKER_PUBLIC_BIND_ADDRESS:-0.0.0.0}:${CODEX_BROKER_PUBLIC_PORT:-8788}:8788"
-    volumes:
-      - ./deployment/certs/ca.crt:/certs/broker-ca.crt:ro
-      - ${CODEX_BROKER_PUBLIC_TLS_CERT_FILE:-./deployment/certs/public.crt}:/certs/public.crt:ro
-      - ${CODEX_BROKER_PUBLIC_TLS_KEY_FILE:-./deployment/certs/public.key}:/certs/public.key:ro
-    read_only: true
-    tmpfs:
+      - /run/windowkeeper:uid=10001,gid=10001,mode=0700,size=8m
       - /tmp:size=16m,mode=1777
     healthcheck:
       test:
-        [
-          CMD,
-          python,
-          -c,
-          "import socket; socket.create_connection(('127.0.0.1', 8788), 2).close()",
-        ]
-      interval: 30s
+        - CMD
+        - codex-broker
+        - -c
+        - 127.0.0.1:8787
+      interval: 15s
       timeout: 3s
-      start_period: 10s
       retries: 3
-    cap_drop: [ALL]
-    security_opt: [no-new-privileges:true]
+      start_period: 10s
+    networks:
+      lan_net:
+        ipv4_address: ${IPV4_ADDRESS:?Set IPV4_ADDRESS in .env}
     deploy:
       resources:
         limits:
           memory: 256m
-          cpus: "0.5"
-
+          cpus: "1.0"
+networks:
+  lan_net:
+    external: true
+    name: lan_net
 volumes:
-  broker-data:
-    name: windowkeeper-data
+  relay-data: null
