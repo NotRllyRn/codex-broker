@@ -276,3 +276,30 @@ func TestTelemetryUsesFinalUpstreamRequestAndRawResponse(t *testing.T) {
 		t.Fatal(count, err)
 	}
 }
+
+func TestNodeAsyncStoragePreservesWireTelemetry(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	t.Setenv("WINDOWKEEPER_DATA_DIR", t.TempDir())
+	installProxyExtension(t, s, `import {writeFile,readFile} from 'node:fs/promises';import {join} from 'node:path';export default async p=>{
+ const path=join(p.getDataDir(),'response.json');
+ p.on('attempt',async e=>{await Promise.resolve();return {body:JSON.stringify({...JSON.parse(e.body),model:'node-model'})}});
+ p.on('upstream_event',async ({event})=>{if(event.response?.usage){await writeFile(path,JSON.stringify(event.response.usage));event.response.usage.total_tokens=999}return {event}});
+ p.on('body',async e=>{const usage=JSON.parse(await readFile(path,'utf8'));return {status:202,headers:{'Content-Type':['application/json']},body:JSON.stringify({saved:usage.total_tokens,rewritten:e.body.includes('999')})}});
+ }`)
+	t.Cleanup(s.Close)
+	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		if !strings.Contains(string(body), `"model":"node-model"`) {
+			t.Errorf("wrong upstream body: %s", body)
+		}
+		return upstreamResponse(200, proxyUsageStream("node-response", "completed", 150)), nil
+	})
+	result := proxyRequest(s, key.Token, "/v1/responses", `{"input":[]}`)
+	if result.Code != 202 || result.Body.String() != `{"saved":150,"rewritten":true}` {
+		t.Fatal(result.Code, result.Body)
+	}
+	var count int
+	if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM proxy_responses WHERE total_tokens=150 AND request_model='node-model' AND upstream_http_status=200").Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+}

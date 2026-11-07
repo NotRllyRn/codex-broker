@@ -79,7 +79,14 @@ func (t *throttle) clear(key string) {
 	t.mu.Unlock()
 }
 
-func New(application *broker.Application) (http.Handler, error) {
+type Handler struct {
+	http.Handler
+	server *Server
+}
+
+func (h *Handler) Close() { h.server.Close() }
+
+func New(application *broker.Application) (*Handler, error) {
 	templates, err := newRenderer("templates")
 	if err != nil {
 		return nil, err
@@ -87,7 +94,7 @@ func New(application *broker.Application) (http.Handler, error) {
 	server := &Server{App: application, renderer: templates, mux: http.NewServeMux(), loginThrottle: newThrottle(5, time.Minute), clientAuth: newThrottle(5, time.Minute), enrollmentAuth: newThrottle(20, time.Minute)}
 	server.proxyClient = responsesproxy.NewClient()
 	server.routes()
-	return server.rootPath(server.middleware(server.mux)), nil
+	return &Handler{Handler: server.rootPath(server.middleware(server.mux)), server: server}, nil
 }
 
 func (s *Server) rootPath(next http.Handler) http.Handler {

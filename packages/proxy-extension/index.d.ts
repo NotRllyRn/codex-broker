@@ -1,4 +1,4 @@
-/** Self-contained TypeScript modules; import this API using `import type`. */
+/** Trusted Node TypeScript modules; import this API using `import type`. */
 export type Headers = Record<string, string[]>;
 export interface Context {
   readonly requestId: string;
@@ -51,17 +51,20 @@ export interface Results {
 }
 export type LogLevel = "debug" | "info" | "warning" | "warn" | "error";
 export interface ExtensionAPI {
+  /** Stable absolute per-extension directory, created lazily. Normal Node fs and
+   * database APIs may use it. This is an organizational helper, not a sandbox. */
+  getDataDir(): string;
   /** Persistent, attributed service log. Fields must be JSON. Password settings
    * and recognized secret fields are redacted; avoid logging transcripts/tokens. */
   log(level: LogLevel, message: string, fields?: Record<string, unknown>): void;
   /** A cloned snapshot for this invocation. Changes arrive between hooks. */
   getSettings<T = Record<string, unknown>>(): T;
-  on<K extends keyof Events>(name: K, handler: (event: Events[K], context: Context) => Results[K] | void): void;
+  on<K extends keyof Events>(name: K, handler: (event: Events[K], context: Context) => Results[K] | void | Promise<Results[K] | void>): void;
   /** Atomic, process-local JSON state scoped by extension/client/native thread.
    * Null deletes state. No native identity => throws. No I/O in the callback. */
   updateThread<T>(update: (previous: T | null) => T | null): T | null;
 }
-export type Extension = (api: ExtensionAPI) => void;
+export type Extension = (api: ExtensionAPI) => void | Promise<void>;
 
 export interface SettingOption { value: string; label: string }
 export interface SettingBase<T> {

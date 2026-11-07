@@ -142,14 +142,7 @@ func (s *Session) rememberSecrets(in *instance) {
 		}
 	}
 }
-func (in *instance) errorText(err error) string {
-	message := "Extension execution failed"
-	// Exception stringification may execute extension-controlled getters/toString.
-	if renderErr := in.run(context.Background(), func() error { message = err.Error(); return nil }); renderErr != nil {
-		message = "Extension error details could not be rendered"
-	}
-	return message
-}
+func (in *instance) errorText(err error) string { return err.Error() }
 func (s *Session) failed(in *instance, hook string, err error) {
 	in.hook = hook
 	s.writeLog(in, "ERROR", in.errorText(err), nil, true)

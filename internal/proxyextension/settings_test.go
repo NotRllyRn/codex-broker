@@ -3,6 +3,8 @@ package proxyextension
 import (
 	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -124,17 +126,19 @@ func TestNativeSettingsSnapshot(t *testing.T) {
 }
 
 func TestSettingsStayConsistentDuringHook(t *testing.T) {
-	m := New(definition(t, "snapshot", `export const settings={fields:[{key:'value',type:'text',label:'Value',default:'before'}]};export default p=>p.on('request',()=>{const before=p.getSettings().value;publish();return {body:before+'>'+p.getSettings().value}})`))
-	s := start(t, m, Context{})
-	if err := s.instances[0].vm.Set("publish", func() {
+	var m *Manager
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := m.RefreshSettings(t.Context(), func(context.Context) (Configuration, error) {
 			return Configuration{"snapshot": settings.Values{"value": "after"}}, nil
 		}); err != nil {
-			t.Fatal(err)
+			t.Error(err)
 		}
-	}); err != nil {
-		t.Fatal(err)
-	}
+		w.WriteHeader(204)
+	}))
+	defer server.Close()
+	m = New(definition(t, "snapshot", `import http from 'node:http';export const settings={fields:[{key:'value',type:'text',label:'Value',default:'before'}]};export default p=>p.on('request',async()=>{const before=p.getSettings().value;await new Promise((resolve,reject)=>http.get(`+quote(server.URL)+`,r=>{r.resume();r.on('end',resolve)}).on('error',reject));return {body:before+'>'+p.getSettings().value}})`))
+	s := start(t, m, Context{})
+	defer s.Finish("complete")
 	for _, want := range []string{"before>before", "after>after"} {
 		e := map[string]any{}
 		if err := s.Emit("request", e); err != nil || e["body"] != want {

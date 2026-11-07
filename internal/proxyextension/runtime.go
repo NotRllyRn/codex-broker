@@ -1,4 +1,4 @@
-// Package proxyextension hosts trusted, synchronous TypeScript proxy extensions.
+// Package proxyextension hosts trusted Node/TypeScript proxy extensions.
 package proxyextension
 
 import (
@@ -18,7 +18,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/extensions"
 	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/NotRllyRn/codex-broker/extensions/settings"
-	"github.com/dop251/goja"
+	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/evanw/esbuild/pkg/api"
 )
 
@@ -35,13 +35,17 @@ func (e *Failure) Error() string { return fmt.Sprintf("extension %s hook %s fail
 
 type Definition struct {
 	ID        string
-	program   *goja.Program
+	code      string
+	filename  string
 	schema    settings.Schema
 	loadError error
 }
 type Info = extensions.Info
 type Manager struct {
 	definitions         []Definition
+	dataDir             string
+	workersMu           sync.Mutex
+	workers             map[string]*nodeWorker
 	mu                  sync.Mutex
 	state               map[string]string
 	settingsMu          sync.RWMutex
@@ -58,14 +62,16 @@ type Context struct {
 	TurnID    string `json:"turnId,omitempty"`
 }
 type instance struct {
-	id       string
-	vm       *goja.Runtime
-	settings string
-	failed   bool
-	hook     string
-	logs     []LogEntry
-	secrets  []string
-	handlers map[string][]goja.Callable
+	id         string
+	worker     *nodeWorker
+	generation uint64
+	session    string
+	settings   string
+	failed     bool
+	hook       string
+	logs       []LogEntry
+	secrets    []string
+	handlers   map[string]int
 }
 type Session struct {
 	nativeFailed       map[string]bool
@@ -81,10 +87,13 @@ type Session struct {
 	logLimited         bool
 }
 
-// Load reads operator-provisioned files once. There is deliberately no installer,
-// module resolution, filesystem, network, timer or process API in the VM.
-func Load(directory string) (*Manager, error) {
+// Load compiles operator-provisioned TypeScript files once. Node resolves runtime
+// dependencies relative to the source file; extensions have normal OS access.
+func Load(directory string, dataDirs ...string) (*Manager, error) {
 	m := &Manager{state: map[string]string{}}
+	if len(dataDirs) > 0 {
+		m.dataDir = dataDirs[0]
+	}
 	if directory == "" {
 		return m, nil
 	}
@@ -101,7 +110,7 @@ func Load(directory string) (*Manager, error) {
 		}
 		id := strings.TrimSuffix(entry.Name(), ".ts")
 		source, readErr := os.ReadFile(filepath.Join(directory, entry.Name()))
-		def, err := Compile(id, string(source))
+		def, err := compileFile(id, string(source), filepath.Join(directory, entry.Name()))
 		if readErr != nil {
 			err = readErr
 		}
@@ -121,19 +130,25 @@ func Load(directory string) (*Manager, error) {
 	return m, nil
 }
 func Compile(id, source string) (Definition, error) {
+	filename, _ := filepath.Abs(id + ".ts")
+	return compileFile(id, source, filename)
+}
+func compileFile(id, source, filename string) (Definition, error) {
 	if !validID.MatchString(id) || extensions.Builtin(id) || len(source) > 1<<20 {
 		return Definition{}, errors.New("invalid extension source")
 	}
-	result := api.Transform(source, api.TransformOptions{Loader: api.LoaderTS, Format: api.FormatCommonJS, Target: api.ES2020, Sourcefile: id + ".ts"})
-	if len(result.Errors) != 0 {
-		return Definition{}, fmt.Errorf("extension %s: %s", id, result.Errors[0].Text)
-	}
-	program, err := goja.Compile(id, string(result.Code), true)
+	filename, err := filepath.Abs(filename)
 	if err != nil {
 		return Definition{}, err
 	}
-	schema, err := readSchema(id, program)
-	return Definition{ID: id, program: program, schema: schema}, err
+	result := api.Build(api.BuildOptions{Stdin: &api.StdinOptions{Contents: source, ResolveDir: filepath.Dir(filename), Sourcefile: filename, Loader: api.LoaderTS}, Bundle: true, Packages: api.PackagesExternal, Platform: api.PlatformNode, Format: api.FormatCommonJS, Target: api.ES2022, Write: false, LogLevel: api.LogLevelSilent})
+	if len(result.Errors) > 0 {
+		return Definition{}, fmt.Errorf("extension %s: %s", id, result.Errors[0].Text)
+	}
+	def := Definition{ID: id, code: string(result.OutputFiles[0].Contents), filename: filename}
+	schema, err := readSchema(def)
+	def.schema = schema
+	return def, err
 }
 func New(definitions ...Definition) *Manager {
 	return &Manager{definitions: definitions, state: map[string]string{}}
@@ -197,108 +212,22 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 		if disabled[def.ID] || def.loadError != nil {
 			continue
 		}
-		in := &instance{id: def.ID, vm: goja.New(), settings: m.settingsJSON(def.ID), handlers: map[string][]goja.Callable{}}
+		in := &instance{id: def.ID, worker: m.worker(def.ID), session: core.NewID(), settings: m.settingsJSON(def.ID), handlers: map[string]int{}}
 		s.rememberSecrets(in)
 		in.hook = "initialize"
 		if err := m.configurationError(def.ID); err != nil {
 			s.failed(in, "settings", err)
 			continue
 		}
-		vm := in.vm
-		vm.SetMaxCallStackSize(256)
-		err := in.run(ctx, func() error {
-			_, _ = vm.RunString("var module = {exports:{}}; var exports = module.exports;")
-			_, err := vm.RunProgram(def.program)
-			if err != nil {
-				return err
-			}
-			factory, ok := goja.AssertFunction(vm.Get("module").ToObject(vm).Get("exports").ToObject(vm).Get("default"))
-			if !ok {
-				return errors.New("default export must be a factory")
-			}
-			apiObject := vm.NewObject()
-			_ = apiObject.Set("log", func(level, message string, fields any) {
-				raw, err := json.Marshal(map[string]any{"level": level, "message": message, "fields": fields})
-				if err != nil {
-					panic(vm.NewTypeError("log fields must be JSON"))
-				}
-				severity, text, values, err := logFields(string(raw))
-				if err != nil {
-					panic(vm.NewTypeError("invalid log entry: %s", err))
-				}
-				if s.logCount >= MaxRequestLogs || s.logBytes+len(raw) > MaxRequestLogBytes {
-					if !s.logLimited {
-						s.logLimited = true
-						in.logs = append(in.logs, LogEntry{Level: "WARNING", Message: "Extension log limit reached; further authored logs dropped for this request."})
-					}
-					return
-				}
-				s.logCount++
-				s.logBytes += len(raw)
-				in.logs = append(in.logs, LogEntry{Level: severity, Message: text, Fields: values, AtMS: time.Now().UnixMilli()})
-			})
-			_ = apiObject.Set("getSettings", func() goja.Value {
-				value, err := vm.RunString("JSON.parse(" + quote(in.settings) + ")")
-				if err != nil {
-					panic(err)
-				}
-				return value
-			})
-			_ = apiObject.Set("on", func(name string, handler goja.Callable) {
-				if !hooks[name] || handler == nil || len(in.handlers[name]) >= 32 {
-					panic(vm.NewTypeError("invalid hook registration"))
-				}
-				in.handlers[name] = append(in.handlers[name], handler)
-			})
-			// Atomic per-extension/client/thread JSON state, bounded and process-local.
-			_ = apiObject.Set("updateThread", func(update goja.Callable) goja.Value {
-				if update == nil {
-					panic(vm.NewTypeError("updateThread requires a callback"))
-				}
-				if identity.ThreadID == "" {
-					panic(vm.NewTypeError("native thread identity unavailable"))
-				}
-				m.mu.Lock()
-				defer m.mu.Unlock()
-				key := def.ID + "\x00" + identity.ClientID + "\x00" + identity.ThreadID
-				raw := m.state[key]
-				if raw == "" {
-					raw = "null"
-				}
-				value, err := vm.RunString("JSON.parse(" + quote(raw) + ")")
-				if err != nil {
-					panic(err)
-				}
-				next, err := update(goja.Undefined(), value)
-				if err != nil {
-					panic(err)
-				}
-				if synchronous(next) != nil {
-					panic(vm.NewTypeError("async state updates are unsupported"))
-				}
-				encoded, err := stringify(vm, next)
-				if err != nil || len(encoded) > 64<<10 {
-					panic(vm.NewTypeError("thread state must be JSON under 64 KiB"))
-				}
-				if _, exists := m.state[key]; !exists && len(m.state) >= 1024 {
-					panic(vm.NewTypeError("thread state capacity reached"))
-				}
-				if encoded == "null" {
-					delete(m.state, key)
-				} else {
-					m.state[key] = encoded
-				}
-				return next
-			})
-			value, err := factory(goja.Undefined(), apiObject)
-			if err != nil {
-				return err
-			}
-			return synchronous(value)
-		})
+		var names []string
+		for name := range hooks {
+			names = append(names, name)
+		}
+		_, err := s.nodeCall(in, map[string]any{"op": "start", "code": def.code, "filename": def.filename, "hooks": names, "dataDir": dataDirectory(m.dataDir, def.ID)})
 		s.flushLogs(in)
 		if err != nil {
 			if ctx.Err() != nil {
+				s.Finish("cancelled")
 				return nil, ctx.Err()
 			}
 			s.failed(in, "initialize", err)
@@ -307,6 +236,7 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 		s.instances = append(s.instances, in)
 		if err := s.emitInstance(in, "settings_loaded", map[string]any{"settings": decodeSettings(in.settings)}, nil); err != nil {
 			if ctx.Err() != nil {
+				s.Finish("cancelled")
 				return nil, ctx.Err()
 			}
 			s.failed(in, "settings_loaded", err)
@@ -315,55 +245,71 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 	return s, nil
 }
 func quote(s string) string { b, _ := json.Marshal(s); return string(b) }
-func synchronous(v goja.Value) error {
-	if obj, ok := v.(*goja.Object); ok {
-		if _, ok := goja.AssertFunction(obj.Get("then")); ok {
-			return errors.New("async hooks are unsupported")
+
+func (s *Session) nodeCall(in *instance, command map[string]any) (map[string]json.RawMessage, error) {
+	command["session"] = in.session
+	command["identity"] = s.identity
+	command["settings"] = decodeSettings(in.settings)
+	// The worker serializes hooks; state is read after acquiring its gate via a
+	// protocol read so concurrent requests never use stale snapshots.
+	reply, generation, err := in.worker.call(s.ctx, in.generation, command, func(message map[string]json.RawMessage) (any, error) {
+		switch string(message["kind"]) {
+		case `"state_read"`:
+			key := in.id + "\x00" + s.identity.ClientID + "\x00" + s.identity.ThreadID
+			s.manager.mu.Lock()
+			raw := s.manager.state[key]
+			s.manager.mu.Unlock()
+			if raw == "" {
+				raw = "null"
+			}
+			return map[string]any{"value": json.RawMessage(raw)}, nil
+		case `"state"`:
+			key := in.id + "\x00" + s.identity.ClientID + "\x00" + s.identity.ThreadID
+			raw := string(message["value"])
+			s.manager.mu.Lock()
+			defer s.manager.mu.Unlock()
+			if raw != "null" {
+				if _, exists := s.manager.state[key]; !exists && len(s.manager.state) >= 1024 {
+					return map[string]any{"error": "thread state capacity reached"}, nil
+				}
+				s.manager.state[key] = raw
+			} else {
+				delete(s.manager.state, key)
+			}
+			return map[string]any{}, nil
+		case `"log"`:
+			raw := message["entry"]
+			level, text, fields, err := logFields(string(raw))
+			if err != nil {
+				return nil, err
+			}
+			if s.logCount >= MaxRequestLogs || s.logBytes+len(raw) > MaxRequestLogBytes {
+				if !s.logLimited {
+					s.logLimited = true
+					in.logs = append(in.logs, LogEntry{Level: "WARNING", Message: "Extension log limit reached; further authored logs dropped for this request."})
+				}
+				return nil, nil
+			}
+			s.logCount++
+			s.logBytes += len(raw)
+			in.logs = append(in.logs, LogEntry{Level: level, Message: text, Fields: fields, AtMS: time.Now().UnixMilli()})
+			return nil, nil
+		}
+		return nil, errors.New("unknown Node worker message")
+	})
+	if generation != 0 {
+		in.generation = generation
+	}
+	if raw := reply["handlers"]; len(raw) > 0 {
+		if decodeErr := json.Unmarshal(raw, &in.handlers); err == nil {
+			err = decodeErr
 		}
 	}
-	return nil
-}
-func stringify(vm *goja.Runtime, v goja.Value) (string, error) {
-	fn, _ := goja.AssertFunction(vm.Get("JSON").ToObject(vm).Get("stringify"))
-	result, err := fn(goja.Undefined(), v)
-	if err != nil {
-		return "", err
-	}
-	if goja.IsUndefined(result) {
-		return "", errors.New("expected JSON")
-	}
-	return result.String(), nil
-}
-func (in *instance) run(ctx context.Context, fn func() error) (err error) {
-	defer func() {
-		if recover() != nil {
-			err = errors.New("extension host operation panicked")
-		}
-	}()
-	// Join the watchdog before clearing the interrupt; a late interrupt must not
-	// poison a later hook. No goroutine runs JS concurrently with the caller.
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	done, stopped := make(chan struct{}), make(chan struct{})
-	go func() {
-		defer close(stopped)
-		timer := time.NewTimer(HookTimeout)
-		defer timer.Stop()
-		select {
-		case <-ctx.Done():
-			in.vm.Interrupt("cancelled")
-		case <-timer.C:
-			in.vm.Interrupt("hook timeout")
-		case <-done:
-		}
-	}()
-	defer func() { close(done); <-stopped; in.vm.ClearInterrupt() }()
-	return fn()
+	return reply, err
 }
 func (s *Session) Has(name string) bool {
 	for _, in := range s.instances {
-		if !in.failed && len(in.handlers[name]) > 0 {
+		if !in.failed && in.handlers[name] > 0 {
 			return true
 		}
 	}
@@ -371,7 +317,7 @@ func (s *Session) Has(name string) bool {
 }
 
 // Emit chains explicit patches; undefined means unchanged. A response patch
-// short-circuits request processing. Go-owned values never cross into the VM.
+// short-circuits request processing. Go-owned values cross the worker boundary only as JSON.
 func (s *Session) Emit(name string, event map[string]any) error { return s.Transform(name, event, nil) }
 
 // Transform commits one extension's patches only after all its handlers and the
@@ -403,7 +349,7 @@ func (s *Session) Transform(name string, event map[string]any, validate func(map
 				}
 			}
 		}
-		if len(in.handlers[name]) == 0 {
+		if in.handlers[name] == 0 {
 			continue
 		}
 		candidate := make(map[string]any, len(event))
@@ -431,52 +377,8 @@ func (s *Session) Transform(name string, event map[string]any, validate func(map
 }
 func (s *Session) emitInstance(in *instance, name string, event map[string]any, validate func(map[string]any) error) error {
 	in.hook = name
-	for _, handler := range in.handlers[name] {
-		err := in.run(s.ctx, func() error {
-			raw, err := json.Marshal(event)
-			if err != nil || len(raw) > MaxPayload {
-				return errors.New("hook input exceeds limit")
-			}
-			value, err := in.vm.RunString("JSON.parse(" + quote(string(raw)) + ")")
-			if err != nil {
-				return err
-			}
-			identity, _ := json.Marshal(s.identity)
-			ctx, err := in.vm.RunString("JSON.parse(" + quote(string(identity)) + ")")
-			if err != nil {
-				return err
-			}
-			result, err := handler(goja.Undefined(), value, ctx)
-			if err != nil {
-				return err
-			}
-			if err = synchronous(result); err != nil {
-				return err
-			}
-			if name == "settings_loaded" || name == "settings_changed" || goja.IsUndefined(result) || goja.IsNull(result) {
-				return nil
-			}
-			encoded, err := stringify(in.vm, result)
-			if err != nil {
-				return err
-			}
-			if len(encoded) > MaxPayload {
-				return errors.New("hook output exceeds limit")
-			}
-			var patch map[string]any
-			if err = json.Unmarshal([]byte(encoded), &patch); err != nil {
-				return err
-			}
-			for k, v := range patch {
-				event[k] = v
-			}
-			if validate != nil {
-				return validate(event)
-			}
-			return nil
-		})
-		s.flushLogs(in)
-		if err != nil {
+	for index, count := 0, in.handlers[name]; index < count; index++ {
+		if err := s.emitHandler(in, name, index, event, validate); err != nil {
 			return err
 		}
 		if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
@@ -485,21 +387,40 @@ func (s *Session) emitInstance(in *instance, name string, event map[string]any, 
 	}
 	return nil
 }
+func (s *Session) emitHandler(in *instance, name string, index int, event map[string]any, validate func(map[string]any) error) error {
+	reply, err := s.nodeCall(in, map[string]any{"op": "hook", "hook": name, "index": index, "event": event})
+	s.flushLogs(in)
+	if err != nil {
+		return err
+	}
+	if name == "settings_loaded" || name == "settings_changed" || string(reply["patch"]) == "null" {
+		return nil
+	}
+	var patch map[string]any
+	if err = json.Unmarshal(reply["patch"], &patch); err != nil {
+		return err
+	}
+	for k, v := range patch {
+		event[k] = v
+	}
+	if validate != nil {
+		return validate(event)
+	}
+	return nil
+}
 
-// Finish gets a fresh bounded context so cancellation still permits cleanup.
+// Finish gets a fresh bounded context. A killed worker cannot restore closures.
 func (s *Session) Finish(outcome string) {
 	cleanup := *s
 	cleanup.ctx = context.Background()
 	for _, in := range s.instances {
-		for _, handler := range in.handlers["finish"] {
-			handlers := in.handlers["finish"]
-			in.handlers["finish"] = []goja.Callable{handler}
-			err := cleanup.emitInstance(in, "finish", map[string]any{"outcome": outcome}, nil)
-			in.handlers["finish"] = handlers
-			if err != nil {
+		in.hook = "finish"
+		for index, count := 0, in.handlers["finish"]; index < count; index++ {
+			if err := cleanup.emitHandler(in, "finish", index, map[string]any{"outcome": outcome}, nil); err != nil {
 				cleanup.failed(in, "finish", err)
 			}
 		}
+		_, _ = cleanup.nodeCall(in, map[string]any{"op": "release"})
 	}
 }
 func IDs(disabled map[string]bool) []string {

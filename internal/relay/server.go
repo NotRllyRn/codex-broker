@@ -20,7 +20,7 @@ type Server struct {
 }
 
 func NewServer(relay *Relay) *Server {
-	s := &Server{relay: relay, engine: gateway.New(relay, nil), mux: http.NewServeMux()}
+	s := &Server{relay: relay, engine: gateway.New(relay, nil, relay.config.DataDir), mux: http.NewServeMux()}
 	s.engine.ExtensionLog = func(entry proxyextension.LogEntry) {
 		relay.mu.Lock()
 		defer relay.mu.Unlock()
@@ -79,3 +79,5 @@ func write(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
+
+func (s *Server) Close() { s.engine.Extensions.Close() }

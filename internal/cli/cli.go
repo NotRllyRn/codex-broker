@@ -181,6 +181,7 @@ func serve(ctx context.Context, settings config.Config, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer handler.Close()
 	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.TLSCertFile, settings.TLSKeyFile)
 }
 func publicServe(ctx context.Context, settings config.Config, args []string) error {
@@ -221,7 +222,9 @@ func relayServe(ctx context.Context, settings config.Config, args []string) erro
 		return err
 	}
 	service.Start(ctx)
-	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: relay.NewServer(service), ReadHeaderTimeout: 10 * time.Second}, settings.RelayTLSCertFile, settings.RelayTLSKeyFile)
+	handler := relay.NewServer(service)
+	defer handler.Close()
+	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.RelayTLSCertFile, settings.RelayTLSKeyFile)
 }
 func runServer(ctx context.Context, server *http.Server, cert, key string) error {
 	result := make(chan error, 1)

@@ -88,8 +88,8 @@ type Engine struct {
 	unreadyUntil       atomic.Int64
 }
 
-func New(authority Authority, metrics Metrics) *Engine {
-	extensions, err := proxyextension.Load(os.Getenv("WINDOWKEEPER_PROXY_EXTENSIONS_DIR"))
+func New(authority Authority, metrics Metrics, dataDirs ...string) *Engine {
+	extensions, err := proxyextension.Load(os.Getenv("WINDOWKEEPER_PROXY_EXTENSIONS_DIR"), dataDirs...)
 	return &Engine{Authority: authority, Client: responsesproxy.NewClient(), Metrics: metrics, Extensions: extensions, ExtensionError: err}
 }
 

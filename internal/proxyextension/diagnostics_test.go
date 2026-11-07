@@ -108,7 +108,7 @@ func TestExceptionRenderingAndSinkCannotBreakProxy(t *testing.T) {
 	if time.Since(before) > 2*time.Second {
 		t.Fatal("error rendering was unbounded")
 	}
-	if m.latest["render"].Message != "Extension error details could not be rendered" {
+	if !strings.Contains(m.latest["render"].Message, "extension hook timeout") {
 		t.Fatal(m.latest)
 	}
 }

@@ -60,7 +60,7 @@ func (a brokerGatewayAuthority) Activate(context.Context, gateway.Lease) error {
 
 func (s *Server) proxyGateway() *gateway.Engine {
 	s.gatewayOnce.Do(func() {
-		s.gatewayEngine = gateway.New(brokerGatewayAuthority{s}, &s.proxyStats)
+		s.gatewayEngine = gateway.New(brokerGatewayAuthority{s}, &s.proxyStats, s.App.Config.DataDir)
 		s.gatewayEngine.Client = s.proxyClient
 		s.gatewayEngine.ExtensionLog = s.recordExtensionLog
 		s.gatewayEngine.Extensions.ReportLoadErrors(s.recordExtensionLog)
@@ -90,3 +90,11 @@ func emptyStringNil(value string) any {
 	return value
 }
 func compactDuration(seconds int) string { return gateway.CompactDuration(seconds) }
+
+// Close releases extension workers after HTTP requests have drained.
+func (s *Server) Close() {
+	s.gatewayOnce.Do(func() {})
+	if s.gatewayEngine != nil {
+		s.gatewayEngine.Extensions.Close()
+	}
+}

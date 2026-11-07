@@ -21,6 +21,7 @@ func definition(t *testing.T, id, source string) Definition {
 }
 func start(t *testing.T, m *Manager, id Context) *Session {
 	t.Helper()
+	t.Cleanup(m.Close)
 	s, err := m.Start(t.Context(), id, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +67,7 @@ func TestBoundedFailures(t *testing.T) {
 	for name, source := range map[string]string{
 		"throw":   `export default p=>p.on('request',()=>{throw Error('private content')})`,
 		"loop":    `export default p=>p.on('request',()=>{while(true){}})`,
-		"promise": `export default p=>p.on('request',async()=>({body:'no'}))`,
+		"promise": `export default p=>p.on('request',()=>new Promise(()=>{}))`,
 		"cycle":   `export default p=>p.on('request',()=>{const a={};a.self=a;return a})`,
 		"getter":  `export default p=>p.on('request',()=>({get body(){while(true){}}}))`,
 	} {
@@ -88,7 +89,7 @@ func TestBoundedFailures(t *testing.T) {
 	if _, err := Compile("bad", `while(true){}`); err == nil {
 		t.Fatal("accepted unbounded module initialization")
 	}
-	for _, source := range []string{`export default async p=>{}`, `export default p=>p.on('unknown',()=>{})`, `export default p=>require('fs')`} {
+	for _, source := range []string{`export default p=>new Promise(()=>{})`, `export default p=>p.on('unknown',()=>{})`, `export default p=>require('missing-example-package')`} {
 		m := New(definition(t, "bad", source))
 		session, err := m.Start(t.Context(), Context{}, nil)
 		if err != nil || session.Active() || m.latest["bad"].Hook != "initialize" {
@@ -96,7 +97,7 @@ func TestBoundedFailures(t *testing.T) {
 		}
 	}
 }
-func TestCancellationAndFinish(t *testing.T) {
+func TestCancellationLosesWorkerClosuresAndFinishIsBounded(t *testing.T) {
 	m := New(definition(t, "cancel", `export default p=>{p.on('request',()=>{while(true){}});p.on('finish',()=>p.updateThread(()=>42));p.on('prepared',()=>({body:String(p.updateThread(x=>x))}));}`))
 	ctx, cancel := context.WithCancel(t.Context())
 	s, err := m.Start(ctx, Context{ClientID: "client", ThreadID: "thread"}, nil)
@@ -110,7 +111,7 @@ func TestCancellationAndFinish(t *testing.T) {
 	s.Finish("cancelled")
 	other := start(t, m, Context{ClientID: "client", ThreadID: "thread"})
 	e := map[string]any{}
-	if err := other.Emit("prepared", e); err != nil || e["body"] != "42" {
+	if err := other.Emit("prepared", e); err != nil || e["body"] != "null" {
 		t.Fatal(e, err)
 	}
 }

@@ -6,36 +6,24 @@ import (
 	"fmt"
 
 	"github.com/NotRllyRn/codex-broker/extensions/settings"
-	"github.com/dop251/goja"
 )
 
-func readSchema(id string, program *goja.Program) (settings.Schema, error) {
+func readSchema(def Definition) (settings.Schema, error) {
+	worker := newWorker()
+	defer worker.close()
+	reply, _, err := worker.call(context.Background(), 0, map[string]any{"op": "schema", "code": def.code, "filename": def.filename}, nil)
 	var schema settings.Schema
-	in := &instance{id: id, vm: goja.New()}
-	in.vm.SetMaxCallStackSize(256)
-	err := in.run(context.Background(), func() error {
-		_, err := in.vm.RunString("var module={exports:{}};var exports=module.exports;")
-		if err != nil {
-			return err
+	if err == nil {
+		if len(reply["schema"]) > settings.MaxBytes {
+			return schema, fmt.Errorf("invalid schema")
 		}
-		if _, err = in.vm.RunProgram(program); err != nil {
-			return err
-		}
-		value := in.vm.Get("module").ToObject(in.vm).Get("exports").ToObject(in.vm).Get("settings")
-		if value == nil || goja.IsUndefined(value) {
-			return nil
-		}
-		encoded, err := stringify(in.vm, value)
-		if err != nil || len(encoded) > settings.MaxBytes {
-			return fmt.Errorf("invalid schema")
-		}
-		if err = json.Unmarshal([]byte(encoded), &schema); err != nil {
-			return err
-		}
-		return schema.Check()
-	})
+		err = json.Unmarshal(reply["schema"], &schema)
+	}
+	if err == nil {
+		err = schema.Check()
+	}
 	if err != nil {
-		return settings.Schema{}, fmt.Errorf("extension %s has an invalid settings declaration or module initialization: %s", id, in.errorText(err))
+		return settings.Schema{}, fmt.Errorf("extension %s has an invalid settings declaration or module initialization: %w", def.ID, err)
 	}
 	return schema, nil
 }
