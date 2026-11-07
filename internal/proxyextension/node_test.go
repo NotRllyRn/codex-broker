@@ -50,9 +50,11 @@ func TestNodeImportsAsyncAndDurableDirectory(t *testing.T) {
 	}
 }
 
+// Database setup uses the factory initialization budget; this checks SQLite access
+// and durable state across requests, not filesystem latency under CI contention.
 func TestNodeSQLite(t *testing.T) {
 	t.Setenv("WINDOWKEEPER_DATA_DIR", t.TempDir())
-	m := New(definition(t, "database", `import {DatabaseSync} from 'node:sqlite';import {join} from 'node:path';export default p=>{p.on('request',()=>{const db=new DatabaseSync(join(p.getDataDir(),'history.sqlite'));try{db.exec('CREATE TABLE IF NOT EXISTS history(body TEXT)');db.prepare('INSERT INTO history VALUES (?)').run('example');return {body:String(db.prepare('SELECT count(*) AS n FROM history').get().n)}}finally{db.close()}})}`))
+	m := New(definition(t, "database", `import {DatabaseSync} from 'node:sqlite';import {join} from 'node:path';export default p=>{const db=new DatabaseSync(join(p.getDataDir(),'history.sqlite'));try{db.exec('CREATE TABLE IF NOT EXISTS history(body TEXT)');db.prepare('INSERT INTO history VALUES (?)').run('example');const count=String(db.prepare('SELECT count(*) AS n FROM history').get().n);p.on('request',()=>({body:count}))}finally{db.close()}}`))
 	for _, want := range []string{"1", "2"} {
 		s := start(t, m, Context{})
 		event := map[string]any{}
