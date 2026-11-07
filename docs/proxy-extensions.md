@@ -160,3 +160,22 @@ process memory; the byte/time limits are not a hard heap quota, and expensive
 native VM operations may not be promptly interruptible. There is no per-module
 process isolation. No VM, body buffering or additional event serialization is
 used when only the native default extension is active.
+
+## Regression checks
+
+Run `go test ./...`, `go vet ./...`, and
+`go test -race -timeout=20m ./...`. The longer race timeout accommodates repeated
+SQLite migration fixtures on shared development machines. Runtime and gateway
+tests cover TypeScript compilation, ordering, local handling, cancellation,
+timeouts, state isolation, and failure cleanup. HTTP/relay tests verify settings,
+active-request snapshots, replay cleanup, failover, response transformations,
+raw telemetry and offline relay configuration. Stream tests exercise split
+frames, terminal suppression, native compaction and opaque payload preservation.
+
+Run `npm ci`, `npm run check:proxy-extensions`, `npm run test:proxy`,
+`npm run test:usage`, `npm run test:enrollment`, `npm run test:pi` and
+`npm run check:pi` for declarations, examples and existing JavaScript integrations.
+Packaging checks are `CGO_ENABLED=0 go build ./cmd/codex-broker`,
+`nix build --no-link` and `nix flake check --no-build` (the last command evaluates
+module definitions; it does not execute the NixOS VM tests). Protocol regressions
+use local fake upstreams and isolated databases, not production accounts.
