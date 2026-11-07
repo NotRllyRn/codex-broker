@@ -152,8 +152,9 @@ Hook JSON input/output is capped at 128 MiB, buffered/synthetic responses at
 transformations may hit the hook budget before the byte cap. Hooks execute on
 the request path, preserving backpressure; cancellation interrupts JavaScript.
 Errors fail closed with a generic 502 before headers or abort the connection
-after commit. Logs identify the failing extension/hook without recording its
-exception or request body. Cleanup has a fresh bounded context after cancellation.
+after commit. Request-stage failures identify the failing extension/hook in logs;
+client errors never include exception details or request bodies. Streaming-hook
+failures abort the response. Cleanup has a fresh bounded context after cancellation.
 
 These are trusted operator extensions, not a hostile-code sandbox. Goja shares
 process memory; the byte/time limits are not a hard heap quota, and expensive
