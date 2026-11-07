@@ -17,7 +17,7 @@ const NoticePrefix = "msg_codex_broker_"
 const NativeCompactionInputTokens int64 = 1_000_000
 
 type StreamOptions struct {
-	NoticeText              *string
+	NoticeText              func(Notice) string
 	UpstreamEvent           func(map[string]any) (map[string]any, error)
 	ClientEvent             func(map[string]any) (map[string]any, error)
 	ArmNativeCompaction     bool
@@ -178,9 +178,11 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 	w.WriteHeader(response.StatusCode)
 	controller := http.NewResponseController(w)
 	_ = controller.Flush()
-	noticeText := AccountNotice(notice)
+	noticeText := ""
 	if options.NoticeText != nil {
-		noticeText = *options.NoticeText
+		noticeText = options.NoticeText(notice)
+	} else {
+		noticeText = AccountNotice(notice)
 	}
 	inserted, err := streamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), noticeText, firstEventAtMS, observe, options)
 	if err != nil {

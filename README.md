@@ -358,3 +358,6 @@ name, retaining quota percentages and reset times. This also applies to the
 local adapter. It is independent of dashboard streamer mode. Upgrade broker and
 relays together (protocol 5); relay changes apply after their next successful
 snapshot sync, including when a relay is serving from its offline cache.
+
+Proxy response customization is available through [proxy extensions](docs/proxy-extensions.md),
+including the default account-usage prefix toggle in Settings.

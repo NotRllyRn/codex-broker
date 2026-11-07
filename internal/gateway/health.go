@@ -19,6 +19,9 @@ const readinessCooldown = 30 * time.Second
 // Ready is passive: a timeout temporarily removes this process from routing.
 // The cooldown expires so a primary behind a backup can receive traffic again.
 func (e *Engine) Ready() bool {
+	if e.ExtensionError != nil {
+		return false
+	}
 	until := e.unreadyUntil.Load()
 	if until == 0 {
 		return true

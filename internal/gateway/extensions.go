@@ -235,7 +235,15 @@ func extensionResponse(s *proxyextension.Session, w http.ResponseWriter, respons
 	responsesproxy.CopyResponse(w, result)
 	return nil
 }
-func extensionFailure(w http.ResponseWriter) error {
+func (e *Engine) extensionFailure(w http.ResponseWriter, err error) error {
+	var failure *proxyextension.Failure
+	if e.Log != nil {
+		message := "Proxy extension failed."
+		if errors.As(err, &failure) {
+			message = failure.Error()
+		}
+		e.Log("ERROR", "proxy.extension", message)
+	}
 	return Error(w, 502, "extension_failed", "Proxy extension failed.")
 }
 func extensionFinish(s *proxyextension.Session, ctx context.Context, outcome *string) {

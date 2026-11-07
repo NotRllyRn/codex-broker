@@ -53,3 +53,11 @@ func TestInvalidSyntheticResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestInvalidExtensionConfigurationIsUnready(t *testing.T) {
+	t.Setenv("WINDOWKEEPER_PROXY_EXTENSIONS_DIR", "/nonexistent-proxy-extension-directory")
+	engine := New(nil, nil)
+	if engine.ExtensionError == nil || engine.Ready() {
+		t.Fatal("invalid extension configuration reported ready")
+	}
+}

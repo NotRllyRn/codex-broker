@@ -26,6 +26,10 @@ var validID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 var hooks = map[string]bool{"request": true, "prepared": true, "route": true, "attempt": true, "upstream": true, "retry": true, "response": true, "upstream_event": true, "client_event": true, "body": true, "finish": true}
 
+type Failure struct{ ID, Hook string }
+
+func (e *Failure) Error() string { return fmt.Sprintf("extension %s hook %s failed", e.ID, e.Hook) }
+
 type Definition struct {
 	ID      string
 	program *goja.Program
@@ -152,6 +156,9 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 			})
 			// Atomic per-extension/client/thread JSON state, bounded and process-local.
 			_ = apiObject.Set("updateThread", func(update goja.Callable) goja.Value {
+				if update == nil {
+					panic(vm.NewTypeError("updateThread requires a callback"))
+				}
 				if identity.ThreadID == "" {
 					panic(vm.NewTypeError("native thread identity unavailable"))
 				}
@@ -169,6 +176,9 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 				next, err := update(goja.Undefined(), value)
 				if err != nil {
 					panic(err)
+				}
+				if synchronous(next) != nil {
+					panic(vm.NewTypeError("async state updates are unsupported"))
 				}
 				encoded, err := stringify(vm, next)
 				if err != nil || len(encoded) > 64<<10 {
@@ -191,7 +201,7 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 			return synchronous(value)
 		})
 		if err != nil {
-			return nil, fmt.Errorf("extension %s initialization failed", def.ID)
+			return nil, &Failure{ID: def.ID, Hook: "initialize"}
 		}
 		s.instances = append(s.instances, in)
 	}
@@ -236,11 +246,8 @@ func (in *instance) run(ctx context.Context, fn func() error) error {
 		case <-done:
 		}
 	}()
-	err := fn()
-	close(done)
-	<-stopped
-	in.vm.ClearInterrupt()
-	return err
+	defer func() { close(done); <-stopped; in.vm.ClearInterrupt() }()
+	return fn()
 }
 func (s *Session) Has(name string) bool {
 	for _, in := range s.instances {
@@ -297,7 +304,7 @@ func (s *Session) Emit(name string, event map[string]any) error {
 				return nil
 			})
 			if err != nil {
-				return fmt.Errorf("extension %s hook %s failed", in.id, name)
+				return &Failure{ID: in.id, Hook: name}
 			}
 			if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
 				return nil
@@ -309,10 +316,13 @@ func (s *Session) Emit(name string, event map[string]any) error {
 
 // Finish gets a fresh bounded context so cancellation still permits cleanup.
 func (s *Session) Finish(outcome string) {
-	ctx := s.ctx
-	s.ctx = context.Background()
-	defer func() { s.ctx = ctx }()
-	_ = s.Emit("finish", map[string]any{"outcome": outcome})
+	for _, in := range s.instances {
+		for _, handler := range in.handlers["finish"] {
+			cleanup := &instance{id: in.id, vm: in.vm, handlers: map[string][]goja.Callable{"finish": {handler}}}
+			session := &Session{ctx: context.Background(), identity: s.identity, instances: []*instance{cleanup}}
+			_ = session.Emit("finish", map[string]any{"outcome": outcome})
+		}
+	}
 }
 func IDs(disabled map[string]bool) []string {
 	var ids []string

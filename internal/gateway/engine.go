@@ -141,13 +141,13 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if e.ExtensionError != nil {
-		return extensionFailure(w)
+		return e.extensionFailure(w, e.ExtensionError)
 	}
 	disabled := map[string]bool{}
 	if e.DisabledExtensions != nil {
 		disabled, err = e.DisabledExtensions(r.Context())
 		if err != nil {
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 	}
 	requestID := core.NewID()
@@ -157,7 +157,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	}
 	ext, err := e.Extensions.Start(r.Context(), identity, disabled)
 	if err != nil {
-		return extensionFailure(w)
+		return e.extensionFailure(w, err)
 	}
 	outcome := "error"
 	defer extensionFinish(ext, r.Context(), &outcome)
@@ -168,19 +168,19 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	var local *http.Response
 	body, local, err = extensionRequest(ext, "request", r, body, nil)
 	if err != nil {
-		return extensionFailure(w)
+		return e.extensionFailure(w, err)
 	}
 	sendLocal := func(response *http.Response) error {
 		err := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error {
 			if ext.Has("client_event") && response.StatusCode == http.StatusOK {
-				_, err := responsesproxy.CopyNoticeResponse(dst, response, responsesproxy.Notice{}, nil, nil, responsesproxy.StreamOptions{NoticeText: new(string), ClientEvent: extensionEvent(ext, "client_event")})
+				_, err := responsesproxy.CopyNoticeResponse(dst, response, responsesproxy.Notice{}, nil, nil, responsesproxy.StreamOptions{NoticeText: func(responsesproxy.Notice) string { return "" }, ClientEvent: extensionEvent(ext, "client_event")})
 				return err
 			}
 			responsesproxy.CopyResponse(dst, response)
 			return nil
 		})
 		if err != nil {
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 		outcome = "local"
 		return nil
@@ -196,7 +196,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		_ = Error(buffer, status, code, message)
 		response := &http.Response{StatusCode: buffer.status, Header: buffer.header, Body: io.NopCloser(&buffer.body)}
 		if err := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error { responsesproxy.CopyResponse(dst, response); return nil }); err != nil {
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 		return nil
 	}
@@ -231,7 +231,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	}
 	body, local, err = extensionRequest(ext, "prepared", r, body, nil)
 	if err != nil {
-		return extensionFailure(w)
+		return e.extensionFailure(w, err)
 	}
 	if local != nil {
 		return sendLocal(local)
@@ -248,15 +248,12 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		} `json:"reasoning"`
 	}
 	var metadata requestMetadata
-	if isResponse {
-		_ = json.Unmarshal(body, &metadata)
-	}
 	input := RouteRequest{SessionID: "proxy-" + requestID, TurnID: core.NewID()}
 	attemptCounts, previous := map[string]int{}, ""
 	retries, failovers, attemptCount := 0, 0, 0
 	for {
 		if err := ext.Emit("route", map[string]any{"attempt": attemptCount + 1, "failureKind": input.FailureKind}); err != nil {
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 		selected, wait, routeErr := e.Authority.Route(r.Context(), key.ID, input)
 		if routeErr != nil {
@@ -294,13 +291,13 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 		attemptBody, synthetic, hookErr := extensionRequest(ext, "attempt", attemptRequest, body, map[string]any{"attempt": attemptCount, "accountId": selected.AccountID})
 		if hookErr != nil {
-			return extensionFailure(w)
+			return e.extensionFailure(w, hookErr)
 		}
 		if synthetic != nil {
 			return sendLocal(synthetic)
 		}
 		if len(attemptBody) > responsesproxy.MaxRequest {
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 		if isResponse {
 			metadata = requestMetadata{}
@@ -319,7 +316,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		upstreamStatus := response.StatusCode
 		if err := ext.Emit("upstream", map[string]any{"attempt": attemptCount, "accountId": selected.AccountID, "status": response.StatusCode, "headers": safeHeaders(response.Header)}); err != nil {
 			response.Body.Close()
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 		if response.StatusCode >= 300 && response.StatusCode < 400 {
 			response.Body.Close()
@@ -358,8 +355,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 						InputTokens: terminal.InputTokens, CachedInputTokens: terminal.CachedInputTokens, OutputTokens: terminal.OutputTokens, ReasoningTokens: terminal.ReasoningOutputTokens, TotalTokens: terminal.TotalTokens, UsageJSON: terminal.UsageJSON,
 					})
 				}
-				noticeText := ext.UsageNotice(notice)
-				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction, NoticeText: &noticeText, UpstreamEvent: extensionEvent(ext, "upstream_event"), ClientEvent: extensionEvent(ext, "client_event")}
+				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction, NoticeText: ext.UsageNotice, UpstreamEvent: extensionEvent(ext, "upstream_event"), ClientEvent: extensionEvent(ext, "client_event")}
 				if e.Metrics != nil {
 					options.OnNativeCompactionArmed = e.Metrics.NativeCompactionArmed
 				}
@@ -376,14 +372,14 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 				return nil
 			}
 			if err := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error { responsesproxy.CopyResponse(dst, response); return nil }); err != nil {
-				return extensionFailure(w)
+				return e.extensionFailure(w, err)
 			}
 			outcome = "complete"
 			return nil
 		}
 		response.Body.Close()
 		if err := ext.Emit("retry", map[string]any{"attempt": attemptCount, "accountId": selected.AccountID, "failureKind": kind}); err != nil {
-			return extensionFailure(w)
+			return e.extensionFailure(w, err)
 		}
 		input.PreferredAccountID, input.FailedAccountID, input.FailureKind = selected.AccountID, selected.AccountID, kind
 	}

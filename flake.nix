@@ -24,7 +24,7 @@
 
             src = ./.;
 
-            vendorHash = "sha256-WRQDFmcrjs0np4ZxWwFQbTNT9KT4Ck0sJLoCSjGF0q8=";
+            vendorHash = "sha256-4eTyZOtzzY2GIHBl6uAwBZ9ginHjZzpakNYwWrorOfo=";
 
             subPackages = [ "cmd/codex-broker" ];
 

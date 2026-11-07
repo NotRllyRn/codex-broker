@@ -168,3 +168,22 @@ func TestLoadOrderAndSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestFinishRunsAllHandlersAfterFailure(t *testing.T) {
+	m := New(definition(t, "cleanup", `export default p=>{p.on('finish',()=>{throw Error('failure')});p.on('finish',()=>p.updateThread(()=>1));p.on('request',()=>({body:String(p.updateThread(x=>x))}));}`))
+	identity := Context{ClientID: "client", ThreadID: "thread"}
+	start(t, m, identity).Finish("error")
+	e := map[string]any{}
+	if err := start(t, m, identity).Emit("request", e); err != nil || e["body"] != "1" {
+		t.Fatal(e, err)
+	}
+}
+
+func TestThreadUpdateFailures(t *testing.T) {
+	for _, callback := range []string{`null`, `()=>{throw Error('failure')}`, `()=>{while(true){}}`, `async()=>42`} {
+		m := New(definition(t, "state", `export default p=>p.on('request',()=>p.updateThread(`+callback+`))`))
+		if err := start(t, m, Context{ClientID: "client", ThreadID: "thread"}).Emit("request", map[string]any{}); err == nil {
+			t.Fatal("accepted invalid state update", callback)
+		}
+	}
+}

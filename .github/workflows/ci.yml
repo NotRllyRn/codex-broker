@@ -43,7 +43,7 @@ jobs:
       - run: npm run test:usage
       - run: npm run test:proxy
       - run: npm run test:enrollment
-      - run: npm install --prefix packages/pi-extension
+      - run: npm ci
       - run: npm test --prefix packages/pi-extension
       - run: npm run check --prefix packages/pi-extension
       - run: npm run check:proxy-extensions

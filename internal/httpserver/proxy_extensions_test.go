@@ -64,7 +64,7 @@ func TestProxyExtensionTransformsAndNativeIdentity(t *testing.T) {
  p.on('route',()=>{steps.push('route')});
  p.on('attempt',e=>{steps.push('attempt');if(e.accountId!=='account0')throw Error('account');return {headers:{...e.headers,'X-Steps':[steps.join(',')],Authorization:['must-be-replaced']}}});
  p.on('upstream',e=>{if(e.headers['Set-Cookie'])throw Error('cookie');steps.push('upstream')});
- p.on('response',e=>({headers:{...e.headers,'X-Steps':[steps.join(',')]}}));
+ p.on('response',e=>({status:201,headers:{...e.headers,'X-Steps':[steps.join(',')]}}));
  p.on('upstream_event',({event})=>{if(event.response?.usage)event.response.usage.total_tokens=999;return {event}});
  p.on('client_event',({event})=>{if(event.type==='response.output_text.delta')event.delta='changed';return {event}});
  }`)
@@ -83,7 +83,7 @@ func TestProxyExtensionTransformsAndNativeIdentity(t *testing.T) {
 	request.Header.Set("Cookie", "private")
 	result := httptest.NewRecorder()
 	s.mux.ServeHTTP(result, request)
-	if result.Code != 200 || !strings.Contains(result.Body.String(), "changed") || !strings.Contains(result.Body.String(), `"total_tokens":999`) || result.Header().Get("X-Steps") != "request,prepared,route,attempt,upstream" {
+	if result.Code != 201 || !strings.Contains(result.Body.String(), "changed") || !strings.Contains(result.Body.String(), `"total_tokens":999`) || result.Header().Get("X-Steps") != "request,prepared,route,attempt,upstream" {
 		t.Fatal(result.Code, result.Body, result.Header())
 	}
 	var count int
@@ -200,5 +200,38 @@ func TestProxyExtensionSettings(t *testing.T) {
 	}
 	if got := request("POST", "/settings/proxy-extensions/missing/enabled", true, true); got.Code != 404 {
 		t.Fatal(got.Code)
+	}
+}
+
+func TestProxyExtensionToggleSnapshotAndReplayCleanup(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "🔨") {
+			t.Error("disabled extension replay cleanup was skipped")
+		}
+		if err := proxyextension.SetEnabled(t.Context(), s.App.Store, proxyextension.UsageID, false); err != nil {
+			t.Fatal(err)
+		}
+		return upstreamResponse(200, proxyUsageStream("response", "completed", 150)), nil
+	})
+	for i := 0; i < 2; i++ {
+		got := proxyRequest(s, key.Token, "/v1/responses", `{"input":[{"role":"assistant","content":"🔨 Personal usage · 5h 80% 1h0m · 7d 90% 1d0h\n\nPrevious answer"}]}`)
+		if got.Code != 200 || strings.Contains(got.Body.String(), "🔨") != (i == 0) {
+			t.Fatal(got.Code, got.Body)
+		}
+	}
+}
+func TestProxyExtensionBrokerErrorsAndLocalSSE(t *testing.T) {
+	s, key := proxyFixture(t, 0)
+	installProxyExtension(t, s, `export default p=>p.on('body',e=>({status:418,body:'handled broker error'}))`)
+	got := proxyRequest(s, key.Token, "/v1/responses", `{}`)
+	if got.Code != 418 || got.Body.String() != "handled broker error" {
+		t.Fatal(got.Code, got.Body)
+	}
+	installProxyExtension(t, s, `export default p=>{p.on('request',()=>({response:{status:200,headers:{},body:'data: {"type":"response.completed","response":{}}\n\n'}}));p.on('client_event',({event})=>({event:{...event,example:true}}));}`)
+	got = proxyRequest(s, key.Token, "/v1/responses", `{}`)
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"example":true`) {
+		t.Fatal(got.Code, got.Body)
 	}
 }
