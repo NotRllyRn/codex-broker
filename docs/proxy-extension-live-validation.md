@@ -76,3 +76,33 @@ operator-authorized testing.
 Regression validation after the fix: full Go suite, `go vet`, race checks for the
 extension runtime/gateway and affected HTTP/relay extension tests, and live browser
 checks of settings and telemetry. No production deployment or merge was performed.
+
+## Separate compact endpoint investigation
+
+Follow-up on 2026-11-07 reproduced `404 {"detail":"Not Found"}` on the
+extension build, then exercised the actual pre-extension HTTP proxy from
+`main` commit `bdb1bc9` against the same isolated test enrollment. The baseline
+used a SQLite backup, its original gateway/transport code, and no background
+workers or extension runtime. Its transport recorded the upstream URL/status
+without logging credentials. Both `gpt-6.1-sol` and `gpt-5.4` returned the same
+404 directly from `https://chatgpt.com/backend-api/codex/responses/compact`.
+This is not an extension regression or a missing local route.
+
+The mapping agrees with the older Codex endpoint client. Upstream Codex
+[removed that client](https://github.com/openai/codex/commit/1ac689cc7de0e637d35271edbbc132d1553d1767)
+on 2026-09-09, explaining that remote compaction already uses the normal
+Responses API. The tested 0.165.0 trigger/replay path works. This evidence is
+consistent with the account backend no longer serving the separate endpoint;
+it does not establish OpenAI's internal reason or availability for every account.
+
+The [public API still documents standalone compaction](https://developers.openai.com/api/docs/guides/compaction#standalone-compact-endpoint).
+That API and the ChatGPT account backend are different services; the observed
+404 does not mean public API compaction was removed. Calling this endpoint
+"legacy" describes the Codex implementation, not the public API contract.
+
+No routing patch was made. Redirecting to `/responses` alone would be incorrect:
+older clients expect a compacted-window JSON response, whereas the tested current
+path sends a compaction trigger and receives SSE. A compatibility adapter would
+need request translation, terminal-event validation, canonical output preservation,
+usage/error/cancellation handling, and replay tests. It should not silently invent
+an equivalent contract or retry inference on arbitrary 404 responses.
