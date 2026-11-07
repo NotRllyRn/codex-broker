@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 )
 
 type Server struct {
@@ -17,6 +18,11 @@ type Server struct {
 
 func NewServer(relay *Relay) *Server {
 	s := &Server{relay: relay, engine: gateway.New(relay, nil), mux: http.NewServeMux()}
+	s.engine.ExtensionSettings = func(context.Context) (proxyextension.Configuration, error) {
+		relay.mu.RLock()
+		defer relay.mu.RUnlock()
+		return relay.state.Snapshot.ExtensionSettings, nil
+	}
 	s.engine.DisabledExtensions = func(context.Context) (map[string]bool, error) {
 		relay.mu.RLock()
 		defer relay.mu.RUnlock()

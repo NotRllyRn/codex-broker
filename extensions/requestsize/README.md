@@ -20,3 +20,7 @@ cleanup is independent and continues to remove old answer prefixes.
 A request snapshots its enabled state. Changing the global setting does not
 interrupt active requests. Relays use their last synchronized setting, including
 while running from their encrypted offline cache.
+
+Settings expose `triggerMiB` (default 50, range 1–64) and `targetMiB`
+(default 40, range 1–63). Target must be smaller than trigger. Changes apply to
+new requests; host inbound and forwarding caps remain enforced independently.

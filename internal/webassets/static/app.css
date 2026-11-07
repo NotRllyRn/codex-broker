@@ -1554,3 +1554,15 @@ textarea {
 .token-share-legend details div + div { margin-top: 10px; }
 
 [hidden] { display: none !important; }
+
+.extension-settings { margin-top: 0.75rem; width: 100%; }
+.extension-settings > summary { cursor: pointer; width: fit-content; }
+.extension-controls { border: 0; padding: 1rem 0; margin: 0; min-width: 0; }
+.extension-controls fieldset { margin: 0.75rem 0; min-width: 0; }
+.extension-field { margin-bottom: 1rem; }
+.extension-field > label { display: block; margin-bottom: 0.35rem; }
+.extension-field textarea, .extension-field select, .extension-field input:not([type="checkbox"]):not([type="radio"]) { max-width: 100%; width: min(100%, 34rem); box-sizing: border-box; }
+.extension-field [role="radiogroup"] label { display: block; }
+.extension-field .subtle { margin: 0.35rem 0; }
+.extension-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.extension-field input[type="color"].extension-color-picker { width: 3rem; margin-left: 0.5rem; }

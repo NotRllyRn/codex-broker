@@ -217,3 +217,81 @@ observed before `upstream_event`, built-in presentation/native-compaction handof
 `client_event` and buffered-body transformations. Consequently client-visible
 rewrites and local synthetic responses do not fabricate upstream usage. There is
 no added request token estimator, body capture or second telemetry system.
+
+## Extension-defined settings
+
+Export a named `settings` constant alongside the default factory, using
+`SettingsSchema` from the TypeScript declarations. See
+`packages/proxy-extension/examples/settings.ts`. Each field declares a unique
+alphanumeric/underscore `key` (starting with a letter), `type`, `label`, and
+explicit JSON `default`. Schemas are checked when modules load; module-level code
+runs during discovery as well as request initialization, so keep it declarative.
+A module without settings needs no settings export. Schemas support up to 64
+fields and 64 KiB; values are also limited to 64 KiB.
+
+Available controls:
+
+| Types | Value and controls |
+| --- | --- |
+| `text`, `textarea`, `password`, `email`, `url`, `tel`, `path` | Text; optional `required`, `minLength`, `maxLength`, Go regex `pattern`. Paths are text and grant no filesystem access. |
+| `number`, `integer`, `slider` | Numbers; optional `min`, `max`, `step`. Integer requires a whole number; slider defaults to range 0–100. |
+| `percentage`, `ratio`, `duration` | Numbers; defaults to ranges 0–100, 0–1, and nonnegative milliseconds respectively; bounds can be overridden. |
+| `boolean` | Checkbox with a boolean value. |
+| `select`, `radio`, `multiselect` | String or string array; declare `options: [{value, label}]`. Multiselect rejects duplicates. |
+| `color` | Six-digit hex color such as `#336699`. |
+| `date`, `time`, `datetime` | Local date/time strings (`YYYY-MM-DD`, `HH:mm[:ss]`, `YYYY-MM-DDTHH:mm[:ss]`), without timezone conversion. |
+| `string-list`, `key-value`, `json` | JSON editors for string arrays, string-valued objects, or any JSON value. |
+
+All fields support `description`, `placeholder`, `group`, `unit`, and
+`visibleWhen: {key, equals}`. Conditions control display only; hidden fields still
+retain and validate their values. They cannot reference password fields.
+`required` prevents empty text, lists, and maps; boolean false and numeric zero
+remain valid. Server validation is authoritative. No arbitrary HTML, JavaScript,
+file upload or extension-supplied dashboard component is executed.
+
+In Settings → Proxy extensions, each configurable extension has a collapsed
+Settings panel. Opening it loads saved values. Apply validates and saves all
+fields atomically and announces success or errors. Cancel closes and discards
+unapplied edits. Reset to defaults loads defaults into the draft; Apply is still
+required, and other fields can be edited before applying. Revisions prevent two
+open editors from silently overwriting each other. Reopen after a conflict.
+Settings can be configured while an extension is disabled.
+
+`proxy.getSettings<T>()` returns a fresh JSON clone. The request factory can read
+settings immediately, then `settings_loaded` runs after handler registration.
+`settings_changed` receives `{settings, previous}` before the next hook when the
+host has published a change. Both events are notifications; returned patches are
+ignored. Settings stay consistent during a handler. These hooks use the same
+synchronous execution limits and failure behavior as other hooks. Changes may
+coalesce if multiple saves happen between hooks. Idle sessions do not receive a
+background callback. Finish cleanup uses its last observed settings snapshot.
+Native built-ins and enable/disable flags retain their request-start snapshot.
+
+Values persist in Broker's SQLite settings table and survive restarts. Password
+fields are encrypted using the configured vault, omitted from browser responses,
+and shown only as a saved/not-set indicator; nonempty secrets require a vault.
+Leave a password blank to preserve it, or select Clear saved value to clear it.
+Reset restores its declared default when applied. Do not put real credentials in
+source defaults. Ordinary settings are not encrypted. Trusted extension code can
+read its own password settings through `getSettings`; protect the extension
+source directory accordingly.
+
+Apply publishes settings to active primary sessions at their next hook boundary.
+Relays receive values through normal authenticated snapshot sync and encrypted
+snapshot storage. Each relay publishes its latest snapshot on the next incoming
+request; active sessions see it at their next hook afterward. Provision matching
+extension schemas on primary and relays. Updating a schema requires a restart;
+remove or migrate incompatible saved values before changing field types/keys.
+Settings persistence does not add durable transcript storage or filesystem access
+to the TypeScript runtime.
+
+Built-in defaults preserve previous output: account usage shows the account label
+and retry status; request size compaction uses a 50 MiB trigger and 40 MiB target.
+Its settings enforce target < trigger and keep the host's hard limits unchanged.
+
+Optional real-browser settings regression (uses an isolated temporary broker,
+SQLite database, vault and synthetic extension, with no upstream credentials):
+install Playwright and its Chromium browser in a temporary directory, then run
+`BROKER_PLAYWRIGHT_MODULE=/absolute/path/to/playwright/index.mjs node scripts/extension-settings.browser.mjs`.
+It checks every control plus Apply/Cancel/Reset, secret redaction/preservation,
+validation feedback, revision conflicts, subpath routing and a narrow viewport.

@@ -8,11 +8,13 @@ import (
 	"testing"
 
 	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
+	"github.com/NotRllyRn/codex-broker/extensions/settings"
 	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 )
 
 func TestRelayExtensionSnapshotSurvivesOfflineCache(t *testing.T) {
 	relay, token := relayFixture(t)
+	relay.state.Snapshot.ExtensionSettings = proxyextension.Configuration{"example": settings.Values{"label": "configured relay"}}
 	relay.state.Snapshot.DisabledExtensions = []string{proxyextension.UsageID, requestsize.ID}
 	if err := relay.saveLocked(); err != nil {
 		t.Fatal(err)
@@ -23,7 +25,7 @@ func TestRelayExtensionSnapshotSurvivesOfflineCache(t *testing.T) {
 	}
 	server := NewServer(loaded)
 	server.engine.ScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: 2, TargetBytes: 1}
-	def, err := proxyextension.Compile("example", `export default p=>p.on('response',e=>({headers:{...e.headers,'X-Example':['relay']}}))`)
+	def, err := proxyextension.Compile("example", `export const settings={fields:[{key:'label',type:'text',label:'Label',default:'default'}]};export default p=>p.on('response',e=>({headers:{...e.headers,'X-Example':[p.getSettings().label]}}))`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestRelayExtensionSnapshotSurvivesOfflineCache(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	server.ServeHTTP(w, r)
-	if w.Code != 200 || w.Header().Get("X-Example") != "relay" || strings.Contains(w.Body.String(), "🔨") || !strings.Contains(w.Body.String(), "Hello") {
+	if w.Code != 200 || w.Header().Get("X-Example") != "configured relay" || strings.Contains(w.Body.String(), "🔨") || !strings.Contains(w.Body.String(), "Hello") {
 		t.Fatal(w.Code, w.Body, w.Header())
 	}
 	found := false

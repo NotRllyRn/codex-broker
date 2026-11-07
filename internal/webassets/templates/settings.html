@@ -64,6 +64,13 @@
         <input type="hidden" name="enabled" value="{% if extension.Enabled %}false{% else %}true{% endif %}" />
         <button class="quiet-button" type="submit">{% if extension.Enabled %}Disable{% else %}Enable{% endif %}</button>
       </form>
+      {% if extension.Settings.Fields %}
+      <details class="extension-settings" data-extension-settings="{{ extension.ID }}" data-csrf="{{ csrf }}">
+        <summary class="quiet-button">Settings</summary>
+        <div data-extension-editor></div>
+        <p role="status" aria-live="polite" data-extension-status></p>
+      </details>
+      {% endif %}
     </article>
     {% endfor %}
   </div>

@@ -82,7 +82,10 @@ func TestBoundedFailures(t *testing.T) {
 			}
 		})
 	}
-	for _, source := range []string{`while(true){}`, `export default async p=>{}`, `export default p=>p.on('unknown',()=>{})`, `export default p=>require('fs')`} {
+	if _, err := Compile("bad", `while(true){}`); err == nil {
+		t.Fatal("accepted unbounded module initialization")
+	}
+	for _, source := range []string{`export default async p=>{}`, `export default p=>p.on('unknown',()=>{})`, `export default p=>require('fs')`} {
 		m := New(definition(t, "bad", source))
 		if _, err := m.Start(t.Context(), Context{}, nil); err == nil {
 			t.Fatal("accepted invalid factory")

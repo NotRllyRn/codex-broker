@@ -62,6 +62,9 @@ func (s *Server) proxyGateway() *gateway.Engine {
 	s.gatewayOnce.Do(func() {
 		s.gatewayEngine = gateway.New(brokerGatewayAuthority{s}, &s.proxyStats)
 		s.gatewayEngine.Client = s.proxyClient
+		s.gatewayEngine.ExtensionSettings = func(ctx context.Context) (proxyextension.Configuration, error) {
+			return proxyextension.Configurations(ctx, s.App.Store, s.App.Vault)
+		}
 		s.gatewayEngine.DisabledExtensions = func(ctx context.Context) (map[string]bool, error) { return proxyextension.Disabled(ctx, s.App.Store) }
 		if s.App.Logs != nil {
 			s.gatewayEngine.Log = s.App.Logs.Log

@@ -16,6 +16,7 @@ import (
 
 	"github.com/NotRllyRn/codex-broker/extensions"
 	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
+	"github.com/NotRllyRn/codex-broker/extensions/settings"
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
 )
@@ -25,7 +26,7 @@ const HookTimeout = 100 * time.Millisecond
 
 var validID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
-var hooks = map[string]bool{"request": true, "prepared": true, "route": true, "attempt": true, "upstream": true, "retry": true, "response": true, "upstream_event": true, "client_event": true, "body": true, "finish": true}
+var hooks = map[string]bool{"request": true, "prepared": true, "route": true, "attempt": true, "upstream": true, "retry": true, "response": true, "upstream_event": true, "client_event": true, "body": true, "finish": true, "settings_loaded": true, "settings_changed": true}
 
 type Failure struct{ ID, Hook string }
 
@@ -34,12 +35,15 @@ func (e *Failure) Error() string { return fmt.Sprintf("extension %s hook %s fail
 type Definition struct {
 	ID      string
 	program *goja.Program
+	schema  settings.Schema
 }
 type Info = extensions.Info
 type Manager struct {
-	definitions []Definition
-	mu          sync.Mutex
-	state       map[string]string
+	definitions   []Definition
+	mu            sync.Mutex
+	state         map[string]string
+	settingsMu    sync.RWMutex
+	configuration map[string]string
 }
 type Context struct {
 	RequestID string `json:"requestId"`
@@ -50,6 +54,7 @@ type Context struct {
 type instance struct {
 	id       string
 	vm       *goja.Runtime
+	settings string
 	handlers map[string][]goja.Callable
 }
 type Session struct {
@@ -58,6 +63,8 @@ type Session struct {
 	identity   Context
 	Usage      bool
 	compaction requestsize.Request
+	manager    *Manager
+	native     Configuration
 }
 
 // Load reads operator-provisioned files once. There is deliberately no installer,
@@ -99,7 +106,11 @@ func Compile(id, source string) (Definition, error) {
 		return Definition{}, fmt.Errorf("extension %s: %s", id, result.Errors[0].Text)
 	}
 	program, err := goja.Compile(id, string(result.Code), true)
-	return Definition{ID: id, program: program}, err
+	if err != nil {
+		return Definition{}, err
+	}
+	schema, err := readSchema(id, program)
+	return Definition{ID: id, program: program, schema: schema}, err
 }
 func New(definitions ...Definition) *Manager {
 	return &Manager{definitions: definitions, state: map[string]string{}}
@@ -108,7 +119,7 @@ func (m *Manager) List(disabled map[string]bool) []Info {
 	result := extensions.Builtins(disabled)
 	if m != nil {
 		for _, def := range m.definitions {
-			result = append(result, Info{ID: def.ID, Name: def.ID, Enabled: !disabled[def.ID]})
+			result = append(result, Info{ID: def.ID, Name: def.ID, Settings: def.schema, Enabled: !disabled[def.ID]})
 		}
 	}
 	return result
@@ -125,7 +136,10 @@ func (m *Manager) Active(disabled map[string]bool) bool {
 }
 func (s *Session) Active() bool { return len(s.instances) > 0 }
 func (m *Manager) Start(ctx context.Context, identity Context, disabled map[string]bool) (*Session, error) {
-	s := &Session{ctx: ctx, identity: identity, Usage: !disabled[UsageID], compaction: requestsize.New(!disabled[requestsize.ID])}
+	s := &Session{ctx: ctx, identity: identity, Usage: !disabled[UsageID], compaction: requestsize.New(!disabled[requestsize.ID]), manager: m, native: Configuration{}}
+	for _, entry := range extensions.Builtins(nil) {
+		s.native[entry.ID] = decodeSettings(m.settingsJSON(entry.ID))
+	}
 	if m == nil {
 		return s, nil
 	}
@@ -133,7 +147,7 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 		if disabled[def.ID] {
 			continue
 		}
-		in := &instance{id: def.ID, vm: goja.New(), handlers: map[string][]goja.Callable{}}
+		in := &instance{id: def.ID, vm: goja.New(), settings: m.settingsJSON(def.ID), handlers: map[string][]goja.Callable{}}
 		vm := in.vm
 		vm.SetMaxCallStackSize(256)
 		err := in.run(ctx, func() error {
@@ -147,6 +161,13 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 				return errors.New("default export must be a factory")
 			}
 			apiObject := vm.NewObject()
+			_ = apiObject.Set("getSettings", func() goja.Value {
+				value, err := vm.RunString("JSON.parse(" + quote(in.settings) + ")")
+				if err != nil {
+					panic(err)
+				}
+				return value
+			})
 			_ = apiObject.Set("on", func(name string, handler goja.Callable) {
 				if !hooks[name] || handler == nil || len(in.handlers[name]) >= 32 {
 					panic(vm.NewTypeError("invalid hook registration"))
@@ -203,6 +224,9 @@ func (m *Manager) Start(ctx context.Context, identity Context, disabled map[stri
 			return nil, &Failure{ID: def.ID, Hook: "initialize"}
 		}
 		s.instances = append(s.instances, in)
+		if err := s.emitInstance(in, "settings_loaded", map[string]any{"settings": decodeSettings(in.settings)}); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -261,53 +285,72 @@ func (s *Session) Has(name string) bool {
 // short-circuits request processing. Go-owned values never cross into the VM.
 func (s *Session) Emit(name string, event map[string]any) error {
 	for _, in := range s.instances {
-		for _, handler := range in.handlers[name] {
-			err := in.run(s.ctx, func() error {
-				raw, err := json.Marshal(event)
-				if err != nil || len(raw) > MaxPayload {
-					return errors.New("hook input exceeds limit")
-				}
-				value, err := in.vm.RunString("JSON.parse(" + quote(string(raw)) + ")")
-				if err != nil {
+		if name != "finish" && s.manager != nil {
+			next := s.manager.settingsJSON(in.id)
+			if next != in.settings {
+				previous := decodeSettings(in.settings)
+				in.settings = next
+				if err := s.emitInstance(in, "settings_changed", map[string]any{"settings": decodeSettings(next), "previous": previous}); err != nil {
 					return err
 				}
-				identity, _ := json.Marshal(s.identity)
-				ctx, err := in.vm.RunString("JSON.parse(" + quote(string(identity)) + ")")
-				if err != nil {
-					return err
-				}
-				result, err := handler(goja.Undefined(), value, ctx)
-				if err != nil {
-					return err
-				}
-				if err = synchronous(result); err != nil {
-					return err
-				}
-				if goja.IsUndefined(result) || goja.IsNull(result) {
-					return nil
-				}
-				encoded, err := stringify(in.vm, result)
-				if err != nil {
-					return err
-				}
-				if len(encoded) > MaxPayload {
-					return errors.New("hook output exceeds limit")
-				}
-				var patch map[string]any
-				if err = json.Unmarshal([]byte(encoded), &patch); err != nil {
-					return err
-				}
-				for k, v := range patch {
-					event[k] = v
-				}
-				return nil
-			})
+			}
+		}
+		if err := s.emitInstance(in, name, event); err != nil {
+			return err
+		}
+		if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
+			return nil
+		}
+	}
+	return nil
+}
+func (s *Session) emitInstance(in *instance, name string, event map[string]any) error {
+	for _, handler := range in.handlers[name] {
+		err := in.run(s.ctx, func() error {
+			raw, err := json.Marshal(event)
+			if err != nil || len(raw) > MaxPayload {
+				return errors.New("hook input exceeds limit")
+			}
+			value, err := in.vm.RunString("JSON.parse(" + quote(string(raw)) + ")")
 			if err != nil {
-				return &Failure{ID: in.id, Hook: name}
+				return err
 			}
-			if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
+			identity, _ := json.Marshal(s.identity)
+			ctx, err := in.vm.RunString("JSON.parse(" + quote(string(identity)) + ")")
+			if err != nil {
+				return err
+			}
+			result, err := handler(goja.Undefined(), value, ctx)
+			if err != nil {
+				return err
+			}
+			if err = synchronous(result); err != nil {
+				return err
+			}
+			if name == "settings_loaded" || name == "settings_changed" || goja.IsUndefined(result) || goja.IsNull(result) {
 				return nil
 			}
+			encoded, err := stringify(in.vm, result)
+			if err != nil {
+				return err
+			}
+			if len(encoded) > MaxPayload {
+				return errors.New("hook output exceeds limit")
+			}
+			var patch map[string]any
+			if err = json.Unmarshal([]byte(encoded), &patch); err != nil {
+				return err
+			}
+			for k, v := range patch {
+				event[k] = v
+			}
+			return nil
+		})
+		if err != nil {
+			return &Failure{ID: in.id, Hook: name}
+		}
+		if event["response"] != nil && (name == "request" || name == "prepared" || name == "attempt") {
+			return nil
 		}
 	}
 	return nil

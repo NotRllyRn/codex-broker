@@ -75,6 +75,7 @@ type Metrics interface {
 type Engine struct {
 	Extensions         *proxyextension.Manager
 	ExtensionError     error
+	ExtensionSettings  func(context.Context) (proxyextension.Configuration, error)
 	DisabledExtensions func(context.Context) (map[string]bool, error)
 	Authority          Authority
 	Client             *http.Client
@@ -148,6 +149,9 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			return e.extensionFailure(w, err)
 		}
 	}
+	if err := e.Extensions.RefreshSettings(r.Context(), e.ExtensionSettings); err != nil {
+		return e.extensionFailure(w, err)
+	}
 	requestID := core.NewID()
 	identity := proxyextension.Context{RequestID: requestID, ClientID: key.ID}
 	if e.Extensions.Active(disabled) {
@@ -198,7 +202,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 		return nil
 	}
-	body, problem := ext.Prepare(r.URL.Path, body, policy, e.Metrics)
+	body, problem := ext.Prepare(r.URL.Path, body, e.ScrubPolicy, e.Metrics)
 	if problem != nil {
 		return fail(problem.Status, problem.Code, problem.Message)
 	}

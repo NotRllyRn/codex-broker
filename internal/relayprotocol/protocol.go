@@ -1,6 +1,9 @@
 package relayprotocol
 
-import "github.com/NotRllyRn/codex-broker/internal/gateway"
+import (
+	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
+)
 
 const Version = 5
 
@@ -22,7 +25,8 @@ type Lease struct {
 }
 
 type Snapshot struct {
-	DisabledExtensions             []string `json:",omitempty"`
+	ExtensionSettings              proxyextension.Configuration `json:",omitempty"`
+	DisabledExtensions             []string                     `json:",omitempty"`
 	ProtocolVersion                int
 	SnapshotID, RelayID, PoolEpoch string
 	GeneratedAtMS                  int64

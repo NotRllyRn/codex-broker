@@ -20,6 +20,8 @@ export interface Request extends Body {
 }
 export interface Attempt extends Request { readonly attempt: number; readonly accountId: string }
 export interface Events {
+  settings_loaded: { readonly settings: Record<string, any> };
+  settings_changed: { readonly settings: Record<string, any>; readonly previous: Record<string, any> };
   request: Request;
   prepared: Request;
   route: { readonly attempt: number; readonly failureKind: string };
@@ -33,6 +35,8 @@ export interface Events {
   finish: { readonly outcome: "complete" | "local" | "error" | "cancelled" };
 }
 export interface Results {
+  settings_loaded: void;
+  settings_changed: void;
   request: Partial<Body> & { headers?: Headers; response?: Response };
   prepared: Results["request"];
   attempt: Results["request"];
@@ -46,9 +50,43 @@ export interface Results {
   finish: void;
 }
 export interface ExtensionAPI {
+  /** A cloned snapshot for this invocation. Changes arrive between hooks. */
+  getSettings<T = Record<string, unknown>>(): T;
   on<K extends keyof Events>(name: K, handler: (event: Events[K], context: Context) => Results[K] | void): void;
   /** Atomic, process-local JSON state scoped by extension/client/native thread.
    * Null deletes state. No native identity => throws. No I/O in the callback. */
   updateThread<T>(update: (previous: T | null) => T | null): T | null;
 }
 export type Extension = (api: ExtensionAPI) => void;
+
+export interface SettingOption { value: string; label: string }
+export interface SettingBase<T> {
+  key: string;
+  label: string;
+  default: T;
+  description?: string;
+  placeholder?: string;
+  group?: string;
+  unit?: string;
+  required?: boolean;
+  /** Only affects dashboard visibility; hidden values are still validated. */
+  visibleWhen?: { key: string; equals: unknown };
+}
+export type SettingField =
+  | (SettingBase<string> & {
+      type: "text" | "textarea" | "password" | "email" | "url" | "tel" | "path" | "color" | "date" | "time" | "datetime";
+      minLength?: number; maxLength?: number; /** Go regular expression. */ pattern?: string;
+    })
+  | (SettingBase<number> & {
+      /** Duration uses milliseconds; percentage 0–100; ratio 0–1. */
+      type: "number" | "integer" | "slider" | "percentage" | "ratio" | "duration";
+      min?: number; max?: number; step?: number;
+    })
+  | (SettingBase<boolean> & { type: "boolean" })
+  | (SettingBase<string> & { type: "select" | "radio"; options: SettingOption[] })
+  | (SettingBase<string[]> & { type: "multiselect"; options: SettingOption[] })
+  | (SettingBase<string[]> & { type: "string-list" })
+  | (SettingBase<Record<string, string>> & { type: "key-value" })
+  | (SettingBase<unknown> & { type: "json" });
+/** Export a named `settings` constant satisfying this schema alongside the factory. */
+export interface SettingsSchema { title?: string; description?: string; fields: SettingField[] }

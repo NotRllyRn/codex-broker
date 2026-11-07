@@ -80,7 +80,11 @@ func (a *Application) RelaySnapshot(ctx context.Context, relayID string) (relayp
 	if err != nil {
 		return relayprotocol.Snapshot{}, err
 	}
-	return relayprotocol.Snapshot{DisabledExtensions: proxyextension.IDs(disabled), ProtocolVersion: relayprotocol.Version, SnapshotID: fmt.Sprintf("%d-%s", now, relayID), RelayID: relayID, PoolEpoch: fmt.Sprintf("%d", stateVersion), GeneratedAtMS: now, Clients: clients, Leases: leasing}, nil
+	configuration, err := proxyextension.Configurations(ctx, a.Store, a.Vault)
+	if err != nil {
+		return relayprotocol.Snapshot{}, err
+	}
+	return relayprotocol.Snapshot{ExtensionSettings: configuration, DisabledExtensions: proxyextension.IDs(disabled), ProtocolVersion: relayprotocol.Version, SnapshotID: fmt.Sprintf("%d-%s", now, relayID), RelayID: relayID, PoolEpoch: fmt.Sprintf("%d", stateVersion), GeneratedAtMS: now, Clients: clients, Leases: leasing}, nil
 }
 
 func (a *Application) reserveForRelay(ctx context.Context, relayID string, now int64) (accountID, epoch string, expires int64, err error) {
