@@ -51,12 +51,13 @@
 </section>
 <section class="detail-section">
   <h2>Proxy extensions</h2>
-  <p class="subtle">Changes apply to new requests. Account usage adds the account and quota prefix to answers. Usage accounting and history cleanup stay active when it is disabled. Relays receive changes on their next sync.</p>
+  <p class="subtle">These settings apply globally to new requests. Relays receive changes on their next sync.</p>
   {% if proxy_extension_error %}<p>Extension loading failed. Check the configured extension directory and restart.</p>{% endif %}
   <div class="data-list">
     {% for extension in proxy_extensions %}
     <article>
-      <strong>{{ extension.ID }}</strong>
+      <strong>{{ extension.Name }}</strong>
+      {% if extension.Description %}<p>{{ extension.Description }}</p>{% endif %}
       <span>{% if extension.Enabled %}Enabled{% else %}Disabled{% endif %}</span>
       <form method="post" action="/settings/proxy-extensions/{{ extension.ID }}/enabled">
         <input type="hidden" name="csrf_token" value="{{ csrf }}" />

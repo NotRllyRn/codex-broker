@@ -25,7 +25,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: test -z "$(gofmt -l cmd internal)"
+      - run: test -z "$(gofmt -l cmd internal extensions)"
       - run: python3 scripts/update-managed-codex.py --check
       - run: python3 -m unittest discover -s scripts -p test_update_managed_codex.py
       - run: go vet ./...

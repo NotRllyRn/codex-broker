@@ -3,7 +3,9 @@
 ## Implementation contract
 
 The gateway remains responsible for authentication, account selection, credential
-injection, failover, scrubbing, upstream validation and real usage accounting.
+injection, failover, hard size limits, upstream validation and real usage accounting.
+The built-in request-size-compaction extension owns history cleanup and the native
+compaction handoff. Built-in source and its Settings catalog live in `extensions/`.
 Extensions run only after authentication. Default behavior must match the existing
 proxy, including replay cleanup, native compaction, non-SSE pass-through and 426
 for WebSocket upgrades. Disabling account usage removes only its answer prefix.
@@ -33,12 +35,24 @@ adapter around the existing formatter and streaming reconciliation, avoiding a
 VM on ordinary requests. Settings → Proxy extensions controls it and all loaded
 TypeScript extensions. Disabling it removes the prefix only: existing notices
 are still removed from replayed history, raw upstream usage is still recorded,
-and native-compaction arming stays active. Streamer mode still masks its label.
+and the separate request-size-compaction extension keeps its current setting.
+Streamer mode still masks the usage label.
+
+The built-in `request-size-compaction` extension is also enabled by default. Its
+source, cleanup algorithm and native-compaction handoff are in
+`extensions/requestsize/`; the proxy invokes it through the native extension
+preparation/presentation pipeline. Its global toggle disables both automatic
+history trimming and the follow-up compaction signal. It retains the existing
+50 MiB trigger, 40 MiB target, protected-content rules, errors and metrics when
+enabled. The host always enforces its 128 MiB inbound Responses cap and 64 MiB
+forwarding cap. Disabling cleanup may therefore cause large requests to be
+rejected until a custom request extension reduces them. Active requests keep
+their initial setting, and relays receive it on their normal snapshot sync.
 
 To provision a trusted module, place a self-contained `.ts` file in an
 operator-controlled directory and set `WINDOWKEEPER_PROXY_EXTENSIONS_DIR` to its
 absolute path. Restart the broker. The filename without `.ts` is its ID (lowercase
-letters, digits, `_` and `-`, up to 64 characters); `account-usage` is reserved.
+letters, digits, `_` and `-`, up to 64 characters); built-in IDs are reserved.
 `.d.ts` files are ignored. Files load once in filename order. There is no upload,
 installer, discovery outside that directory, hot reload or marketplace. Mount
 the directory read-only in Docker, including relay containers. For NixOS, set
@@ -180,3 +194,26 @@ Packaging checks are `CGO_ENABLED=0 go build ./cmd/codex-broker`,
 `nix build --no-link` and `nix flake check --no-build` (the last command evaluates
 module definitions; it does not execute the NixOS VM tests). Protocol regressions
 use local fake upstreams and isolated databases, not production accounts.
+
+
+## Storage permissions and telemetry boundary
+
+Custom TypeScript extensions cannot open SQLite, read/write JSON files or create
+folders. Their runtime exposes no filesystem, process or network APIs. Closures
+provide request-local state; `updateThread` provides bounded, atomic JSON state
+in memory (64 KiB per entry, up to 1,024 entries). This is lost on restart and is
+not shared across processes. Durable response history for a context-management
+extension needs an additional storage API; none is implemented here. Native
+built-ins are compiled host code rather than sandboxed TypeScript, but neither
+built-in writes its own transcript/history files. `extensions/` contains source,
+not per-extension runtime data.
+
+Existing telemetry records request metadata and upstream terminal usage, not full
+request/response bodies or transcripts. Request metadata is parsed from the actual
+attempt body after all request/prepared/attempt transformations, immediately before
+upstream forwarding. Raw response status and header timing are captured when the
+upstream returns. Terminal response identity, model, status and token usage are
+observed before `upstream_event`, built-in presentation/native-compaction handoff,
+`client_event` and buffered-body transformations. Consequently client-visible
+rewrites and local synthetic responses do not fabricate upstream usage. There is
+no added request token estimator, body capture or second telemetry system.

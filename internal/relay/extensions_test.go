@@ -7,12 +7,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 )
 
 func TestRelayExtensionSnapshotSurvivesOfflineCache(t *testing.T) {
 	relay, token := relayFixture(t)
-	relay.state.Snapshot.DisabledExtensions = []string{proxyextension.UsageID}
+	relay.state.Snapshot.DisabledExtensions = []string{proxyextension.UsageID, requestsize.ID}
 	if err := relay.saveLocked(); err != nil {
 		t.Fatal(err)
 	}
@@ -21,6 +22,7 @@ func TestRelayExtensionSnapshotSurvivesOfflineCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := NewServer(loaded)
+	server.engine.ScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: 2, TargetBytes: 1}
 	def, err := proxyextension.Compile("example", `export default p=>p.on('response',e=>({headers:{...e.headers,'X-Example':['relay']}}))`)
 	if err != nil {
 		t.Fatal(err)

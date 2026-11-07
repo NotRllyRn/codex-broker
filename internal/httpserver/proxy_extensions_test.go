@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"github.com/NotRllyRn/codex-broker/internal/webhook"
 )
@@ -194,8 +196,15 @@ func TestProxyExtensionSettings(t *testing.T) {
 			t.Fatal(got.Code, got.Body)
 		}
 	}
+	if got := request("POST", "/settings/proxy-extensions/"+requestsize.ID+"/enabled", true, true); got.Code != 303 {
+		t.Fatal(got.Code, got.Body)
+	}
+	disabled, err := proxyextension.Disabled(t.Context(), s.App.Store)
+	if err != nil || !disabled[requestsize.ID] || !disabled[proxyextension.UsageID] {
+		t.Fatal(disabled, err)
+	}
 	got := request("GET", "/settings", true, false)
-	if got.Code != 200 || !strings.Contains(got.Body.String(), "Proxy extensions") || !strings.Contains(got.Body.String(), "account-usage") || !strings.Contains(got.Body.String(), "Disabled") {
+	if got.Code != 200 || !strings.Contains(got.Body.String(), "Proxy extensions") || !strings.Contains(got.Body.String(), "Request size compaction") || !strings.Contains(got.Body.String(), "account-usage") || !strings.Contains(got.Body.String(), "Disabled") {
 		t.Fatal(got.Code, got.Body)
 	}
 	if got := request("POST", "/settings/proxy-extensions/missing/enabled", true, true); got.Code != 404 {
@@ -233,5 +242,31 @@ func TestProxyExtensionBrokerErrorsAndLocalSSE(t *testing.T) {
 	got = proxyRequest(s, key.Token, "/v1/responses", `{}`)
 	if got.Code != 200 || !strings.Contains(got.Body.String(), `"example":true`) {
 		t.Fatal(got.Code, got.Body)
+	}
+}
+
+func TestTelemetryUsesFinalUpstreamRequestAndRawResponse(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	installProxyExtension(t, s, `export default p=>{
+  p.on('request',e=>({body:JSON.stringify({...JSON.parse(e.body),model:'intermediate'})}));
+  p.on('attempt',e=>({body:JSON.stringify({...JSON.parse(e.body),model:'actual-upstream',service_tier:'priority',reasoning:{effort:'high'},previous_response_id:'previous-upstream'})}));
+  p.on('upstream_event',({event})=>{if(event.response?.usage){event.response.model='client-model';event.response.usage.input_tokens=999;event.response.usage.total_tokens=999;}return {event}});
+  p.on('body',()=>({status:202,headers:{'Content-Type':['application/json']},body:'{"client":"replacement"}'}));
+ }`)
+	s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+		raw, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil || payload["model"] != "actual-upstream" || payload["previous_response_id"] != "previous-upstream" {
+			t.Fatal(string(raw), err)
+		}
+		return upstreamResponse(200, proxyUsageStream("actual-response", "completed", 150)), nil
+	})
+	result := proxyRequest(s, key.Token, "/v1/responses", `{"model":"client-original","input":[]}`)
+	if result.Code != 202 || result.Body.String() != `{"client":"replacement"}` {
+		t.Fatal(result.Code, result.Body)
+	}
+	var count int
+	if err := s.App.Store.DB.QueryRow(`SELECT count(*) FROM proxy_responses WHERE request_model='actual-upstream' AND request_service_tier='priority' AND reasoning_effort='high' AND previous_response_id='previous-upstream' AND response_model='gpt-test-result' AND input_tokens=120 AND total_tokens=150 AND upstream_http_status=200`).Scan(&count); err != nil || count != 1 {
+		t.Fatal(count, err)
 	}
 }

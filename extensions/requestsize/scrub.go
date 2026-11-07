@@ -1,4 +1,4 @@
-package responsesproxy
+package requestsize
 
 import (
 	"encoding/json"
@@ -9,11 +9,10 @@ import (
 )
 
 const (
-	MaxInboundRequest = 128 << 20
-	ScrubThreshold    = 50 << 20
-	ScrubTarget       = 40 << 20
-	toolOutputLimit   = 256 << 10
-	toolOutputKeep    = 8 << 10
+	ScrubThreshold  = 50 << 20
+	ScrubTarget     = 40 << 20
+	toolOutputLimit = 256 << 10
+	toolOutputKeep  = 8 << 10
 )
 
 func IsCompactionRequest(path string, body []byte) bool {

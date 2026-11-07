@@ -14,14 +14,10 @@ import (
 
 const NoticePrefix = "msg_codex_broker_"
 
-const NativeCompactionInputTokens int64 = 1_000_000
-
 type StreamOptions struct {
-	NoticeText              func(Notice) string
-	UpstreamEvent           func(map[string]any) (map[string]any, error)
-	ClientEvent             func(map[string]any) (map[string]any, error)
-	ArmNativeCompaction     bool
-	OnNativeCompactionArmed func()
+	NoticeText    func(Notice) string
+	UpstreamEvent func(map[string]any) (map[string]any, error)
+	ClientEvent   func(map[string]any) (map[string]any, error)
 }
 
 type Notice struct {
@@ -293,23 +289,6 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 							prefixItem(item)
 						}
 					}
-				}
-			}
-			if event["type"] == "response.completed" && options.ArmNativeCompaction {
-				usage, _ := response["usage"].(map[string]any)
-				if usage == nil {
-					usage = map[string]any{}
-					response["usage"] = usage
-				}
-				outputTokens := int64(0)
-				if value := tokenCount(usage["output_tokens"]); value != nil {
-					outputTokens = *value
-				}
-				usage["input_tokens"] = NativeCompactionInputTokens
-				usage["output_tokens"] = outputTokens
-				usage["total_tokens"] = NativeCompactionInputTokens + outputTokens
-				if options.OnNativeCompactionArmed != nil {
-					options.OnNativeCompactionArmed()
 				}
 			}
 		}

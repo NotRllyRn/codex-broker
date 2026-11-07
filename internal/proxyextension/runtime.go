@@ -14,11 +14,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NotRllyRn/codex-broker/extensions"
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/dop251/goja"
 	"github.com/evanw/esbuild/pkg/api"
 )
 
-const UsageID = "account-usage"
 const MaxPayload = 128 << 20
 const HookTimeout = 100 * time.Millisecond
 
@@ -34,10 +35,7 @@ type Definition struct {
 	ID      string
 	program *goja.Program
 }
-type Info struct {
-	ID      string
-	Enabled bool
-}
+type Info = extensions.Info
 type Manager struct {
 	definitions []Definition
 	mu          sync.Mutex
@@ -55,10 +53,11 @@ type instance struct {
 	handlers map[string][]goja.Callable
 }
 type Session struct {
-	instances []*instance
-	ctx       context.Context
-	identity  Context
-	Usage     bool
+	instances  []*instance
+	ctx        context.Context
+	identity   Context
+	Usage      bool
+	compaction requestsize.Request
 }
 
 // Load reads operator-provisioned files once. There is deliberately no installer,
@@ -92,7 +91,7 @@ func Load(directory string) (*Manager, error) {
 	return m, nil
 }
 func Compile(id, source string) (Definition, error) {
-	if !validID.MatchString(id) || id == UsageID || len(source) > 1<<20 {
+	if !validID.MatchString(id) || extensions.Builtin(id) || len(source) > 1<<20 {
 		return Definition{}, errors.New("invalid extension source")
 	}
 	result := api.Transform(source, api.TransformOptions{Loader: api.LoaderTS, Format: api.FormatCommonJS, Target: api.ES2020, Sourcefile: id + ".ts"})
@@ -106,10 +105,10 @@ func New(definitions ...Definition) *Manager {
 	return &Manager{definitions: definitions, state: map[string]string{}}
 }
 func (m *Manager) List(disabled map[string]bool) []Info {
-	result := []Info{{ID: UsageID, Enabled: !disabled[UsageID]}}
+	result := extensions.Builtins(disabled)
 	if m != nil {
 		for _, def := range m.definitions {
-			result = append(result, Info{ID: def.ID, Enabled: !disabled[def.ID]})
+			result = append(result, Info{ID: def.ID, Name: def.ID, Enabled: !disabled[def.ID]})
 		}
 	}
 	return result
@@ -126,7 +125,7 @@ func (m *Manager) Active(disabled map[string]bool) bool {
 }
 func (s *Session) Active() bool { return len(s.instances) > 0 }
 func (m *Manager) Start(ctx context.Context, identity Context, disabled map[string]bool) (*Session, error) {
-	s := &Session{ctx: ctx, identity: identity, Usage: !disabled[UsageID]}
+	s := &Session{ctx: ctx, identity: identity, Usage: !disabled[UsageID], compaction: requestsize.New(!disabled[requestsize.ID])}
 	if m == nil {
 		return s, nil
 	}

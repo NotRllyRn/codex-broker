@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"io"
 	"net/http"
 	"os"
@@ -17,7 +16,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/NotRllyRn/codex-broker/internal/core"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 )
 
@@ -78,7 +79,7 @@ type Engine struct {
 	Authority          Authority
 	Client             *http.Client
 	Metrics            Metrics
-	ScrubPolicy        responsesproxy.ScrubPolicy
+	ScrubPolicy        requestsize.ScrubPolicy
 	largeOnce          sync.Once
 	largeGate          chan struct{}
 	Log                func(level, event, message string)
@@ -105,10 +106,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 	if utf8.RuneCountInString(threadID) > 200 || utf8.RuneCountInString(turnID) > 200 {
 		return Error(w, http.StatusBadRequest, "invalid_correlation_id", "Thread and turn identifiers must not exceed 200 characters.")
 	}
-	policy := e.ScrubPolicy
-	if policy.TriggerBytes == 0 {
-		policy = responsesproxy.DefaultScrubPolicy
-	}
+	policy := e.ScrubPolicy.Normalized()
 	if isScrubbable && r.ContentLength > responsesproxy.MaxInboundRequest {
 		return Error(w, 413, "request_too_large", "Request body exceeds the broker limit.")
 	}
@@ -200,30 +198,9 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 		return nil
 	}
-	armNativeCompaction := false
-	if isScrubbable {
-		body = responsesproxy.PrepareNotice(body)
-		result, scrubErr := responsesproxy.Scrub(body, policy)
-		if scrubErr != nil {
-			if e.Metrics != nil {
-				e.Metrics.RejectScrub()
-			}
-			if errors.Is(scrubErr, responsesproxy.ErrInvalidScrubRequest) && len(body) <= responsesproxy.MaxRequest {
-				return fail(400, "invalid_request", "Large Responses request is not valid JSON.")
-			}
-			return fail(413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
-		}
-		armNativeCompaction = isResponse && result.Changed && !responsesproxy.IsCompactionRequest(r.URL.Path, body)
-		body = result.Body
-		if result.Changed && e.Metrics != nil {
-			e.Metrics.Scrub(result.BeforeBytes, result.AfterBytes)
-		}
-		if len(body) > responsesproxy.MaxRequest {
-			if e.Metrics != nil {
-				e.Metrics.RejectScrub()
-			}
-			return fail(413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
-		}
+	body, problem := ext.Prepare(r.URL.Path, body, policy, e.Metrics)
+	if problem != nil {
+		return fail(problem.Status, problem.Code, problem.Message)
 	}
 	if releaseLarge != nil {
 		releaseLarge()
@@ -355,10 +332,7 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 						InputTokens: terminal.InputTokens, CachedInputTokens: terminal.CachedInputTokens, OutputTokens: terminal.OutputTokens, ReasoningTokens: terminal.ReasoningOutputTokens, TotalTokens: terminal.TotalTokens, UsageJSON: terminal.UsageJSON,
 					})
 				}
-				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction, NoticeText: ext.UsageNotice, UpstreamEvent: extensionEvent(ext, "upstream_event"), ClientEvent: extensionEvent(ext, "client_event")}
-				if e.Metrics != nil {
-					options.OnNativeCompactionArmed = e.Metrics.NativeCompactionArmed
-				}
+				options := responsesproxy.StreamOptions{NoticeText: ext.UsageNotice, UpstreamEvent: extensionEvent(ext, "upstream_event"), ClientEvent: ext.ClientEvent(extensionEvent(ext, "client_event"))}
 				if copyErr := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error {
 					_, err := responsesproxy.CopyNoticeResponse(dst, response, notice, nil, observe, options)
 					return err

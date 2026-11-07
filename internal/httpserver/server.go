@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
@@ -35,7 +36,7 @@ type Server struct {
 	proxyStats                                proxyStats
 	usageRates                                *usage.Catalog
 	usageRatesOnce                            sync.Once
-	proxyScrubPolicy                          responsesproxy.ScrubPolicy
+	proxyScrubPolicy                          requestsize.ScrubPolicy
 	gatewayEngine                             *gateway.Engine
 	gatewayOnce                               sync.Once
 	relayEventsMu                             sync.Mutex

@@ -147,7 +147,7 @@ func TestLoadOrderAndSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	list := m.List(nil)
-	if len(list) != 3 || list[0].ID != UsageID || list[1].ID != "first" {
+	if len(list) != 4 || list[0].ID != UsageID || list[2].ID != "first" {
 		t.Fatal(list)
 	}
 	db, err := store.Open(t.Context(), filepath.Join(t.TempDir(), "test.db"))

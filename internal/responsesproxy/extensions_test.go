@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"io"
 	"strings"
 	"testing"
@@ -32,13 +33,18 @@ func TestExtensionEventsAcrossSSEChunks(t *testing.T) {
 		var output bytes.Buffer
 		var observed TerminalResponse
 		raw, client := 0, 0
-		options := StreamOptions{ArmNativeCompaction: true, UpstreamEvent: func(e map[string]any) (map[string]any, error) {
+		options := StreamOptions{UpstreamEvent: func(e map[string]any) (map[string]any, error) {
 			raw++
 			if e["type"] == "response.output_text.delta" {
 				e["delta"] = "Rewritten"
 			}
 			return e, nil
-		}, ClientEvent: func(e map[string]any) (map[string]any, error) { client++; e["example"] = true; return e, nil }}
+		}, ClientEvent: func(e map[string]any) (map[string]any, error) {
+			client++
+			e, _ = requestsize.Handoff(nil)(e)
+			e["example"] = true
+			return e, nil
+		}}
 		_, err := streamNotice(&output, &splitReader{data: []byte(stream), size: size}, "prefix ", 1, func(v TerminalResponse) { observed = v }, options)
 		if err != nil || raw != 5 || client != 5 || observed.TotalTokens == nil || *observed.TotalTokens != 8 {
 			t.Fatal(size, raw, client, observed, err)
@@ -77,7 +83,7 @@ func TestExtensionNoNoticeStillArmsCompaction(t *testing.T) {
 	stream := `data: {"type":"response.completed","response":{"usage":{"total_tokens":8}}}` + "\n\n"
 	var output bytes.Buffer
 	var actual int64
-	_, err := streamNotice(&output, strings.NewReader(stream), "", 0, func(v TerminalResponse) { actual = *v.TotalTokens }, StreamOptions{ArmNativeCompaction: true})
+	_, err := streamNotice(&output, strings.NewReader(stream), "", 0, func(v TerminalResponse) { actual = *v.TotalTokens }, StreamOptions{ClientEvent: requestsize.Handoff(nil)})
 	if err != nil || actual != 8 {
 		t.Fatal(actual, err)
 	}
@@ -86,4 +92,11 @@ func TestExtensionNoNoticeStillArmsCompaction(t *testing.T) {
 	if !strings.Contains(string(encoded), `"input_tokens":1000000`) {
 		t.Fatal(string(encoded))
 	}
+}
+
+func nativeCompactionHook(armed bool, on func()) func(map[string]any) (map[string]any, error) {
+	if !armed {
+		return nil
+	}
+	return requestsize.Handoff(on)
 }
