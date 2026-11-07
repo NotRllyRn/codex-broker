@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"github.com/NotRllyRn/codex-broker/internal/responsesproxy"
 )
 
@@ -18,7 +20,7 @@ func TestProxyScrubsOnceBeforeFailover(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			s, key := proxyFixture(t, 2)
 			body := scrubRequestBody(t, true)
-			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
 			var forwarded [][]byte
 			s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
 				value, _ := io.ReadAll(r.Body)
@@ -49,7 +51,7 @@ func TestProxyScrubArmsNativeCompaction(t *testing.T) {
 		wantInput         int64
 		wantArmed         uint64
 	}{
-		{name: "normal", path: "/v1/responses", wantInput: responsesproxy.NativeCompactionInputTokens, wantArmed: 1},
+		{name: "normal", path: "/v1/responses", wantInput: requestsize.NativeCompactionInputTokens, wantArmed: 1},
 		{name: "remote v2 compaction", path: "/v1/responses", compactionTrigger: true, wantInput: 120},
 		{name: "legacy compaction", path: "/v1/responses/compact", wantInput: 120},
 	} {
@@ -64,7 +66,7 @@ func TestProxyScrubArmsNativeCompaction(t *testing.T) {
 				request["input"] = append(request["input"].([]any), map[string]any{"type": "compaction_trigger"})
 				body, _ = json.Marshal(request)
 			}
-			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
 			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyUsageStream("resp", "completed", 150)))}, nil
 			})
@@ -95,7 +97,7 @@ func TestProxyScrubArmsNativeCompaction(t *testing.T) {
 
 func TestProxyDoesNotArmBelowScrubThreshold(t *testing.T) {
 	s, key := proxyFixture(t, 1)
-	s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: 1 << 20, TargetBytes: 1 << 19}
+	s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: 1 << 20, TargetBytes: 1 << 19}
 	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyUsageStream("resp", "completed", 150)))}, nil
 	})
@@ -117,7 +119,7 @@ func TestProxyScrubArmingSurvivesRetryAndFailover(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			s, key := proxyFixture(t, test.accounts)
 			body := scrubRequestBody(t, true)
-			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
 			calls := 0
 			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 				calls++
@@ -129,7 +131,7 @@ func TestProxyScrubArmingSurvivesRetryAndFailover(t *testing.T) {
 
 			got := proxyRequest(s, key.Token, "/v1/responses", string(body))
 			usage := terminalEvent(t, got.Body.String())["response"].(map[string]any)["usage"].(map[string]any)
-			if got.Code != http.StatusOK || calls != 2 || strings.Count(got.Body.String(), `"type":"response.completed"`) != 1 || usage["input_tokens"] != float64(responsesproxy.NativeCompactionInputTokens) || s.proxyStats.snapshot().NativeCompactionArmed != 1 {
+			if got.Code != http.StatusOK || calls != 2 || strings.Count(got.Body.String(), `"type":"response.completed"`) != 1 || usage["input_tokens"] != float64(requestsize.NativeCompactionInputTokens) || s.proxyStats.snapshot().NativeCompactionArmed != 1 {
 				t.Fatalf("status=%d calls=%d body=%s snapshot=%+v", got.Code, calls, got.Body.String(), s.proxyStats.snapshot())
 			}
 		})
@@ -139,7 +141,7 @@ func TestProxyScrubArmingSurvivesRetryAndFailover(t *testing.T) {
 func TestProxyNativeCompactionHandoffSequence(t *testing.T) {
 	s, key := proxyFixture(t, 1)
 	body := scrubRequestBody(t, true)
-	s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+	s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
 	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyUsageStream("resp", "completed", 150)))}, nil
 	})
@@ -156,7 +158,7 @@ func TestProxyNativeCompactionHandoffSequence(t *testing.T) {
 	compacted := proxyRequest(s, key.Token, "/v1/responses", string(compactionBody))
 	compactionUsage := terminalEvent(t, compacted.Body.String())["response"].(map[string]any)["usage"].(map[string]any)
 
-	if normal.Code != http.StatusOK || compacted.Code != http.StatusOK || normalUsage["input_tokens"] != float64(responsesproxy.NativeCompactionInputTokens) || compactionUsage["input_tokens"] != float64(120) || s.proxyStats.snapshot().NativeCompactionArmed != 1 {
+	if normal.Code != http.StatusOK || compacted.Code != http.StatusOK || normalUsage["input_tokens"] != float64(requestsize.NativeCompactionInputTokens) || compactionUsage["input_tokens"] != float64(120) || s.proxyStats.snapshot().NativeCompactionArmed != 1 {
 		t.Fatalf("normal=%v compaction=%v snapshot=%+v", normalUsage, compactionUsage, s.proxyStats.snapshot())
 	}
 }
@@ -189,7 +191,7 @@ func TestProxyAdmitsRequestAboveOldRescueLimit(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(proxyUsageStream("resp", "completed", 150)))}, nil
 	})
 	got := proxyRequest(s, key.Token, "/v1/responses", string(body))
-	if got.Code != http.StatusOK || forwarded > responsesproxy.ScrubTarget || s.proxyStats.snapshot().ScrubbedRequests != 1 {
+	if got.Code != http.StatusOK || forwarded > requestsize.ScrubTarget || s.proxyStats.snapshot().ScrubbedRequests != 1 {
 		t.Fatalf("status=%d forwarded=%d snapshot=%+v", got.Code, forwarded, s.proxyStats.snapshot())
 	}
 }
@@ -199,7 +201,7 @@ func TestProxyRejectsOversizedProtectedTurnWithoutRouting(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			s, key := proxyFixture(t, 1)
 			body := scrubRequestBody(t, false)
-			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
 			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 				t.Fatal("unexpected upstream request")
 				return nil, nil
@@ -217,7 +219,7 @@ func TestProxyRejectsMalformedScrubCandidate(t *testing.T) {
 	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
 		t.Run(path, func(t *testing.T) {
 			s, key := proxyFixture(t, 1)
-			s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: 2, TargetBytes: 1}
+			s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: 2, TargetBytes: 1}
 			s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 				t.Fatal("unexpected upstream request")
 				return nil, nil
@@ -253,7 +255,7 @@ func TestProxyScrubRoutesRejectAboveRescueLimit(t *testing.T) {
 func TestProxyLargeRequestGateReleasesBeforeUpstream(t *testing.T) {
 	s, key := proxyFixture(t, 1)
 	body := scrubRequestBody(t, true)
-	s.proxyScrubPolicy = responsesproxy.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+	s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
 	started, release := make(chan struct{}, 2), make(chan struct{})
 	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
 		started <- struct{}{}
@@ -318,4 +320,79 @@ func terminalEvent(t *testing.T, stream string) map[string]any {
 	}
 	t.Fatal("terminal data missing")
 	return nil
+}
+
+func TestRequestSizeExtensionGlobalToggleAndActiveSnapshot(t *testing.T) {
+	for _, path := range []string{"/v1/responses", "/v1/responses/compact"} {
+		t.Run(path, func(t *testing.T) {
+			s, key := proxyFixture(t, 1)
+			body := scrubRequestBody(t, true)
+			s.proxyScrubPolicy = requestsize.ScrubPolicy{TriggerBytes: len(body) - 1, TargetBytes: len(body) - 500}
+			calls := 0
+			var forwarded []byte
+			s.proxyClient.Transport = proxyRoundTrip(func(r *http.Request) (*http.Response, error) {
+				calls++
+				forwarded, _ = io.ReadAll(r.Body)
+				// An active request keeps the enabled state captured before preparation.
+				if calls == 1 {
+					if err := proxyextension.SetEnabled(t.Context(), s.App.Store, requestsize.ID, false); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return upstreamResponse(200, proxyUsageStream("response", "completed", 150)), nil
+			})
+			for i := 0; i < 3; i++ {
+				enabled := i != 1
+				if i == 2 {
+					if err := proxyextension.SetEnabled(t.Context(), s.App.Store, requestsize.ID, true); err != nil {
+						t.Fatal(err)
+					}
+				}
+				got := proxyRequest(s, key.Token, path, string(body))
+				if got.Code != 200 {
+					t.Fatal(got.Code, got.Body)
+				}
+				if bytes.Equal(forwarded, body) == enabled {
+					t.Fatalf("enabled=%v forwarded=%d original=%d", enabled, len(forwarded), len(body))
+				}
+				usage := terminalEvent(t, got.Body.String())["response"].(map[string]any)["usage"].(map[string]any)
+				want := float64(120)
+				if enabled && path == "/v1/responses" {
+					want = float64(requestsize.NativeCompactionInputTokens)
+				}
+				if usage["input_tokens"] != want {
+					t.Fatal(enabled, usage)
+				}
+			}
+			snapshot := s.proxyStats.snapshot()
+			if calls != 3 || snapshot.ScrubbedRequests != 2 {
+				t.Fatal(calls, snapshot)
+			}
+			if path == "/v1/responses" {
+				if snapshot.NativeCompactionArmed != 2 {
+					t.Fatal(snapshot)
+				}
+				var count int
+				if err := s.App.Store.DB.QueryRow("SELECT count(*) FROM proxy_responses WHERE input_tokens=120 AND total_tokens=150").Scan(&count); err != nil || count != 3 {
+					t.Fatal(count, err)
+				}
+			}
+		})
+	}
+}
+
+func TestDisabledRequestSizeExtensionKeepsForwardingLimit(t *testing.T) {
+	s, key := proxyFixture(t, 1)
+	if err := proxyextension.SetEnabled(t.Context(), s.App.Store, requestsize.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	s.proxyClient.Transport = proxyRoundTrip(func(*http.Request) (*http.Response, error) {
+		t.Fatal("oversized request reached upstream")
+		return nil, nil
+	})
+	got := proxyRequest(s, key.Token, "/v1/responses", strings.Repeat("x", responsesproxy.MaxRequest+1))
+	snapshot := s.proxyStats.snapshot()
+	if got.Code != 413 || !strings.Contains(got.Body.String(), "request_too_large") || snapshot.ScrubbedRequests != 0 || snapshot.ScrubRejectedRequests != 0 || snapshot.NativeCompactionArmed != 0 {
+		t.Fatal(got.Code, got.Body, snapshot)
+	}
 }

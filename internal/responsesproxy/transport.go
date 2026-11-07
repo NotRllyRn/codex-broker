@@ -18,6 +18,7 @@ import (
 const BackendURL = "https://chatgpt.com/backend-api"
 const UpstreamURL = BackendURL + "/codex"
 const MaxRequest = 64 << 20
+const MaxInboundRequest = 128 << 20
 const ThreadIDHeader = "X-Codex-Broker-Thread-ID"
 const TurnIDHeader = "X-Codex-Broker-Turn-ID"
 

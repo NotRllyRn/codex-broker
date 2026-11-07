@@ -1,3 +1,4 @@
+import { initExtensionSettings } from "./extension-settings.js";
 import { initUsageDashboard } from "./usage.js";
 import { cachedRequest, clearCache, invalidateCache } from "./cache.js";
 
@@ -17,6 +18,7 @@ export function initApp({ refreshDashboard, toggleStreamer, forceRefresh = false
 	const root = document.documentElement;
 	const rootPath = root.dataset.rootPath || "";
 	const appPath = (path) => `${rootPath}${path}`;
+	initExtensionSettings({ appPath, signal: lifecycle.signal });
 	document.querySelectorAll('a[href^="/"], form[action^="/"]').forEach((element) => {
 		const attribute = element.hasAttribute("href") ? "href" : "action";
 		element.setAttribute(attribute, appPath(element.getAttribute(attribute)));

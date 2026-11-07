@@ -3,6 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
+// app.js now exports initApp; isolate the proxy block inside that lifecycle.
+const proxySection = (source) => source.slice(source.indexOf("const proxyCard ="), source.indexOf("\n\treturn () => {"));
+function runScript(source, context) {
+ Object.assign(context, { lifecycle: { signal: { aborted: false } }, forceRefresh: false, toggleStreamer: undefined,
+  cachedRequest: async (url) => (await context.fetch(url)).json() });
+ return runInNewContext(source, context);
+}
+
 test("shared model selector updates rolling/lifetime tokens and quota without fallback", async () => {
 	const panels = ["rolling_7d", "lifetime"].map((period) => {
 		const nodes = Object.fromEntries(["active_ms", "total_tokens", "tokens_per_minute", "tokens_per_hour"].map((name) => [name, { dataset: { usage: name } }]));
@@ -42,7 +50,7 @@ test("shared model selector updates rolling/lifetime tokens and quota without fa
 		],
 	};
 	const script = readFileSync(new URL("../internal/webassets/static/app.js", import.meta.url), "utf8");
-	runInNewContext(script.slice(script.indexOf("const proxyCard =")), {
+	runScript(proxySection(script), {
 		document: { querySelector: () => card, createElement: () => ({ dataset: {} }) },
 		Intl, Date, appPath: (path) => path,
 		fetch: async () => ({ ok: true, json: async () => data }),
@@ -99,7 +107,7 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	const context = { Intl, Date, URLSearchParams, AbortController,
 		document: { createElement: node, createElementNS: node },
 		fetch: async (url) => { urls.push(url); return { ok: true, json: async () => new URL(url,"https://test").searchParams.has("identity") ? {...zero,ccusage:true,reports:1,processed_tokens:7,output:7,pricing:{status:"ccusage"}} : zero }; } };
-	runInNewContext(script.replaceAll("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
+	runScript(script.replace(/^import .*;\n/gm, "").replaceAll("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
 	const load = context.initialize(panel, (path) => "/broker" + path);
 	await load("account1");
 	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all&provider=openai&model=all&identity=all&device=all");
@@ -149,12 +157,12 @@ test("streamer preference persists at the root path and masks live labels", asyn
     recent_clients: [{ name: "Work laptop", key_prefix: "cbk_example", active: 1, last_seen: new Date().toISOString() }],
     relays: [{ id: "Example edge", state: "ready", ready: true, connected: true, protocol_version: 5, last_seen: new Date().toISOString() }] }) }) };
   const preference = script.slice(script.indexOf("const streamerMode ="), script.indexOf("const themeButton ="));
-  runInNewContext(preference, context);
+  runScript(preference, context);
   click();
   assert.equal(reloads, 1);
   assert.equal(document.cookie, `codex-broker.streamer=${enabled ? "off" : "on"}; Path=/broker; Max-Age=31536000; SameSite=Strict; Secure`);
   document.querySelector = () => ({ querySelector: find, querySelectorAll: () => [] });
-  runInNewContext(script.slice(script.indexOf("const proxyCard =")), context);
+  runScript(proxySection(script), context);
   for (let iteration = 0; iteration < 2; iteration++) {
    await new Promise(setImmediate);
    assert.equal(find("[data-proxy-clients]").children[0].children[0].textContent, enabled ? "Client 1" : "Work laptop · cbk_example");

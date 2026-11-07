@@ -3,6 +3,7 @@ package responsesproxy
 import (
 	"bytes"
 	"fmt"
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"strings"
 	"testing"
 )
@@ -36,7 +37,7 @@ func TestStreamNoticeArmsNativeCompactionOnCompletedUsageOnly(t *testing.T) {
 		wantOut   int64
 		wantTotal int64
 	}{
-		{status: "completed", arm: true, wantIn: NativeCompactionInputTokens, wantOut: 5, wantTotal: NativeCompactionInputTokens + 5},
+		{status: "completed", arm: true, wantIn: requestsize.NativeCompactionInputTokens, wantOut: 5, wantTotal: requestsize.NativeCompactionInputTokens + 5},
 		{status: "completed", arm: false, wantIn: 3, wantOut: 5, wantTotal: 8},
 		{status: "incomplete", arm: true, wantIn: 3, wantOut: 5, wantTotal: 8},
 		{status: "failed", arm: true, wantIn: 3, wantOut: 5, wantTotal: 8},
@@ -48,8 +49,7 @@ func TestStreamNoticeArmsNativeCompactionOnCompletedUsageOnly(t *testing.T) {
 			var observed TerminalResponse
 			armed := 0
 			_, err := streamNotice(&output, strings.NewReader(stream), "", 10, func(value TerminalResponse) { observed = value }, StreamOptions{
-				ArmNativeCompaction:     test.arm,
-				OnNativeCompactionArmed: func() { armed++ },
+				ClientEvent: nativeCompactionHook(test.arm, func() { armed++ }),
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -78,13 +78,13 @@ func TestStreamNoticeArmsNativeCompactionOnCompletedUsageOnly(t *testing.T) {
 func TestStreamNoticeSynthesizesUsageWhenArmed(t *testing.T) {
 	stream := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp\"}}\n\n"
 	var output bytes.Buffer
-	_, err := streamNotice(&output, strings.NewReader(stream), "", 0, nil, StreamOptions{ArmNativeCompaction: true})
+	_, err := streamNotice(&output, strings.NewReader(stream), "", 0, nil, StreamOptions{ClientEvent: requestsize.Handoff(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	event := noticeEvent(output.Bytes())
 	usage := event["response"].(map[string]any)["usage"].(map[string]any)
-	if usage["input_tokens"] != float64(NativeCompactionInputTokens) || usage["output_tokens"] != float64(0) || usage["total_tokens"] != float64(NativeCompactionInputTokens) {
+	if usage["input_tokens"] != float64(requestsize.NativeCompactionInputTokens) || usage["output_tokens"] != float64(0) || usage["total_tokens"] != float64(requestsize.NativeCompactionInputTokens) {
 		t.Fatalf("usage=%v", usage)
 	}
 }

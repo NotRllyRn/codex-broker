@@ -1,0 +1,13 @@
+{
+  "name": "@codex-broker/proxy-extension",
+  "version": "0.1.0",
+  "private": true,
+  "types": "index.d.ts",
+  "scripts": {
+    "check": "tsc --noEmit --strict --target ES2020 --moduleResolution bundler --module ESNext examples/*.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.0"
+  }
+}

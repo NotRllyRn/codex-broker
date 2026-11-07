@@ -91,6 +91,14 @@ func (s *Server) relayEvents(w http.ResponseWriter, r *http.Request) error {
 			} else {
 				processErr = s.App.Router.ReportRelayFailure(r.Context(), event.ClientID, event.AccountID, event.FailureKind, event.OccurredAtMS)
 			}
+		case "extension_log":
+			if event.ExtensionLog == nil || event.ExtensionLog.Validate() != nil {
+				processErr = core.NewError("RELAY_EVENT_INVALID", "Relay extension log is invalid", 422)
+			} else {
+				entry := *event.ExtensionLog
+				entry.RelayID = event.RelayID
+				s.recordExtensionLog(entry)
+			}
 		case "telemetry":
 			if event.Observation == nil {
 				processErr = core.NewError("RELAY_EVENT_INVALID", "Relay telemetry event is invalid", 422)

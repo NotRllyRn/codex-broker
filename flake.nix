@@ -24,9 +24,13 @@
 
             src = ./.;
 
-            vendorHash = "sha256-WRQDFmcrjs0np4ZxWwFQbTNT9KT4Ck0sJLoCSjGF0q8=";
+            vendorHash = "sha256-bghbt39aQhkxCNTYTYohzLuzwitNFwb1RJTXxJXvyNg=";
 
             subPackages = [ "cmd/codex-broker" ];
+            nativeBuildInputs = [ pkgs.makeWrapper pkgs.nodejs_22 ];
+            postInstall = ''
+              wrapProgram $out/bin/codex-broker --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.nodejs_22 ]}
+            '';
 
             meta = {
               description = "Central Codex authentication, quota, and account-routing service";

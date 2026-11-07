@@ -25,13 +25,16 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: test -z "$(gofmt -l cmd internal)"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: test -z "$(gofmt -l cmd internal extensions)"
       - run: python3 scripts/update-managed-codex.py --check
       - run: python3 -m unittest discover -s scripts -p test_update_managed_codex.py
       - run: go vet ./...
       - run: go run ./cmd/package-usage-sync --target linux-amd64 --out /tmp/usage-sync-test
       - run: unzip -q /tmp/usage-sync-test/codex-broker-usage-linux-amd64.zip -d /tmp/usage-sync-test/native
-      - run: go test -race ./...
+      - run: go test -race -timeout=20m ./...
         env:
           CCUSAGE_TEST_BINARY: /tmp/usage-sync-test/native/ccusage
       - run: go build ./cmd/codex-broker ./cmd/codex-broker-adapter ./cmd/codex-broker-usage
@@ -43,9 +46,10 @@ jobs:
       - run: npm run test:usage
       - run: npm run test:proxy
       - run: npm run test:enrollment
-      - run: npm install --prefix packages/pi-extension
+      - run: npm ci
       - run: npm test --prefix packages/pi-extension
       - run: npm run check --prefix packages/pi-extension
+      - run: npm run check:proxy-extensions
   usage-sync-native:
     strategy:
       matrix:

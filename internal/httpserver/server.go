@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/NotRllyRn/codex-broker/extensions/requestsize"
 	"github.com/NotRllyRn/codex-broker/internal/auth"
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
@@ -35,7 +36,7 @@ type Server struct {
 	proxyStats                                proxyStats
 	usageRates                                *usage.Catalog
 	usageRatesOnce                            sync.Once
-	proxyScrubPolicy                          responsesproxy.ScrubPolicy
+	proxyScrubPolicy                          requestsize.ScrubPolicy
 	gatewayEngine                             *gateway.Engine
 	gatewayOnce                               sync.Once
 	relayEventsMu                             sync.Mutex
@@ -78,7 +79,14 @@ func (t *throttle) clear(key string) {
 	t.mu.Unlock()
 }
 
-func New(application *broker.Application) (http.Handler, error) {
+type Handler struct {
+	http.Handler
+	server *Server
+}
+
+func (h *Handler) Close() { h.server.Close() }
+
+func New(application *broker.Application) (*Handler, error) {
 	templates, err := newRenderer("templates")
 	if err != nil {
 		return nil, err
@@ -86,7 +94,7 @@ func New(application *broker.Application) (http.Handler, error) {
 	server := &Server{App: application, renderer: templates, mux: http.NewServeMux(), loginThrottle: newThrottle(5, time.Minute), clientAuth: newThrottle(5, time.Minute), enrollmentAuth: newThrottle(20, time.Minute)}
 	server.proxyClient = responsesproxy.NewClient()
 	server.routes()
-	return server.rootPath(server.middleware(server.mux)), nil
+	return &Handler{Handler: server.rootPath(server.middleware(server.mux)), server: server}, nil
 }
 
 func (s *Server) rootPath(next http.Handler) http.Handler {
@@ -174,6 +182,9 @@ func (s *Server) routes() {
 	route("POST /settings/client-keys", s.clientKeyCreate)
 	route("POST /settings/client-keys/{id}/scopes", s.clientKeyScopes)
 	route("POST /settings/client-keys/{id}/streamer-mode", s.clientKeyStreamerMode)
+	route("POST /settings/proxy-extensions/{id}/enabled", s.proxyExtensionEnabled)
+	route("GET /settings/proxy-extensions/{id}/settings", s.proxyExtensionSettings)
+	route("POST /settings/proxy-extensions/{id}/settings", s.proxyExtensionSettings)
 	route("POST /settings/client-keys/{id}/revoke", s.clientKeyRevoke)
 	route("POST /settings/client-keys/{id}/delete", s.clientKeyDelete)
 	route("POST /settings/webhooks", s.webhookCreate)

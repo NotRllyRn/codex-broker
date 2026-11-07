@@ -10,6 +10,7 @@ import (
 
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"github.com/NotRllyRn/codex-broker/internal/relayprotocol"
 	"github.com/NotRllyRn/codex-broker/internal/store"
 )
@@ -75,7 +76,15 @@ func (a *Application) RelaySnapshot(ctx context.Context, relayID string) (relayp
 	}
 	var stateVersion int64
 	_ = a.Store.DB.QueryRowContext(ctx, "SELECT COALESCE(sum(state_version),0) FROM account_state").Scan(&stateVersion)
-	return relayprotocol.Snapshot{ProtocolVersion: relayprotocol.Version, SnapshotID: fmt.Sprintf("%d-%s", now, relayID), RelayID: relayID, PoolEpoch: fmt.Sprintf("%d", stateVersion), GeneratedAtMS: now, Clients: clients, Leases: leasing}, nil
+	disabled, err := proxyextension.Disabled(ctx, a.Store)
+	if err != nil {
+		return relayprotocol.Snapshot{}, err
+	}
+	configuration, err := proxyextension.Configurations(ctx, a.Store, a.Vault)
+	if err != nil {
+		return relayprotocol.Snapshot{}, err
+	}
+	return relayprotocol.Snapshot{ExtensionLogging: true, ExtensionSettings: configuration, DisabledExtensions: proxyextension.IDs(disabled), ProtocolVersion: relayprotocol.Version, SnapshotID: fmt.Sprintf("%d-%s", now, relayID), RelayID: relayID, PoolEpoch: fmt.Sprintf("%d", stateVersion), GeneratedAtMS: now, Clients: clients, Leases: leasing}, nil
 }
 
 func (a *Application) reserveForRelay(ctx context.Context, relayID string, now int64) (accountID, epoch string, expires int64, err error) {

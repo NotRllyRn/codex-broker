@@ -25,7 +25,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if version != 30 {
+		if version != 31 {
 			t.Fatalf("schema version = %d", version)
 		}
 		var foreignKeys int
@@ -557,5 +557,37 @@ func TestCCUsageMigrationPreservesLegacyIdentityData(t *testing.T) {
 		if err := migrated.DB.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != want {
 			t.Fatal(table, count, err)
 		}
+	}
+}
+
+func TestExtensionLogMigrationPreservesRelayDeduplication(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	before, _ := migrationFiles.ReadFile("migrations/017_relay_edges.sql")
+	if _, err := db.Exec(string(before)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO relay_events VALUES('old','edge','telemetry',1,2)"); err != nil {
+		t.Fatal(err)
+	}
+	migration, _ := migrationFiles.ReadFile("migrations/031_extension_log_events.sql")
+	if _, err := db.Exec(string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO relay_events VALUES('new','edge','extension_log',3,4)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT OR IGNORE INTO relay_events VALUES('old','edge','telemetry',1,2)"); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow("SELECT count(*) FROM relay_events").Scan(&count); err != nil || count != 2 {
+		t.Fatal(count, err)
+	}
+	if _, err := db.Exec("INSERT INTO relay_events VALUES('invalid','edge','unknown',1,2)"); err == nil {
+		t.Fatal("unknown kind accepted")
 	}
 }
