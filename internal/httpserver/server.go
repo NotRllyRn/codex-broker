@@ -174,6 +174,7 @@ func (s *Server) routes() {
 	route("POST /settings/client-keys", s.clientKeyCreate)
 	route("POST /settings/client-keys/{id}/scopes", s.clientKeyScopes)
 	route("POST /settings/client-keys/{id}/streamer-mode", s.clientKeyStreamerMode)
+	route("POST /settings/proxy-extensions/{id}/enabled", s.proxyExtensionEnabled)
 	route("POST /settings/client-keys/{id}/revoke", s.clientKeyRevoke)
 	route("POST /settings/client-keys/{id}/delete", s.clientKeyDelete)
 	route("POST /settings/webhooks", s.webhookCreate)

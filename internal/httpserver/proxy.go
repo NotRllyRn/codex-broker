@@ -6,6 +6,7 @@ import (
 
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/gateway"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"github.com/NotRllyRn/codex-broker/internal/proxytelemetry"
 )
 
@@ -61,6 +62,7 @@ func (s *Server) proxyGateway() *gateway.Engine {
 	s.gatewayOnce.Do(func() {
 		s.gatewayEngine = gateway.New(brokerGatewayAuthority{s}, &s.proxyStats)
 		s.gatewayEngine.Client = s.proxyClient
+		s.gatewayEngine.DisabledExtensions = func(ctx context.Context) (map[string]bool, error) { return proxyextension.Disabled(ctx, s.App.Store) }
 		if s.App.Logs != nil {
 			s.gatewayEngine.Log = s.App.Logs.Log
 		}

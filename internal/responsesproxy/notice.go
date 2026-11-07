@@ -17,6 +17,9 @@ const NoticePrefix = "msg_codex_broker_"
 const NativeCompactionInputTokens int64 = 1_000_000
 
 type StreamOptions struct {
+	NoticeText              *string
+	UpstreamEvent           func(map[string]any) (map[string]any, error)
+	ClientEvent             func(map[string]any) (map[string]any, error)
 	ArmNativeCompaction     bool
 	OnNativeCompactionArmed func()
 }
@@ -175,7 +178,11 @@ func CopyNoticeResponse(w http.ResponseWriter, response *http.Response, notice N
 	w.WriteHeader(response.StatusCode)
 	controller := http.NewResponseController(w)
 	_ = controller.Flush()
-	inserted, err := streamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), AccountNotice(notice), firstEventAtMS, observe, options)
+	noticeText := AccountNotice(notice)
+	if options.NoticeText != nil {
+		noticeText = *options.NoticeText
+	}
+	inserted, err := streamNotice(flushWriter{w, controller}, io.MultiReader(bytes.NewReader(prefix), reader), noticeText, firstEventAtMS, observe, options)
 	if err != nil {
 		panic(http.ErrAbortHandler)
 	}
@@ -304,6 +311,16 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 				}
 			}
 		}
+		if options.ClientEvent != nil {
+			var err error
+			event, err = options.ClientEvent(event)
+			if err != nil {
+				return err
+			}
+			if event == nil {
+				return nil
+			}
+		}
 		data, err := json.Marshal(event)
 		if err != nil {
 			return err
@@ -325,6 +342,24 @@ func streamNotice(w io.Writer, r io.Reader, prefix string, firstEventAtMS int64,
 		if terminal && observe != nil {
 			// Account availability must be updated even if the downstream disconnects.
 			observe(terminalResponse(event, firstEventAtMS, time.Now().UnixMilli()))
+		}
+		if options.UpstreamEvent != nil && event["type"] != nil {
+			event, err = options.UpstreamEvent(event)
+			if err != nil {
+				return false, err
+			}
+			if event == nil {
+				if terminal {
+					return inserted, nil
+				}
+				continue
+			}
+			encoded, marshalErr := json.Marshal(event)
+			if marshalErr != nil {
+				return false, marshalErr
+			}
+			frame = []byte(fmt.Sprintf("event: %s\ndata: %s\n\n", event["type"], encoded))
+			item, _ = event["item"].(map[string]any)
 		}
 		id, _ := item["id"].(string)
 		if pendingID == "" && event["type"] == "response.output_item.added" && item["type"] == "message" && item["role"] == "assistant" {

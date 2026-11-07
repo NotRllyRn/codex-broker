@@ -13,6 +13,7 @@ import (
 	"github.com/NotRllyRn/codex-broker/internal/broker"
 	"github.com/NotRllyRn/codex-broker/internal/core"
 	"github.com/NotRllyRn/codex-broker/internal/identity"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"github.com/flosch/pongo2/v6"
 )
 
@@ -357,7 +358,11 @@ func (s *Server) settingsContext(r *http.Request, issued any) (pongo2.Context, e
 	if err != nil {
 		return nil, err
 	}
-	context := pongo2.Context{"root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}
+	disabled, err := proxyextension.Disabled(r.Context(), s.App.Store)
+	if err != nil {
+		return nil, err
+	}
+	context := pongo2.Context{"proxy_extensions": s.proxyGateway().Extensions.List(disabled), "proxy_extension_error": s.proxyGateway().ExtensionError != nil, "root_path": s.App.Config.RootPath, "settings": settingsMap(s.App), "vault_configured": s.App.VaultConfigured, "compatibility": compatibilityMap(s.App), "destinations": destinations, "client_keys": keysView(keys, labels), "scope_options": scopeOptions(labels, nil), "labels": labels, "public_enrollment_open": open, "issued_key": issued, "csrf": cookie(r, csrfCookie)}
 	if err := s.identityContext(r, context); err != nil {
 		return nil, err
 	}
@@ -608,6 +613,30 @@ func (s *Server) clientKeyStreamerMode(w http.ResponseWriter, r *http.Request) e
 		return err
 	}
 	if err := s.App.ClientKeys.SetStreamerMode(r.Context(), r.PathValue("id"), formBool(r.Form.Get("enabled"))); err != nil {
+		return err
+	}
+	s.redirect(w, r, "/settings")
+	return nil
+}
+
+func (s *Server) proxyExtensionEnabled(w http.ResponseWriter, r *http.Request) error {
+	if err := s.requireForm(r); err != nil {
+		return err
+	}
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	id := r.PathValue("id")
+	found := false
+	for _, entry := range s.proxyGateway().Extensions.List(nil) {
+		if entry.ID == id {
+			found = true
+		}
+	}
+	if !found {
+		return core.NewError("EXTENSION_NOT_FOUND", "Proxy extension not found", 404)
+	}
+	if err := proxyextension.SetEnabled(r.Context(), s.App.Store, id, formBool(r.Form.Get("enabled"))); err != nil {
 		return err
 	}
 	s.redirect(w, r, "/settings")

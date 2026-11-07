@@ -50,6 +50,24 @@
   </article>
 </section>
 <section class="detail-section">
+  <h2>Proxy extensions</h2>
+  <p class="subtle">Changes apply to new requests. Account usage adds the account and quota prefix to answers. Usage accounting and history cleanup stay active when it is disabled. Relays receive changes on their next sync.</p>
+  {% if proxy_extension_error %}<p>Extension loading failed. Check the configured extension directory and restart.</p>{% endif %}
+  <div class="data-list">
+    {% for extension in proxy_extensions %}
+    <article>
+      <strong>{{ extension.ID }}</strong>
+      <span>{% if extension.Enabled %}Enabled{% else %}Disabled{% endif %}</span>
+      <form method="post" action="/settings/proxy-extensions/{{ extension.ID }}/enabled">
+        <input type="hidden" name="csrf_token" value="{{ csrf }}" />
+        <input type="hidden" name="enabled" value="{% if extension.Enabled %}false{% else %}true{% endif %}" />
+        <button class="quiet-button" type="submit">{% if extension.Enabled %}Disable{% else %}Enable{% endif %}</button>
+      </form>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="detail-section">
   <h2>Labels</h2>
   <p class="subtle">Enrollment links such as /label/ or /?labels=label,another-label apply existing labels only. Deleting a label removes it from all accounts. Remove any client key access rules using it before deleting.</p>
   {% if labels %}

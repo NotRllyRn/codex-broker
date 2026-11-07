@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/NotRllyRn/codex-broker/internal/proxyextension"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,18 +72,22 @@ type Metrics interface {
 }
 
 type Engine struct {
-	Authority    Authority
-	Client       *http.Client
-	Metrics      Metrics
-	ScrubPolicy  responsesproxy.ScrubPolicy
-	largeOnce    sync.Once
-	largeGate    chan struct{}
-	Log          func(level, event, message string)
-	unreadyUntil atomic.Int64
+	Extensions         *proxyextension.Manager
+	ExtensionError     error
+	DisabledExtensions func(context.Context) (map[string]bool, error)
+	Authority          Authority
+	Client             *http.Client
+	Metrics            Metrics
+	ScrubPolicy        responsesproxy.ScrubPolicy
+	largeOnce          sync.Once
+	largeGate          chan struct{}
+	Log                func(level, event, message string)
+	unreadyUntil       atomic.Int64
 }
 
 func New(authority Authority, metrics Metrics) *Engine {
-	return &Engine{Authority: authority, Client: responsesproxy.NewClient(), Metrics: metrics}
+	extensions, err := proxyextension.Load(os.Getenv("WINDOWKEEPER_PROXY_EXTENSIONS_DIR"))
+	return &Engine{Authority: authority, Client: responsesproxy.NewClient(), Metrics: metrics, Extensions: extensions, ExtensionError: err}
 }
 
 func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
@@ -133,6 +139,67 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 		}
 		return Error(w, 400, "invalid_request", "Request body could not be read.")
 	}
+
+	if e.ExtensionError != nil {
+		return extensionFailure(w)
+	}
+	disabled := map[string]bool{}
+	if e.DisabledExtensions != nil {
+		disabled, err = e.DisabledExtensions(r.Context())
+		if err != nil {
+			return extensionFailure(w)
+		}
+	}
+	requestID := core.NewID()
+	identity := proxyextension.Context{RequestID: requestID, ClientID: key.ID}
+	if e.Extensions.Active(disabled) {
+		identity = extensionIdentity(r, body, key.ID, requestID)
+	}
+	ext, err := e.Extensions.Start(r.Context(), identity, disabled)
+	if err != nil {
+		return extensionFailure(w)
+	}
+	outcome := "error"
+	defer extensionFinish(ext, r.Context(), &outcome)
+	// Hook edits never mutate the caller's request or its authenticated identity.
+	if ext.Active() {
+		r = r.Clone(r.Context())
+	}
+	var local *http.Response
+	body, local, err = extensionRequest(ext, "request", r, body, nil)
+	if err != nil {
+		return extensionFailure(w)
+	}
+	sendLocal := func(response *http.Response) error {
+		err := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error {
+			if ext.Has("client_event") && response.StatusCode == http.StatusOK {
+				_, err := responsesproxy.CopyNoticeResponse(dst, response, responsesproxy.Notice{}, nil, nil, responsesproxy.StreamOptions{NoticeText: new(string), ClientEvent: extensionEvent(ext, "client_event")})
+				return err
+			}
+			responsesproxy.CopyResponse(dst, response)
+			return nil
+		})
+		if err != nil {
+			return extensionFailure(w)
+		}
+		outcome = "local"
+		return nil
+	}
+	if local != nil {
+		return sendLocal(local)
+	}
+	fail := func(status int, code, message string) error {
+		if !ext.Has("response") && !ext.Has("body") {
+			return Error(w, status, code, message)
+		}
+		buffer := &boundedResponse{header: http.Header{}}
+		_ = Error(buffer, status, code, message)
+		response := &http.Response{StatusCode: buffer.status, Header: buffer.header, Body: io.NopCloser(&buffer.body)}
+		if err := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error { responsesproxy.CopyResponse(dst, response); return nil }); err != nil {
+			return extensionFailure(w)
+		}
+		return nil
+	}
 	armNativeCompaction := false
 	if isScrubbable {
 		body = responsesproxy.PrepareNotice(body)
@@ -142,9 +209,9 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 				e.Metrics.RejectScrub()
 			}
 			if errors.Is(scrubErr, responsesproxy.ErrInvalidScrubRequest) && len(body) <= responsesproxy.MaxRequest {
-				return Error(w, 400, "invalid_request", "Large Responses request is not valid JSON.")
+				return fail(400, "invalid_request", "Large Responses request is not valid JSON.")
 			}
-			return Error(w, 413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
+			return fail(413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
 		}
 		armNativeCompaction = isResponse && result.Changed && !responsesproxy.IsCompactionRequest(r.URL.Path, body)
 		body = result.Body
@@ -155,14 +222,24 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			if e.Metrics != nil {
 				e.Metrics.RejectScrub()
 			}
-			return Error(w, 413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
+			return fail(413, "request_too_large_after_scrub", "Request remains too large after historical content cleanup.")
 		}
 	}
 	if releaseLarge != nil {
 		releaseLarge()
 		releaseLarge = nil
 	}
-	var metadata struct {
+	body, local, err = extensionRequest(ext, "prepared", r, body, nil)
+	if err != nil {
+		return extensionFailure(w)
+	}
+	if local != nil {
+		return sendLocal(local)
+	}
+	if len(body) > responsesproxy.MaxRequest {
+		return fail(413, "request_too_large", "Extension request exceeds the broker limit.")
+	}
+	type requestMetadata struct {
 		Model              string `json:"model"`
 		ServiceTier        string `json:"service_tier"`
 		PreviousResponseID string `json:"previous_response_id"`
@@ -170,28 +247,31 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			Effort string `json:"effort"`
 		} `json:"reasoning"`
 	}
+	var metadata requestMetadata
 	if isResponse {
 		_ = json.Unmarshal(body, &metadata)
 	}
-	requestID := core.NewID()
 	input := RouteRequest{SessionID: "proxy-" + requestID, TurnID: core.NewID()}
 	attemptCounts, previous := map[string]int{}, ""
 	retries, failovers, attemptCount := 0, 0, 0
 	for {
+		if err := ext.Emit("route", map[string]any{"attempt": attemptCount + 1, "failureKind": input.FailureKind}); err != nil {
+			return extensionFailure(w)
+		}
 		selected, wait, routeErr := e.Authority.Route(r.Context(), key.ID, input)
 		if routeErr != nil {
 			e.failure(r, requestID, "", key.ID, "route", requestStartedAt, routeErr)
-			return Error(w, 503, "broker_unavailable", "Codex Broker unavailable.")
+			return fail(503, "broker_unavailable", "Codex Broker unavailable.")
 		}
 		if wait != nil {
 			w.Header().Set("Retry-After", strconv.Itoa(wait.RetryAfterSeconds))
-			return Error(w, 429, "pool_exhausted", "All accounts unavailable · retry "+CompactDuration(wait.RetryAfterSeconds)+".")
+			return fail(429, "pool_exhausted", "All accounts unavailable · retry "+CompactDuration(wait.RetryAfterSeconds)+".")
 		}
 		if selected == nil {
-			return Error(w, 503, "broker_unavailable", "Codex Broker unavailable.")
+			return fail(503, "broker_unavailable", "Codex Broker unavailable.")
 		}
 		if attemptCounts[selected.AccountID] > 0 && !(input.FailureKind == "auth" && input.FailedAccountID == selected.AccountID && attemptCounts[selected.AccountID] == 1) {
-			return Error(w, 502, "routing_failed", "Broker returned an unavailable account.")
+			return fail(502, "routing_failed", "Broker returned an unavailable account.")
 		}
 		if previous != "" && previous != selected.AccountID {
 			if e.Metrics != nil {
@@ -208,24 +288,47 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 			target += "?" + r.URL.RawQuery
 		}
 		attemptCount++
+		attemptRequest := r
+		if ext.Has("attempt") {
+			attemptRequest = r.Clone(r.Context())
+		}
+		attemptBody, synthetic, hookErr := extensionRequest(ext, "attempt", attemptRequest, body, map[string]any{"attempt": attemptCount, "accountId": selected.AccountID})
+		if hookErr != nil {
+			return extensionFailure(w)
+		}
+		if synthetic != nil {
+			return sendLocal(synthetic)
+		}
+		if len(attemptBody) > responsesproxy.MaxRequest {
+			return extensionFailure(w)
+		}
+		if isResponse {
+			metadata = requestMetadata{}
+			_ = json.Unmarshal(attemptBody, &metadata)
+		}
 		upstreamStartedAt := time.Now().UnixMilli()
-		response, forwardErr := responsesproxy.Forward(e.Client, r, target, body, selected.AccessToken, selected.ChatGPTAccountID)
+		response, forwardErr := responsesproxy.Forward(e.Client, attemptRequest, target, attemptBody, selected.AccessToken, selected.ChatGPTAccountID)
 		if forwardErr != nil {
 			e.failure(r, requestID, selected.AccountID, key.ID, "upstream_headers", requestStartedAt, forwardErr)
-			return Error(w, 502, "upstream_unavailable", "Upstream request failed.")
+			return fail(502, "upstream_unavailable", "Upstream request failed.")
 		}
 		response.Body = &observedBody{ReadCloser: response.Body, onError: func(err error) {
 			e.failure(r, requestID, selected.AccountID, key.ID, "upstream_body", requestStartedAt, err)
 		}}
 		responseHeadersAt := time.Now().UnixMilli()
+		upstreamStatus := response.StatusCode
+		if err := ext.Emit("upstream", map[string]any{"attempt": attemptCount, "accountId": selected.AccountID, "status": response.StatusCode, "headers": safeHeaders(response.Header)}); err != nil {
+			response.Body.Close()
+			return extensionFailure(w)
+		}
 		if response.StatusCode >= 300 && response.StatusCode < 400 {
 			response.Body.Close()
-			return Error(w, 502, "upstream_redirect", "Upstream redirect rejected.")
+			return fail(502, "upstream_redirect", "Upstream redirect rejected.")
 		}
 		if selected.Reserve && response.StatusCode >= 200 && response.StatusCode < 300 {
 			if err := e.Authority.Activate(context.WithoutCancel(r.Context()), *selected); err != nil {
 				response.Body.Close()
-				return Error(w, 503, "relay_cache_unavailable", "Relay state could not be saved safely.")
+				return fail(503, "relay_cache_unavailable", "Relay state could not be saved safely.")
 			}
 		}
 		kind := responsesproxy.ResponseFailureKind(response)
@@ -250,27 +353,38 @@ func (e *Engine) Serve(w http.ResponseWriter, r *http.Request) error {
 						RequestID: requestID, AccountID: selected.AccountID, ClientID: key.ID, ThreadID: threadID, TurnID: turnID, Endpoint: r.URL.Path,
 						RequestModel: metadata.Model, ReasoningEffort: metadata.Reasoning.Effort, RequestServiceTier: metadata.ServiceTier, PreviousResponseID: metadata.PreviousResponseID,
 						ResponseID: terminal.ID, ResponseModel: terminal.Model, ResponseServiceTier: terminal.ServiceTier, TerminalStatus: terminal.Status,
-						UpstreamAttempts: attemptCount, UpstreamHTTPStatus: response.StatusCode, RequestStartedAtMS: requestStartedAt, UpstreamStartedAtMS: upstreamStartedAt,
+						UpstreamAttempts: attemptCount, UpstreamHTTPStatus: upstreamStatus, RequestStartedAtMS: requestStartedAt, UpstreamStartedAtMS: upstreamStartedAt,
 						ResponseHeadersAtMS: responseHeadersAt, FirstResponseEventAtMS: terminal.FirstEventAtMS, TerminalEventAtMS: terminal.TerminalEventAtMS,
 						InputTokens: terminal.InputTokens, CachedInputTokens: terminal.CachedInputTokens, OutputTokens: terminal.OutputTokens, ReasoningTokens: terminal.ReasoningOutputTokens, TotalTokens: terminal.TotalTokens, UsageJSON: terminal.UsageJSON,
 					})
 				}
-				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction}
+				noticeText := ext.UsageNotice(notice)
+				options := responsesproxy.StreamOptions{ArmNativeCompaction: armNativeCompaction, NoticeText: &noticeText, UpstreamEvent: extensionEvent(ext, "upstream_event"), ClientEvent: extensionEvent(ext, "client_event")}
 				if e.Metrics != nil {
 					options.OnNativeCompactionArmed = e.Metrics.NativeCompactionArmed
 				}
-				if _, copyErr := responsesproxy.CopyNoticeResponse(w, response, notice, nil, observe, options); copyErr != nil {
+				if copyErr := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error {
+					_, err := responsesproxy.CopyNoticeResponse(dst, response, notice, nil, observe, options)
+					return err
+				}); copyErr != nil {
 					if errors.Is(copyErr, responsesproxy.ErrIdleReadTimeout) {
-						return Error(w, http.StatusGatewayTimeout, "upstream_timeout", "Upstream response stalled.")
+						return fail(http.StatusGatewayTimeout, "upstream_timeout", "Upstream response stalled.")
 					}
-					return Error(w, http.StatusBadGateway, "invalid_upstream_stream", "Upstream stream validation failed.")
+					return fail(http.StatusBadGateway, "invalid_upstream_stream", "Upstream stream validation failed.")
 				}
+				outcome = "complete"
 				return nil
 			}
-			responsesproxy.CopyResponse(w, response)
+			if err := extensionResponse(ext, w, response, func(dst http.ResponseWriter) error { responsesproxy.CopyResponse(dst, response); return nil }); err != nil {
+				return extensionFailure(w)
+			}
+			outcome = "complete"
 			return nil
 		}
 		response.Body.Close()
+		if err := ext.Emit("retry", map[string]any{"attempt": attemptCount, "accountId": selected.AccountID, "failureKind": kind}); err != nil {
+			return extensionFailure(w)
+		}
 		input.PreferredAccountID, input.FailedAccountID, input.FailureKind = selected.AccountID, selected.AccountID, kind
 	}
 }

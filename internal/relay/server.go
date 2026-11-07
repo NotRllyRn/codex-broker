@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -16,6 +17,15 @@ type Server struct {
 
 func NewServer(relay *Relay) *Server {
 	s := &Server{relay: relay, engine: gateway.New(relay, nil), mux: http.NewServeMux()}
+	s.engine.DisabledExtensions = func(context.Context) (map[string]bool, error) {
+		relay.mu.RLock()
+		defer relay.mu.RUnlock()
+		result := map[string]bool{}
+		for _, id := range relay.state.Snapshot.DisabledExtensions {
+			result[id] = true
+		}
+		return result, nil
+	}
 	s.mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
 	s.mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, _ *http.Request) {
 		if relay.Ready() && s.engine.Ready() {

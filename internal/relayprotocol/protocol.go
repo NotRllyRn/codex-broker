@@ -22,6 +22,7 @@ type Lease struct {
 }
 
 type Snapshot struct {
+	DisabledExtensions             []string `json:",omitempty"`
 	ProtocolVersion                int
 	SnapshotID, RelayID, PoolEpoch string
 	GeneratedAtMS                  int64
