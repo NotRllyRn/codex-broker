@@ -11,8 +11,11 @@ const MAX = 128 * 1024 * 1024;
 const sessions = new Map();
 const clone = (value) => JSON.parse(JSON.stringify(value));
 function send(value) {
+  if (value.kind === "result") send({ kind: "serializing" });
   const body = Buffer.from(JSON.stringify(value));
   if (body.length > MAX) throw Error("hook output exceeds limit");
+  // Serialization has its own bounded budget because getters can run code.
+  if (value.kind === "result") send({ kind: "sending" });
   const size = Buffer.alloc(4);
   size.writeUInt32BE(body.length);
   for (const buffer of [size, body]) {
@@ -144,7 +147,7 @@ async function dispatch(c) {
   s.settings = c.settings;
   const handler = s.handlers[c.hook]?.[c.index];
   if (!handler) throw Error("extension handler unavailable");
-  const result = await handler(clone(c.event), clone(s.context));
+  const result = await handler(c.event, clone(s.context));
   return {
     patch:
       c.hook === "settings_loaded" || c.hook === "settings_changed"
@@ -164,6 +167,7 @@ send({ ready: true });
 (async () => {
   while (true) {
     const c = await receive();
+    send({ kind: "running" });
     c.active = true;
     try {
       await scope.run(c, async () => {

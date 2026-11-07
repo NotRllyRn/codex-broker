@@ -180,7 +180,10 @@ rather than silently evicting another thread's state.
 
 There are at most 32 modules, 1 MiB source per module, 32 handlers per hook/module,
 up to 1,024 active request instances per worker, and a 100 ms wall-clock budget
-per handler (including IPC, excluding worker startup and queueing).
+per handler, including async I/O. Output JSON serialization has its own 1-second
+budget (getters can execute code). Input parsing and
+pipe transfers have separate 5-second budgets; copying large bodies does not
+consume the handler budget. Worker startup and queueing are separate.
 Module discovery and request factory initialization have a 1-second budget to
 allow Node to resolve/import packages; process startup has a separate 5-second limit. Node uses a 512 MiB V8 old-space
 limit; this is not a total process-memory quota.

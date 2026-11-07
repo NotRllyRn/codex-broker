@@ -158,6 +158,8 @@ func (w *nodeWorker) call(ctx context.Context, generation uint64, command map[st
 		err   error
 	}
 	done := make(chan outcome, 1)
+	phases := make(chan string)
+	abort := make(chan struct{})
 	go func() {
 		if err := writeFrame(p.input, command); err != nil {
 			done <- outcome{err: err}
@@ -168,6 +170,16 @@ func (w *nodeWorker) call(ctx context.Context, generation uint64, command map[st
 			if err != nil {
 				done <- outcome{err: err}
 				return
+			}
+			kind := string(reply["kind"])
+			if kind == `"running"` || kind == `"serializing"` || kind == `"sending"` {
+				select {
+				case phases <- kind:
+				case <-abort:
+					done <- outcome{err: context.Canceled}
+					return
+				}
+				continue
 			}
 			if string(reply["kind"]) == `"result"` {
 				done <- outcome{reply: reply}
@@ -194,20 +206,49 @@ func (w *nodeWorker) call(ctx context.Context, generation uint64, command map[st
 	if command["op"] == "schema" || command["op"] == "start" {
 		budget = time.Second
 	}
-	timer := time.NewTimer(budget)
+	// Input/output copying gets its own bounded budget. A large body must not
+	// consume the extension's execution allowance before its handler even starts.
+	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	var result outcome
-	select {
-	case result = <-done:
-	case <-ctx.Done():
-		result.err = ctx.Err()
-		p.close()
-		<-done
-	case <-timer.C:
-		result.err = errors.New("extension hook timeout")
-		p.close()
-		<-done
+	phase := "transport"
+	waiting := true
+	for waiting {
+		select {
+		case next := <-phases:
+			limit := 5 * time.Second
+			phase = "transport"
+			if next == `"running"` {
+				limit = budget
+				phase = "hook"
+			} else if next == `"serializing"` {
+				limit = time.Second
+				phase = "serialization"
+			}
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(limit)
+		case result = <-done:
+			waiting = false
+		case <-ctx.Done():
+			result.err = ctx.Err()
+			close(abort)
+			p.close()
+			<-done
+			waiting = false
+		case <-timer.C:
+			result.err = fmt.Errorf("extension %s timeout", phase)
+			close(abort)
+			p.close()
+			<-done
+			waiting = false
+		}
 	}
+
 	if result.err != nil {
 		p.close()
 		w.process = nil

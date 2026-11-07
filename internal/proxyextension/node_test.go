@@ -225,3 +225,22 @@ func TestBackgroundLogsCannotBeAttributedToAnotherRequest(t *testing.T) {
 		t.Fatal(logs)
 	}
 }
+
+func TestLargeBodyTransferDoesNotSpendHookBudget(t *testing.T) {
+	m := New(definition(t, "large", `export default p=>{p.on('request',e=>({headers:{'X-Bytes':[String(e.body.length)]}}));p.on('body',e=>({body:e.body}));}`))
+	s := start(t, m, Context{})
+	defer s.Finish("complete")
+	body := strings.Repeat("x", 8<<20)
+	event := map[string]any{"body": body}
+	if err := s.Emit("request", event); err != nil || s.instances[0].failed {
+		t.Fatal(err, m.latest)
+	}
+	headers, ok := event["headers"].(map[string]any)
+	if !ok || headers["X-Bytes"].([]any)[0] != "8388608" {
+		t.Fatal("large request hook skipped")
+	}
+	event = map[string]any{"body": body}
+	if err := s.Emit("body", event); err != nil || s.instances[0].failed || event["body"] != body {
+		t.Fatal(err, m.latest)
+	}
+}
