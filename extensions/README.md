@@ -10,10 +10,11 @@ settings apply globally to new requests and propagate to relays in snapshots.
 
 These are native Go extensions so existing byte handling and large-body memory
 behavior remain intact. They run at the same preparation/presentation boundaries
-as the TypeScript extension pipeline, without serializing large bodies into a VM.
+as the TypeScript extension pipeline, without serializing large bodies into Node.
 
 Custom TypeScript modules are currently provisioned through
 `WINDOWKEEPER_PROXY_EXTENSIONS_DIR`. This repository folder is the source catalog
 for built-ins; it is not an installer or a writable production data directory.
-Custom extension installation and persistent storage APIs are separate future
+Custom extensions run in Node and may use normal filesystem/database APIs with
+`getDataDir()` for a stable per-extension data directory. Installation is future
 work. See [the extension API](../docs/proxy-extensions.md) for authoring details.

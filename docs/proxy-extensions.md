@@ -13,16 +13,11 @@ for WebSocket upgrades. Disabling account usage removes only its answer prefix.
 Pi 0.84.4's `core/extensions/{types,loader,runner}.ts` supplies the design:
 a default factory registers typed `on` handlers; transformations chain in
 registration order; handled input short-circuits; context is separate from the
-payload. Pi uses jiti and an async Node runtime. Broker instead embeds Goja and
-esbuild's TypeScript transform: no Node daemon, IPC, CGO or extra deployment
-executable. Only synchronous, self-contained modules are supported. This is a
-proxy API, not compatibility with Pi's UI, tools or session-manager APIs.
-
-Implementation sequence: embedded runtime and typed contract; gateway seams;
-usage presentation and settings; deterministic protocol and concurrency tests;
-full Go/JS checks and binary/Nix build checks. Existing tests are the behavior
-baseline. Fake upstream tests must prove transformations and local handling,
-composition, failure/cancellation, real telemetry and unchanged default output.
+payload. Like Pi, custom extensions now run on Node with normal filesystem,
+network and package access. Broker retains its Go data plane and uses esbuild to
+compile TypeScript, with one long-lived Node process per custom extension.
+The two built-ins remain native Go. This is a proxy API, not compatibility with
+Pi's UI, tools or session-manager APIs.
 
 Billion-context (bebc239f2767e1a35c7664755f3ea8cb51faa641) motivates request
 reconciliation and compact endpoint interception. No compression, private tool
@@ -32,7 +27,7 @@ loop, fabricated encrypted compaction payload or history dropping is included.
 
 The built-in `account-usage` extension is enabled by default. It is a native
 adapter around the existing formatter and streaming reconciliation, avoiding a
-VM on ordinary requests. Settings → Proxy extensions controls it and all loaded
+Node worker on ordinary requests. Settings → Proxy extensions controls it and all loaded
 TypeScript extensions. Disabling it removes the prefix only: existing notices
 are still removed from replayed history, raw upstream usage is still recorded,
 and the separate request-size-compaction extension keeps its current setting.
@@ -49,25 +44,44 @@ forwarding cap. Disabling cleanup may therefore cause large requests to be
 rejected until a custom request extension reduces them. Active requests keep
 their initial setting, and relays receive it on their normal snapshot sync.
 
-To provision a trusted module, place a self-contained `.ts` file in an
-operator-controlled directory and set `WINDOWKEEPER_PROXY_EXTENSIONS_DIR` to its
-absolute path. Restart the broker. The filename without `.ts` is its ID (lowercase
-letters, digits, `_` and `-`, up to 64 characters); built-in IDs are reserved.
-`.d.ts` files are ignored. Files load once in filename order. There is no upload,
-installer, discovery outside that directory, hot reload or marketplace. Mount
-the directory read-only in Docker, including relay containers. For NixOS, set
-`systemd.services.codex-broker.environment.WINDOWKEEPER_PROXY_EXTENSIONS_DIR`.
-The binary embeds both the runtime and compiler; Docker and standalone Go/Nix
-builds require no extra runtime dependency. Node is needed only for development
-checks of the TypeScript declarations and examples.
+To provision a trusted module, place a `.ts` entry file in an operator-controlled
+directory and set `WINDOWKEEPER_PROXY_EXTENSIONS_DIR` to its absolute path. Restart
+the broker. The filename without `.ts` is its ID (lowercase letters, digits, `_`
+and `-`, up to 64 characters); built-in IDs are reserved. `.d.ts` files are ignored.
+Entry files load in filename order. Put local helper modules in subdirectories
+so they are not also discovered as extensions. Local imports are bundled at load
+time; npm packages remain external and resolve from the entry file's directory
+and its ancestor `node_modules` directories. Provision dependencies there before
+starting Broker. There is no installer, hot reload, upload or marketplace.
 
-The default export is a synchronous factory taking `ExtensionAPI`. Use the types
-in `packages/proxy-extension/index.d.ts` via `import type`; see the examples next
-to it. Type-only imports disappear during compilation. Runtime imports, npm
-packages, async factories/handlers, timers, network, filesystem and process APIs
-are unsupported. Prebundle dependencies into one file if necessary. esbuild
-transpiles but does not type-check; run `npm run check:proxy-extensions` for the
-shipped examples, and `tsc --noEmit` for your own module before provisioning it.
+Custom extensions require **Node 22.13 or newer** on Linux/macOS. The worker and
+TypeScript compiler are embedded in the Go binary; Node itself is an external
+executable. Set `WINDOWKEEPER_EXTENSION_NODE` to an absolute Node executable if
+it is not on PATH. Both Docker images include Node; the Nix package supplies it
+through its wrapper. For standalone binaries, install Node separately. Native
+built-ins work without Node; unavailable Node isolates custom modules as load
+errors shown in Settings. The pipe bridge currently uses Unix extra descriptors;
+Windows usage-client builds are unaffected, but Windows proxy workers are not
+supported.
+
+Mount extension source and dependencies read-only in Docker, including relays;
+keep the Broker data directory writable and persistent. For NixOS, set
+`systemd.services.codex-broker.environment.WINDOWKEEPER_PROXY_EXTENSIONS_DIR`.
+Nix's service filesystem restrictions still apply to extensions. Package native
+bindings must match the deployed OS, architecture and Node ABI; Broker does not
+install or rebuild them. Docker's primary image does not include npm, so prepare
+`node_modules` in a matching build environment.
+
+The default export is a factory taking `ExtensionAPI`. Factories and handlers may
+return Promises; synchronous existing extensions continue to work. Use the types
+in `packages/proxy-extension/index.d.ts` via `import type`. Normal Node built-ins
+such as `node:fs/promises`, `node:path`, `node:http` and `node:sqlite` are available.
+TypeScript is compiled to CommonJS; npm packages must be compatible with Node's
+`require` support, or be loaded using dynamic `import()` (for example, ESM with
+top-level await). Top-level await in the extension entry itself and `import.meta`
+are not supported by this compilation mode; use an async factory and ordinary
+`__dirname`/`__filename` instead. esbuild transpiles without type-checking; run
+`tsc --noEmit` for your extension and `npm run check:proxy-extensions` for examples.
 
 Return a partial patch to change an event. Returning nothing means unchanged;
 mutating the event without returning a patch has no effect. Headers are objects
@@ -119,12 +133,12 @@ Authentication failures, initial body-size/read failures, invalid correlation ID
 and WebSocket upgrade rejection stay outside the extension boundary. Extension
 failures skip the affected extension and preserve its input. Non-Responses
 wire protocols are opaque; use `body` for transformations. This API does not add
-agent-session ownership, tool execution loops, arbitrary outbound requests, or
-new transport/endpoint support.
+agent-session ownership, tool execution loops, or new proxy transport/endpoint
+support. Extensions may make their own outbound requests using Node APIs.
 
 ## Composition, identity and limits
 
-Handlers run synchronously in filename order, then registration order. Each patch
+Handlers are awaited in filename order, then registration order. Each patch
 is visible to the next handler. The first local `response` short-circuits the
 remaining request/prepared/attempt handlers. Stream transformations run before
 and after the built-in presentation layer as their hook names specify. Once
@@ -133,8 +147,13 @@ replacement use `body`; this trades streaming latency and memory for that contro
 Extensions must keep delta/done/final representations consistent when rewriting
 text and must preserve signed/opaque fields they do not understand.
 
-Factories run once per request in independent VMs; closures are extension-scoped
-request state and persist across that request's attempts. Enable/disable is
+Factories run once per request; closures are extension-scoped request state and
+persist across that request's attempts. The entry module is evaluated afresh for
+each request, while imported npm modules use Node's process-wide cache. Avoid
+request data in imported-module globals. A worker serializes invocations across
+its requests; separate extensions have separate processes. This preserves the
+synchronous atomic `updateThread` API, at the cost of queueing concurrent hooks
+for the same extension. A slow hook can delay other requests using it. Enable/disable is
 snapshotted before initialization and does not disrupt active requests. Relays
 receive disabled IDs on their next normal snapshot sync; offline relays use their
 encrypted cached snapshot. Source files must be provisioned on each relay
@@ -154,28 +173,46 @@ not independently verified; authenticated client-key IDs provide the namespace.
 client-key ID and native thread ID. No identity means an error. Concurrent
 requests cannot lose updates within this callback; multiple callbacks across a
 request are not a transaction. Returning null deletes the entry. State is
-process-local, survives toggles, and is lost on restart; it is not shared between
+held by Go, survives toggles and worker restarts, and is lost on Broker restart; it is not shared between
 replicas/relays and is not suitable as a durable session database. There are at
 most 1,024 entries, each at most 64 KiB; capacity exhaustion rejects an update
 rather than silently evicting another thread's state.
 
 There are at most 32 modules, 1 MiB source per module, 32 handlers per hook/module,
-a 256-frame VM call stack and a 100 ms wall-clock budget per factory/handler.
+up to 1,024 active request instances per worker, and a 100 ms wall-clock budget
+per handler (including IPC, excluding worker startup and queueing).
+Module discovery and request factory initialization have a 1-second budget to
+allow Node to resolve/import packages; process startup has a separate 5-second limit. Node uses a 512 MiB V8 old-space
+limit; this is not a total process-memory quota.
 Hook JSON input/output is capped at 128 MiB, buffered/synthetic responses at
 64 MiB. Existing request, SSE frame and stream-idle limits still apply. Large
 transformations may hit the hook budget before the byte cap. Hooks execute on
-the request path, preserving backpressure; cancellation interrupts JavaScript.
+the request path, preserving backpressure; cancellation terminates an executing worker. Waiting for a busy worker is
+context-cancellable without terminating the other request's invocation.
 Extension errors are logged and skipped, preserving the input to the failing
 extension for that invocation. Invalid patches are isolated before committing.
 Client responses do not contain exception details. Actual upstream errors and
 resource limits still follow host error handling. Cleanup has a fresh bounded
 context after cancellation. See Failure isolation and extension logs below.
 
-These are trusted operator extensions, not a hostile-code sandbox. Goja shares
-process memory; the byte/time limits are not a hard heap quota, and expensive
-native VM operations may not be promptly interruptible. There is no per-module
-process isolation. No VM, body buffering or additional event serialization is
-used when only the native default extension is active.
+These are **trusted operator extensions, not a sandbox**. Node runs as the
+Broker OS user and can access whatever that account and service confinement
+permit, including potentially Broker files and inherited environment secrets.
+A separate process contains ordinary crashes; it does not restrict filesystem,
+network or process authority. The extension context still omits account tokens.
+The built-in-only path starts no worker and adds no IPC or body buffering.
+
+A timeout, process exit or cancellation during execution kills that extension's
+worker. Other extensions continue. All request closures in the killed worker are
+lost: their next hook fails open, and their cleanup cannot run. New requests
+restart the worker; Go-owned thread state and filesystem data survive. Ordinary
+JavaScript exceptions retain the process and allow best-effort `finish` handlers.
+Worker termination cannot undo filesystem writes, database commits, network
+requests or child processes started by an extension. Await work inside hooks;
+background API calls after the invocation ends are unsupported. Background
+`proxy.log` calls are dropped rather than attributed to another request.
+`finish` should close extension-owned handles; Broker releases its request
+instance afterward and closes workers when the HTTP server shuts down.
 
 ## Regression checks
 
@@ -199,15 +236,21 @@ use local fake upstreams and isolated databases, not production accounts.
 
 ## Storage permissions and telemetry boundary
 
-Custom TypeScript extensions cannot open SQLite, read/write JSON files or create
-folders. Their runtime exposes no filesystem, process or network APIs. Closures
-provide request-local state; `updateThread` provides bounded, atomic JSON state
-in memory (64 KiB per entry, up to 1,024 entries). This is lost on restart and is
-not shared across processes. Durable response history for a context-management
-extension needs an additional storage API; none is implemented here. Native
-built-ins are compiled host code rather than sandboxed TypeScript, but neither
-built-in writes its own transcript/history files. `extensions/` contains source,
-not per-extension runtime data.
+Use normal Node filesystem/database APIs for durable extension data. Broker does
+not provide a storage abstraction. `proxy.getDataDir()` creates and returns the
+absolute `<Broker data directory>/extensions/<extension-id>` path (0700 on
+creation). IDs, rather than display names, distinguish directories; the same ID
+keeps its files across requests, toggles, worker restarts and Broker restarts.
+Renaming the ID selects a new directory. Disabling/removing an extension does not
+delete its files. Source in repository `extensions/` is separate from this data.
+
+The helper is a convention, **not a filesystem sandbox**. Extensions can create
+JSON files, SQLite databases, subdirectories or other storage, and can also access
+paths outside it when OS permissions allow. Manage migrations, transactions,
+retention, locks and backups in the extension. Replicas and relays have their own
+local directories; Broker does not replicate these files. Scope stored session
+history by authenticated `clientId` plus native `threadId`, and handle absent
+identity explicitly. See `packages/proxy-extension/examples/storage.ts`.
 
 Existing telemetry records request metadata and upstream terminal usage, not full
 request/response bodies or transcripts. Request metadata is parsed from the actual
@@ -263,7 +306,7 @@ settings immediately, then `settings_loaded` runs after handler registration.
 `settings_changed` receives `{settings, previous}` before the next hook when the
 host has published a change. Both events are notifications; returned patches are
 ignored. Settings stay consistent during a handler. These hooks use the same
-synchronous execution limits and failure behavior as other hooks. Changes may
+execution limits and failure behavior as other hooks. Changes may
 coalesce if multiple saves happen between hooks. Idle sessions do not receive a
 background callback. Finish cleanup uses its last observed settings snapshot.
 Native built-ins and enable/disable flags retain their request-start snapshot.
@@ -283,8 +326,7 @@ snapshot storage. Each relay publishes its latest snapshot on the next incoming
 request; active sessions see it at their next hook afterward. Provision matching
 extension schemas on primary and relays. Updating a schema requires a restart; incompatible saved values skip that
 extension until the values are reset/migrated to match its new schema.
-Settings persistence does not add durable transcript storage or filesystem access
-to the TypeScript runtime.
+Settings stay managed by Broker independently of extension-owned filesystem data.
 
 Built-in defaults preserve previous output: account usage shows the account label
 and retry status; request size compaction uses a 50 MiB trigger and 40 MiB target.
@@ -301,7 +343,7 @@ validation feedback, revision conflicts, subpath routing and a narrow viewport.
 
 Each extension's transformation is transactional for one hook invocation. Broker
 keeps the payload entering that extension, chains its handlers on a candidate,
-and validates returned patches before committing. A throw, timeout, unsupported
+and validates returned patches before committing. A throw, timeout, rejected
 Promise, serialization failure, invalid patch, or unexpected native-extension
 panic discards that extension's candidate and passes the previous payload to the
 next extension. Successful earlier extensions retain their changes. The failed
@@ -317,7 +359,8 @@ and hard resource limits retain their host behavior. Cleanup handlers get
 independent bounded best-effort calls even after an earlier failure.
 
 Rollback applies to the payload for the failing invocation. It cannot undo logs,
-`updateThread` changes, extension closure state, earlier successful invocations,
+`updateThread` changes, filesystem or database writes, extension closure state,
+earlier successful invocations,
 or bytes already sent to the client. A failed streamed-event transformation
 forwards that event's previous value and continues the stream. Whole-body hooks
 still require buffering and retain the existing buffering size cap.
@@ -374,4 +417,6 @@ messages. Its inspected ExtensionAPI has no dedicated persistent per-extension
 severity logger. `appendEntry` can persist custom session data, and its full host
 runtime also permits authors to build file logging themselves. Broker's logger
 adds service-oriented persistence and request attribution without introducing
-filesystem access or writing notifications into client model responses.
+notifications into client model responses. Normal console/stdout/stderr output is
+discarded by the worker host; use `proxy.log` for attributed, persisted diagnostics
+or write extension-owned log files with Node APIs.
