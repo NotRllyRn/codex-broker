@@ -1,17 +1,50 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { runInNewContext } from "node:vm";
 
-// app.js now exports initApp; isolate the proxy block inside that lifecycle.
-const proxySection = (source) => source.slice(source.indexOf("const proxyCard ="), source.indexOf("\n\treturn () => {"));
-function runScript(source, context) {
- Object.assign(context, { lifecycle: { signal: { aborted: false } }, forceRefresh: false, toggleStreamer: undefined,
-  cachedRequest: async (url) => (await context.fetch(url)).json() });
- return runInNewContext(source, context);
+// Import the unmodified browser module graph in a fresh ESM package per fixture.
+// This isolates cache.js state without requiring experimental VM flags.
+async function browser(t, context) {
+ const directory = mkdtempSync(join(tmpdir(), "proxy-dashboard-test-"));
+ const cleanups = [], restores = [];
+ t.after(() => {
+  try { for (const cleanup of cleanups.reverse()) cleanup(); }
+  finally {
+   for (const restore of restores.reverse()) restore();
+   rmSync(directory, { recursive: true, force: true });
+  }
+ });
+ cpSync(new URL("../internal/webassets/static/", import.meta.url), directory, { recursive: true });
+ writeFileSync(join(directory, "package.json"), '{"type":"module"}');
+ const document = context.document;
+ const querySelector = document.querySelector?.bind(document);
+ document.querySelector = (selector) => selector === "[data-dashboard-shell]" ? {} : querySelector?.(selector) ?? null;
+ document.querySelectorAll ??= () => [];
+ document.documentElement ??= { dataset: {} };
+ document.createTreeWalker ??= () => ({ nextNode: () => false });
+ const globals = {
+  document, NodeFilter: { SHOW_TEXT: 4 },
+  localStorage: { getItem: () => null, setItem() {} },
+  location: context.location ?? { protocol: "https:", reload() {} },
+  fetch: context.fetch,
+  window: { fetch: context.fetch, addEventListener() {},
+   setTimeout: context.setTimeout ?? (() => 1), clearTimeout() {},
+   setInterval: () => 1, clearInterval() {} },
+ };
+ for (const [key, value] of Object.entries(globals)) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, key);
+  Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  restores.push(() => previous ? Object.defineProperty(globalThis, key, previous) : delete globalThis[key]);
+ }
+ const loadModule = (name) => import(pathToFileURL(join(directory, name)).href);
+ loadModule.cleanup = (callback) => cleanups.push(callback);
+ return loadModule;
 }
 
-test("shared model selector updates rolling/lifetime tokens and quota without fallback", async () => {
+test("shared model selector updates rolling/lifetime tokens and quota without fallback", async (t) => {
 	const panels = ["rolling_7d", "lifetime"].map((period) => {
 		const nodes = Object.fromEntries(["active_ms", "total_tokens", "tokens_per_minute", "tokens_per_hour"].map((name) => [name, { dataset: { usage: name } }]));
 		for (const name of ["short_rate", "short_time", "weekly_rate", "weekly_time"]) nodes[name] = {};
@@ -49,13 +82,13 @@ test("shared model selector updates rolling/lifetime tokens and quota without fa
 			{ account_id: "all", model: "quota-only", lifetime: quota(5) },
 		],
 	};
-	const script = readFileSync(new URL("../internal/webassets/static/app.js", import.meta.url), "utf8");
-	runScript(proxySection(script), {
-		document: { querySelector: () => card, createElement: () => ({ dataset: {} }) },
-		Intl, Date, appPath: (path) => path,
+	const loadModule = await browser(t, {
+		document: { querySelector: (selector) => selector === "[data-proxy-card]" ? card : null, createElement: () => ({ dataset: {} }) },
 		fetch: async () => ({ ok: true, json: async () => data }),
 		setTimeout: (callback) => { refresh = callback; },
 	});
+	const { initApp } = await loadModule("app.js");
+	loadModule.cleanup(initApp());
 	await new Promise(setImmediate);
 	assert.equal(panels[0].nodes.tokens_per_hour.textContent, "300");
 	assert.equal(panels[1].nodes.short_rate.textContent, "8 pp/h");
@@ -80,7 +113,7 @@ test("shared model selector updates rolling/lifetime tokens and quota without fa
 	assert.equal(panels[1].nodes.short_rate.textContent, "5 pp/h");
 });
 
-test("usage dashboard scopes identity/device queries and resets device on identity changes", async () => {
+test("usage dashboard scopes identity/device queries and resets device on identity changes", async (t) => {
 	const node = () => ({ value: "", dataset: {}, style: {}, options: [], listeners: {},
 		addEventListener(event, callback) { this.listeners[event] = callback; },
 		replaceChildren() {}, append() {}, setAttribute() {},
@@ -103,12 +136,12 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 		processed_tokens: 0, cached_input: 0, uncached_input: 0, daily: [], since: "2026-01-01", until: "2026-01-01",
 		category: { input: 0, cache_read: 0, output: 0, other: 0 },
 		speed: { standard: 0, fast: 0, ultrafast: 0, premium: 0 }, pricing: { status: "unavailable" } };
-	const script = readFileSync(new URL("../internal/webassets/static/usage.js", import.meta.url), "utf8");
-	const context = { Intl, Date, URLSearchParams, AbortController,
+	const context = {
 		document: { createElement: node, createElementNS: node },
 		fetch: async (url) => { urls.push(url); return { ok: true, json: async () => new URL(url,"https://test").searchParams.has("identity") ? {...zero,ccusage:true,reports:1,processed_tokens:7,output:7,pricing:{status:"ccusage"}} : zero }; } };
-	runScript(script.replace(/^import .*;\n/gm, "").replaceAll("export function", "function") + "\nglobalThis.initialize = initUsageDashboard;", context);
-	const load = context.initialize(panel, (path) => "/broker" + path);
+	const loadModule = await browser(t, context);
+	const { initUsageDashboard } = await loadModule("usage.js");
+	const load = initUsageDashboard(panel, (path) => "/broker" + path);
 	await load("account1");
 	assert.equal(urls.at(-1), "/broker/api/internal/v1/usage?account=account1&days=all&provider=openai&model=all&identity=all&device=all");
 	identity.value = "example";
@@ -139,9 +172,8 @@ test("usage dashboard scopes identity/device queries and resets device on identi
 	assert.equal(new URL(urls.at(-1), "https://test").searchParams.has("identity"), false);
 });
 
-test("streamer preference persists at the root path and masks live labels", async () => {
- const script = readFileSync(new URL("../internal/webassets/static/app.js", import.meta.url), "utf8");
- for (const enabled of [false, true]) {
+test("streamer preference persists at the root path and masks live labels", async (t) => {
+ for (const enabled of [false, true]) await t.test(`streamer ${enabled ? "on" : "off"}`, async (t) => {
   let click, reloads = 0, refresh;
   const node = () => ({ dataset: {}, children: [], append(...children) { this.children.push(...children); }, replaceChildren(...children) { this.children = children; } });
   const nodes = new Map();
@@ -149,20 +181,27 @@ test("streamer preference persists at the root path and masks live labels", asyn
   const select = find("[data-proxy-model]");
   select.value = "all";
   select.addEventListener = () => {};
-  const document = { querySelector: () => ({ addEventListener: (_, callback) => { click = callback; } }), createElement: node };
-  const context = { root: { dataset: { streamerMode: enabled ? "on" : "off" } }, rootPath: "/broker", document,
-   location: { protocol: "https:", reload: () => { reloads++; } }, Intl, Date, appPath: (path) => "/broker"+path,
-   relativeTime: () => "just now", setTimeout: (callback) => { refresh = callback; },
+  const document = {
+   documentElement: { dataset: { rootPath: "/broker", streamerMode: enabled ? "on" : "off" } },
+   querySelector: (selector) => selector === "[data-streamer-toggle]"
+    ? { addEventListener: (_, callback) => { click = callback; } }
+    : selector === "[data-proxy-card]" ? { querySelector: find, querySelectorAll: () => [] } : null,
+   createElement: node,
+  };
+  const context = { document,
+   location: { protocol: "https:", reload: () => { reloads++; } },
+   setTimeout: (callback) => { refresh = callback; },
    fetch: async () => ({ ok: true, json: async () => ({ ready: true, active: 1, requests: 2, failovers: 0, usage: [], quota_usage: [],
     recent_clients: [{ name: "Work laptop", key_prefix: "cbk_example", active: 1, last_seen: new Date().toISOString() }],
     relays: [{ id: "Example edge", state: "ready", ready: true, connected: true, protocol_version: 5, last_seen: new Date().toISOString() }] }) }) };
-  const preference = script.slice(script.indexOf("const streamerMode ="), script.indexOf("const themeButton ="));
-  runScript(preference, context);
+  const loadModule = await browser(t, context);
+  const { initApp } = await loadModule("app.js");
+  const dispose = initApp();
+  loadModule.cleanup(dispose);
   click();
   assert.equal(reloads, 1);
   assert.equal(document.cookie, `codex-broker.streamer=${enabled ? "off" : "on"}; Path=/broker; Max-Age=31536000; SameSite=Strict; Secure`);
-  document.querySelector = () => ({ querySelector: find, querySelectorAll: () => [] });
-  runScript(proxySection(script), context);
+
   for (let iteration = 0; iteration < 2; iteration++) {
    await new Promise(setImmediate);
    assert.equal(find("[data-proxy-clients]").children[0].children[0].textContent, enabled ? "Client 1" : "Work laptop · cbk_example");
@@ -170,5 +209,14 @@ test("streamer preference persists at the root path and masks live labels", asyn
    assert.match(find("[data-proxy-clients]").children[0].children[1].textContent, /1 active/);
    if (!iteration) await refresh();
   }
- }
+  dispose();
+  let toggles = 0;
+  const disposeToggle = initApp({ toggleStreamer: () => { toggles++; } });
+  loadModule.cleanup(disposeToggle);
+  click();
+  assert.equal(toggles, 1, "shell callback handles streamer toggling when supplied");
+  assert.equal(reloads, 1, "shell callback must not reload the page");
+  await new Promise(setImmediate);
+  disposeToggle();
+ });
 });
