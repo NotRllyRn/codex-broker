@@ -182,7 +182,9 @@ func serve(ctx context.Context, settings config.Config, args []string) error {
 		return err
 	}
 	defer handler.Close()
-	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.TLSCertFile, settings.TLSKeyFile)
+	server := &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	server.RegisterOnShutdown(handler.BeginShutdown)
+	return runServer(ctx, server, settings.TLSCertFile, settings.TLSKeyFile, time.Minute)
 }
 func publicServe(ctx context.Context, settings config.Config, args []string) error {
 	set := flags("public-serve")
@@ -204,7 +206,7 @@ func publicServe(ctx context.Context, settings config.Config, args []string) err
 	if err != nil {
 		return err
 	}
-	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.PublicEnrollmentTLSCertFile, settings.PublicEnrollmentTLSKeyFile)
+	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.PublicEnrollmentTLSCertFile, settings.PublicEnrollmentTLSKeyFile, 10*time.Second)
 }
 
 func relayServe(ctx context.Context, settings config.Config, args []string) error {
@@ -224,9 +226,9 @@ func relayServe(ctx context.Context, settings config.Config, args []string) erro
 	service.Start(ctx)
 	handler := relay.NewServer(service)
 	defer handler.Close()
-	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.RelayTLSCertFile, settings.RelayTLSKeyFile)
+	return runServer(ctx, &http.Server{Addr: net.JoinHostPort(*host, strconv.Itoa(*port)), Handler: handler, ReadHeaderTimeout: 10 * time.Second}, settings.RelayTLSCertFile, settings.RelayTLSKeyFile, 10*time.Second)
 }
-func runServer(ctx context.Context, server *http.Server, cert, key string) error {
+func runServer(ctx context.Context, server *http.Server, cert, key string, drainTimeout time.Duration) error {
 	result := make(chan error, 1)
 	go func() {
 		if cert != "" && key != "" {
@@ -242,7 +244,7 @@ func runServer(ctx context.Context, server *http.Server, cert, key string) error
 		}
 		return err
 	case <-ctx.Done():
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownContext, cancel := context.WithTimeout(context.Background(), drainTimeout)
 		defer cancel()
 		return server.Shutdown(shutdownContext)
 	}

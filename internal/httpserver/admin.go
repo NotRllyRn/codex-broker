@@ -3,6 +3,7 @@ package httpserver
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"strconv"
@@ -562,10 +563,16 @@ func (s *Server) cancelLogin(w http.ResponseWriter, r *http.Request) error {
 	return writeJSON(w, 202, map[string]any{"kind": "Operation", "data": map[string]any{"operation_id": operation}})
 }
 func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) error {
+	done := s.eventStreamDone()
+	select {
+	case <-done:
+		return nil
+	default:
+	}
 	if err := s.requireSession(r); err != nil {
 		return err
 	}
-	flusher, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok {
 		return core.NewError("STREAM_UNAVAILABLE", "Event streaming is unavailable", 500)
 	}
@@ -579,21 +586,38 @@ func (s *Server) eventStream(w http.ResponseWriter, r *http.Request) error {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// Bound writes to slow dashboard clients so they cannot hold up shutdown.
+	controller := http.NewResponseController(w)
+	write := func(data []byte) error {
+		// HTTP/2 deadlines also reset idle streams, so disarm after each write.
+		defer controller.SetWriteDeadline(time.Time{})
+		if err := controller.SetWriteDeadline(time.Now().Add(5 * time.Second)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+		if _, err := w.Write(data); err != nil {
+			return err
+		}
+		return controller.Flush()
+	}
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 	for {
 		select {
+		case <-done:
+			return nil
 		case <-r.Context().Done():
 			return nil
 		case event, ok := <-events:
 			if !ok {
 				return nil
 			}
-			_, _ = w.Write(event.Encode())
-			flusher.Flush()
+			if err := write(event.Encode()); err != nil {
+				return nil
+			}
 		case <-heartbeat.C:
-			_, _ = w.Write([]byte(": heartbeat\n\n"))
-			flusher.Flush()
+			if err := write([]byte(": heartbeat\n\n")); err != nil {
+				return nil
+			}
 		}
 	}
 }

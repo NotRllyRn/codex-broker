@@ -40,6 +40,9 @@ type Server struct {
 	gatewayEngine                             *gateway.Engine
 	gatewayOnce                               sync.Once
 	relayEventsMu                             sync.Mutex
+	eventStreamInit                           sync.Once
+	eventStreamStop                           sync.Once
+	eventStreamShutdown                       chan struct{}
 	renderer                                  *renderer
 	mux                                       *http.ServeMux
 	loginThrottle, clientAuth, enrollmentAuth *throttle
@@ -85,6 +88,19 @@ type Handler struct {
 }
 
 func (h *Handler) Close() { h.server.Close() }
+
+// BeginShutdown ends dashboard streams without canceling inference requests.
+func (h *Handler) BeginShutdown() { h.server.beginShutdown() }
+
+func (s *Server) eventStreamDone() <-chan struct{} {
+	s.eventStreamInit.Do(func() { s.eventStreamShutdown = make(chan struct{}) })
+	return s.eventStreamShutdown
+}
+
+func (s *Server) beginShutdown() {
+	s.eventStreamDone()
+	s.eventStreamStop.Do(func() { close(s.eventStreamShutdown) })
+}
 
 func New(application *broker.Application) (*Handler, error) {
 	templates, err := newRenderer("templates")
