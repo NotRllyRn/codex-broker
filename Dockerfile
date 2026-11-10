@@ -27,7 +27,7 @@ FROM node:22-bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install --yes --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
- && npm install --global @openai/codex@0.167.0 \
+ && npm install --global --include=optional @openai/codex@0.167.0 \
  && npm cache clean --force \
  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
  && useradd --system --uid 10001 --create-home --home-dir /home/windowkeeper windowkeeper \
@@ -38,6 +38,8 @@ RUN ln -s /usr/local/bin/codex-broker /usr/local/bin/python \
  && ln -s /usr/local/bin/codex-broker /usr/local/bin/windowkeeper
 USER 10001:10001
 WORKDIR /home/windowkeeper
+# npm can silently skip a failed optional native package. Reject unusable images.
+RUN codex --version
 ENV WINDOWKEEPER_DATA_DIR=/data \
     WINDOWKEEPER_RUNTIME_DIR=/run/windowkeeper \
     WINDOWKEEPER_HOST=0.0.0.0 \
