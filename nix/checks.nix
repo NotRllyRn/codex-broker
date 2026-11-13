@@ -8,7 +8,7 @@ let
   lib = nixpkgs.lib;
   # Evaluation fixture only; no fake Codex binary is built or executed.
   codex = pkgs.runCommand "codex-evaluation-fixture" {
-    version = "0.167.0";
+    version = "0.169.0";
     meta.mainProgram = "codex";
   } "mkdir -p $out";
   evaluate =
