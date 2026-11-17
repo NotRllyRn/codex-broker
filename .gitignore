@@ -9,3 +9,5 @@ sources/
 coverage.out
 
 /packages/usage/native/
+
+/.deployment-backups/
